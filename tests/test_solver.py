@@ -1,6 +1,5 @@
 """Tests for vardax._src.solver."""
 
-from flax import nnx
 import jax
 import jax.numpy as jnp
 
@@ -43,10 +42,8 @@ class TestSolverStep1D:
         B, T, N = batch_1d.input.shape
         hidden_dim = 16
         k1, k2 = jax.random.split(rng)
-        prior = BilinAEPrior1D(state_dim=N, latent_dim=8, n_time=T, rngs=nnx.Rngs(k1))
-        grad_mod = ConvLSTMGradMod1D(
-            state_channels=T, hidden_dim=hidden_dim, rngs=nnx.Rngs(k2)
-        )
+        prior = BilinAEPrior1D(state_dim=N, latent_dim=8, n_time=T, key=k1)
+        grad_mod = ConvLSTMGradMod1D(state_channels=T, hidden_dim=hidden_dim, key=k2)
 
         x0 = batch_1d.input * batch_1d.mask
         lstm = LSTMState1D.zeros(B, hidden_dim, N)
@@ -61,10 +58,8 @@ class TestSolverStep1D:
         B, T, N = batch_1d.input.shape
         hidden_dim = 16
         k1, k2 = jax.random.split(rng)
-        prior = BilinAEPrior1D(state_dim=N, latent_dim=8, n_time=T, rngs=nnx.Rngs(k1))
-        grad_mod = ConvLSTMGradMod1D(
-            state_channels=T, hidden_dim=hidden_dim, rngs=nnx.Rngs(k2)
-        )
+        prior = BilinAEPrior1D(state_dim=N, latent_dim=8, n_time=T, key=k1)
+        grad_mod = ConvLSTMGradMod1D(state_channels=T, hidden_dim=hidden_dim, key=k2)
 
         x0 = batch_1d.input * batch_1d.mask
         lstm = LSTMState1D.zeros(B, hidden_dim, N)
@@ -96,7 +91,7 @@ class TestSolve4dvarnet1dFixedpoint:
         from vardax import BilinAEPrior1D
 
         B, T, N = batch_1d.input.shape
-        prior = BilinAEPrior1D(state_dim=N, latent_dim=4, n_time=T, rngs=nnx.Rngs(rng))
+        prior = BilinAEPrior1D(state_dim=N, latent_dim=4, n_time=T, key=rng)
 
         result = solve_4dvarnet_1d_fixedpoint(batch_1d, prior, n_fp_steps=5)
         assert result.shape == (B, T, N)
@@ -105,7 +100,7 @@ class TestSolve4dvarnet1dFixedpoint:
         from vardax import BilinAEPrior1D
 
         B, T, N = batch_1d.input.shape
-        prior = BilinAEPrior1D(state_dim=N, latent_dim=4, n_time=T, rngs=nnx.Rngs(rng))
+        prior = BilinAEPrior1D(state_dim=N, latent_dim=4, n_time=T, key=rng)
         x0 = batch_1d.input * batch_1d.mask
 
         result = solve_4dvarnet_1d_fixedpoint(batch_1d, prior, n_fp_steps=0)
@@ -120,8 +115,8 @@ class TestOneStepSolve4dvarnet1D:
 
         B, T, N = batch_1d.input.shape
         k1, k2 = jax.random.split(rng)
-        prior = BilinAEPrior1D(state_dim=N, latent_dim=4, n_time=T, rngs=nnx.Rngs(k1))
-        grad_mod = ConvLSTMGradMod1D(state_channels=T, hidden_dim=16, rngs=nnx.Rngs(k2))
+        prior = BilinAEPrior1D(state_dim=N, latent_dim=4, n_time=T, key=k1)
+        grad_mod = ConvLSTMGradMod1D(state_channels=T, hidden_dim=16, key=k2)
 
         result = one_step_solve_4dvarnet_1d(
             batch_1d, prior, grad_mod, n_steps=5, hidden_dim=16
@@ -134,8 +129,8 @@ class TestOneStepSolve4dvarnet1D:
 
         _B, T, N = batch_1d.input.shape
         k1, k2 = jax.random.split(rng)
-        prior = BilinAEPrior1D(state_dim=N, latent_dim=4, n_time=T, rngs=nnx.Rngs(k1))
-        grad_mod = ConvLSTMGradMod1D(state_channels=T, hidden_dim=16, rngs=nnx.Rngs(k2))
+        prior = BilinAEPrior1D(state_dim=N, latent_dim=4, n_time=T, key=k1)
+        grad_mod = ConvLSTMGradMod1D(state_channels=T, hidden_dim=16, key=k2)
 
         x0 = batch_1d.input * batch_1d.mask
         result = one_step_solve_4dvarnet_1d(
@@ -150,8 +145,8 @@ class TestOneStepSolve4dvarnet1D:
 
         _B, T, N = batch_1d.input.shape
         k1, k2 = jax.random.split(rng)
-        prior = BilinAEPrior1D(state_dim=N, latent_dim=4, n_time=T, rngs=nnx.Rngs(k1))
-        grad_mod = ConvLSTMGradMod1D(state_channels=T, hidden_dim=16, rngs=nnx.Rngs(k2))
+        prior = BilinAEPrior1D(state_dim=N, latent_dim=4, n_time=T, key=k1)
+        grad_mod = ConvLSTMGradMod1D(state_channels=T, hidden_dim=16, key=k2)
 
         def loss_fn(prior, grad_mod):
             x_hat = one_step_solve_4dvarnet_1d(
@@ -159,12 +154,14 @@ class TestOneStepSolve4dvarnet1D:
             )
             return jnp.mean((x_hat - batch_1d.target) ** 2)
 
-        grads = nnx.grad(loss_fn, argnums=(0, 1))(prior, grad_mod)
-        prior_grads, grad_mod_grads = grads
-        # at least some parameter gradients should be non-zero
-        prior_leaves = jax.tree_util.tree_leaves(nnx.state(prior_grads))
+        import equinox as eqx
+
+        # eqx.filter_grad keeps array leaves, drops non-array params
+        grads_p = eqx.filter_grad(lambda p: loss_fn(p, grad_mod))(prior)
+        grads_g = eqx.filter_grad(lambda g: loss_fn(prior, g))(grad_mod)
+        prior_leaves = jax.tree_util.tree_leaves(eqx.filter(grads_p, eqx.is_array))
         assert any(jnp.any(g != 0) for g in prior_leaves)
-        grad_mod_leaves = jax.tree_util.tree_leaves(nnx.state(grad_mod_grads))
+        grad_mod_leaves = jax.tree_util.tree_leaves(eqx.filter(grads_g, eqx.is_array))
         assert any(jnp.any(g != 0) for g in grad_mod_leaves)
 
     def test_single_step_equals_solver_step(self, rng, batch_1d):
@@ -179,8 +176,8 @@ class TestOneStepSolve4dvarnet1D:
 
         B, T, N = batch_1d.input.shape
         k1, k2 = jax.random.split(rng)
-        prior = BilinAEPrior1D(state_dim=N, latent_dim=4, n_time=T, rngs=nnx.Rngs(k1))
-        grad_mod = ConvLSTMGradMod1D(state_channels=T, hidden_dim=16, rngs=nnx.Rngs(k2))
+        prior = BilinAEPrior1D(state_dim=N, latent_dim=4, n_time=T, key=k1)
+        grad_mod = ConvLSTMGradMod1D(state_channels=T, hidden_dim=16, key=k2)
 
         result_one_step = one_step_solve_4dvarnet_1d(
             batch_1d, prior, grad_mod, n_steps=1, hidden_dim=16

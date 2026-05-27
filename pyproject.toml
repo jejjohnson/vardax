@@ -34,13 +34,16 @@ classifiers = [
 dependencies = [
     "jax>=0.5",
     "jaxlib>=0.5",
-    "flax>=0.12",
     "optax>=0.2",
     "jaxtyping>=0.2.28",
     "einops>=0.8",
-    "jaxopt",
     "diffrax>=0.5",
     "equinox>=0.11",
+    "optimistix>=0.1",
+    "lineax>=0.1",
+    "gaussx",
+    "pipekit",
+    "pipekit-cycle",
 ]
 
 [project.urls]
@@ -76,8 +79,15 @@ examples = [
     "loguru>=0.7.2",
     "tqdm>=4.66.0",
 ]
+persist = [
+    "pipekit-jax",
+    "pipekit-experiment",
+]
+train = [
+    "pipekit-train",
+]
 all = [
-    "vardax[data,viz,exp,jlab,examples]",
+    "vardax[data,viz,exp,jlab,examples,persist,train]",
 ]
 
 [build-system]
@@ -209,3 +219,11 @@ source = ["src/vardax"]
 
 [tool.coverage.xml]
 output = "reports/coverage.xml"
+
+[tool.uv.sources]
+gaussx = { git = "https://github.com/jejjohnson/gaussx" }
+pipekit = { git = "https://github.com/jejjohnson/pipekit", subdirectory = "packages/pipekit" }
+pipekit-cycle = { git = "https://github.com/jejjohnson/pipekit", subdirectory = "packages/pipekit-cycle" }
+pipekit-jax = { git = "https://github.com/jejjohnson/pipekit", subdirectory = "packages/pipekit-jax" }
+pipekit-experiment = { git = "https://github.com/jejjohnson/pipekit", subdirectory = "packages/pipekit-experiment" }
+pipekit-train = { git = "https://github.com/jejjohnson/pipekit", subdirectory = "packages/pipekit-train" }

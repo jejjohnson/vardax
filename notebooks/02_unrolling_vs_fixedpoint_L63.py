@@ -30,7 +30,7 @@
 # 6. Compare MSE across conditions with a bar chart
 
 # %%
-import flax.nnx as nnx
+# (NNX removed in Epic 0 — vardax is now equinox-native)
 import jax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
@@ -121,10 +121,10 @@ model_unrolled = FourDVarNet1D(
     latent_dim=8,
     hidden_dim=16,
     n_solver_steps=10,
-    rngs=nnx.Rngs(jax.random.PRNGKey(1)),
+    key=jax.random.PRNGKey(1),
 )
 
-optimizer, train_losses, _ = vardax.fit(
+model, train_losses, _ = vardax.examples.fit_demo(
     model_unrolled,
     [batch_train],
     n_epochs=5,
@@ -137,7 +137,7 @@ print(f"Final unrolled train loss: {train_losses[-1]:.4f}")
 # ## 4. Fixed-point solver (untrained prior)
 
 # %%
-prior = BilinAEPrior1D(state_dim=N, latent_dim=8, n_time=T, rngs=nnx.Rngs(jax.random.PRNGKey(3)))
+prior = BilinAEPrior1D(state_dim=N, latent_dim=8, n_time=T, key=jax.random.PRNGKey(3))
 
 out_fp = solve_4dvarnet_1d_fixedpoint(batch_test, prior, n_fp_steps=10)
 print(f"Fixed-point output shape: {out_fp.shape}")

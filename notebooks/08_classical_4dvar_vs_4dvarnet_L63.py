@@ -77,9 +77,9 @@ print(f"Test batch shape: {batch_test.input.shape}")
 # convergence trajectory.
 
 # %%
-import flax.nnx as nnx
+# (NNX removed in Epic 0 — vardax is now equinox-native)
 
-prior = BilinAEPrior1D(state_dim=N, latent_dim=8, n_time=T, rngs=nnx.Rngs(jax.random.PRNGKey(5)))
+prior = BilinAEPrior1D(state_dim=N, latent_dim=8, n_time=T, key=jax.random.PRNGKey(5))
 
 
 # Initialise x from masked observations
@@ -116,10 +116,10 @@ print(
 # %%
 model = FourDVarNet1D(
     state_dim=N, n_time=T, latent_dim=8, hidden_dim=16, n_solver_steps=10,
-    rngs=nnx.Rngs(jax.random.PRNGKey(1)),
+    key=jax.random.PRNGKey(1),
 )
 
-_, train_losses, _ = vardax.fit(
+model, train_losses, _ = vardax.examples.fit_demo(
     model,
     [batch_train],
     n_epochs=10,

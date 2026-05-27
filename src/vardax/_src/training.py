@@ -1,23 +1,29 @@
-"""Training utilities for 4DVarNet.
+"""Training primitives for FourDVarNet.
 
-Provides loss functions, per-step training / evaluation functions, and a
-high-level ``fit`` loop compatible with Flax NNX and ``optax``.
+Per Decision D5, vardax ships ``train_step`` and ``eval_step`` as
+Layer 0 primitives — they encode the correctness-critical
+differentiation through the FourDVarNet inner solver, which is the part
+that's library-grade. The outer training loop (epoch iteration, logging,
+checkpointing, distributed) is delegated to ``pipekit-train``
+(``[train]`` extra) — see ``vardax.adapters.pipekit_train`` for the
+``Loss`` adapter that wraps ``train_loss_fn`` into the
+``pipekit_train.Loss`` protocol.
+
+This module contains *only* the inner-step primitives. There is no
+``fit()`` helper; users either compose ``train_step`` into a small
+notebook-level loop or wire it through ``pipekit_train.TrainingLoop``.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-from flax import nnx
+import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array, Float
 import optax
 
 from ._types import Batch1D, Batch2D
-
-# ---------------------------------------------------------------------------
-# Loss functions
-# ---------------------------------------------------------------------------
 
 
 def reconstruction_loss(
@@ -43,41 +49,51 @@ def train_loss_fn(
     """Compute the training loss for a single batch.
 
     Args:
-        model: Flax NNX module.
-        batch: Training batch.
+        model: Equinox module implementing ``__call__(batch) -> prediction``.
+        batch: Training batch (must have a non-``None`` ``target``).
 
     Returns:
         Scalar reconstruction loss.
     """
     pred = model(batch)
-    return reconstruction_loss(pred, batch.target)
+    target = batch.target
+    if target is None:
+        raise ValueError("train_loss_fn requires batch.target to be set.")
+    return reconstruction_loss(pred, target)
 
 
-# ---------------------------------------------------------------------------
-# Training / evaluation steps
-# ---------------------------------------------------------------------------
-
-
+@eqx.filter_jit
 def train_step(
     model: Any,
-    optimizer: nnx.Optimizer,
     batch: Batch1D | Batch2D,
-) -> Float[Array, ""]:
+    optimizer: optax.GradientTransformation,
+    opt_state: optax.OptState,
+) -> tuple[Any, optax.OptState, Float[Array, ""]]:
     """Perform a single training step (forward + backward + update).
 
+    This is the correctness-critical primitive: gradients flow through
+    the FourDVarNet inner solver according to whichever differentiation
+    strategy (``"unrolled"`` / ``"one_step"`` / ``"implicit"``) the
+    model is configured with. Users should compose this primitive into
+    their training loop (notebook-level or ``pipekit_train.TrainingLoop``)
+    rather than reimplementing it.
+
     Args:
-        model: Flax NNX module.
-        optimizer: NNX optimizer wrapping the model parameters.
+        model: Equinox module to optimise.
         batch: Training batch.
+        optimizer: Optax gradient transformation (e.g. ``optax.adam(1e-3)``).
+        opt_state: Current optimiser state.
 
     Returns:
-        Scalar training loss.
+        Tuple of (updated model, updated optimiser state, scalar loss).
     """
-    loss, grads = nnx.value_and_grad(train_loss_fn)(model, batch)
-    optimizer.update(model, grads)
-    return loss
+    loss, grads = eqx.filter_value_and_grad(train_loss_fn)(model, batch)
+    updates, opt_state = optimizer.update(grads, opt_state, model)
+    model = eqx.apply_updates(model, updates)
+    return model, opt_state, loss
 
 
+@eqx.filter_jit
 def eval_step(
     model: Any,
     batch: Batch1D | Batch2D,
@@ -85,71 +101,14 @@ def eval_step(
     """Compute the evaluation loss for a single batch (no gradient).
 
     Args:
-        model: Flax NNX module.
-        batch: Evaluation batch.
+        model: Equinox module.
+        batch: Evaluation batch (must have a non-``None`` ``target``).
 
     Returns:
         Scalar reconstruction loss.
     """
     pred = model(batch)
-    return reconstruction_loss(pred, batch.target)
-
-
-# ---------------------------------------------------------------------------
-# High-level fit loop
-# ---------------------------------------------------------------------------
-
-
-def fit(
-    model: Any,
-    train_batches: list[Batch1D | Batch2D],
-    *,
-    lr: float = 1e-3,
-    n_epochs: int = 10,
-    val_batches: list[Batch1D | Batch2D] | None = None,
-    verbose: bool = True,
-) -> tuple[nnx.Optimizer, list[float], list[float]]:
-    """Train a 4DVarNet model for multiple epochs.
-
-    Iterates over epochs and batches, logging train (and optional validation)
-    losses.  The ``model`` is updated in-place.
-
-    Args:
-        model: Flax NNX module (already initialised).
-        train_batches: List of training batches.
-        lr: Learning rate for the Adam optimiser.
-        n_epochs: Number of training epochs.
-        val_batches: Optional list of validation batches.
-        verbose: Whether to print per-epoch losses.
-
-    Returns:
-        Tuple of (optimizer, train loss history, val loss history).
-    """
-    optimizer = nnx.Optimizer(model, optax.adam(lr), wrt=nnx.Param)
-
-    train_losses: list[float] = []
-    val_losses: list[float] = []
-
-    for epoch in range(n_epochs):
-        epoch_train_losses = []
-        for batch in train_batches:
-            loss = train_step(model, optimizer, batch)
-            epoch_train_losses.append(float(loss))
-
-        mean_train = float(jnp.mean(jnp.array(epoch_train_losses)))
-        train_losses.append(mean_train)
-
-        mean_val = float("nan")
-        if val_batches is not None:
-            epoch_val_losses = [float(eval_step(model, b)) for b in val_batches]
-            mean_val = float(jnp.mean(jnp.array(epoch_val_losses)))
-        val_losses.append(mean_val)
-
-        if verbose:
-            print(
-                f"Epoch {epoch + 1}/{n_epochs} — "
-                f"train loss: {mean_train:.6f}"
-                + (f"  val loss: {mean_val:.6f}" if val_batches else "")
-            )
-
-    return optimizer, train_losses, val_losses
+    target = batch.target
+    if target is None:
+        raise ValueError("eval_step requires batch.target to be set.")
+    return reconstruction_loss(pred, target)

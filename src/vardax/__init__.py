@@ -19,6 +19,11 @@ from vardax._src._types import (
     LSTMState1D,
     LSTMState2D,
 )
+from vardax._src.adjoints import (
+    ImplicitAdjoint,
+    OneStepAdjoint,
+    RecursiveCheckpointAdjoint,
+)
 from vardax._src.costs import (
     decomposed_loss,
     obs_cost_1d,
@@ -35,6 +40,29 @@ from vardax._src.model import (
     FourDVarNet1D,
     FourDVarNet2D,
 )
+from vardax._src.models import (
+    IncrementalConfig,
+    IncrementalFourDVar,
+    OptimalInterpolation,
+    StrongFourDVar,
+    ThreeDVar,
+    WeakFourDVar,
+)
+from vardax._src.obs_operators import (
+    AveragingKernel,
+    InstrumentRegistry,
+    InstrumentSpec,
+    LinearObs,
+    MaskedIdentity,
+    MultiInstrumentFusion,
+)
+from vardax._src.posterior import (
+    EnsembleCovariance,
+    GaussianMarkLikelihood,
+    GaussNewtonHessian,
+    LaplaceCovariance,
+    Posterior,
+)
 from vardax._src.priors import (
     BilinAEPrior1D,
     BilinAEPrior2D,
@@ -45,8 +73,17 @@ from vardax._src.priors import (
     L96Prior,
     MLPAEPrior1D,
 )
+from vardax._src.protocols import (
+    AnalysisStep,
+    CostFunction,
+    ForwardModel,
+    GradModulator,
+    Minimiser,
+    ObservationOperator,
+    PosteriorAdapter,
+    Prior,
+)
 from vardax._src.solver import (
-    GradMode,
     SolverState1D,
     SolverState2D,
     fp_solver_step_1d,
@@ -62,7 +99,6 @@ from vardax._src.solver import (
 )
 from vardax._src.training import (
     eval_step,
-    fit,
     reconstruction_loss,
     train_loss_fn,
     train_step,
@@ -81,6 +117,28 @@ __all__ = [
     "Batch2DMultivar",
     "LSTMState1D",
     "LSTMState2D",
+    # Protocols (pipekit-cycle + vardax-specific)
+    "AnalysisStep",
+    "CostFunction",
+    "ForwardModel",
+    "GradModulator",
+    "Minimiser",
+    "ObservationOperator",
+    "PosteriorAdapter",
+    "Prior",
+    # Observation operators (Decision D9)
+    "AveragingKernel",
+    "InstrumentRegistry",
+    "InstrumentSpec",
+    "LinearObs",
+    "MaskedIdentity",
+    "MultiInstrumentFusion",
+    # Posterior adapters (Decision D10)
+    "EnsembleCovariance",
+    "GaussNewtonHessian",
+    "GaussianMarkLikelihood",
+    "LaplaceCovariance",
+    "Posterior",
     # Costs
     "decomposed_loss",
     "obs_cost_1d",
@@ -100,8 +158,11 @@ __all__ = [
     # Gradient modulators
     "ConvLSTMGradMod1D",
     "ConvLSTMGradMod2D",
+    # Adjoints (Decision D15 — replaces v0.1 grad_mode enum)
+    "ImplicitAdjoint",
+    "OneStepAdjoint",
+    "RecursiveCheckpointAdjoint",
     # Solver
-    "GradMode",
     "SolverState1D",
     "SolverState2D",
     "fp_solver_step_1d",
@@ -117,9 +178,15 @@ __all__ = [
     # Model
     "FourDVarNet1D",
     "FourDVarNet2D",
+    # Classical DA methods (Decision D14)
+    "IncrementalConfig",
+    "IncrementalFourDVar",
+    "OptimalInterpolation",
+    "StrongFourDVar",
+    "ThreeDVar",
+    "WeakFourDVar",
     # Training
     "eval_step",
-    "fit",
     "reconstruction_loss",
     "train_loss_fn",
     "train_step",

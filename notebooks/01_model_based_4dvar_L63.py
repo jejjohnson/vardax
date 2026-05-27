@@ -19,7 +19,7 @@
 # attractor using `vardax`.
 
 # %%
-import flax.nnx as nnx
+# (NNX removed in Epic 0 — vardax is now equinox-native)
 import jax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
@@ -53,7 +53,7 @@ model = FourDVarNet1D(
     latent_dim=8,
     hidden_dim=16,
     n_solver_steps=5,
-    rngs=nnx.Rngs(jax.random.PRNGKey(1)),
+    key=jax.random.PRNGKey(1),
 )
 
 # %% [markdown]

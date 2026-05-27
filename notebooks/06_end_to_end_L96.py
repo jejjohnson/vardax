@@ -116,7 +116,7 @@ plt.show()
 # ## 6. Train FourDVarNet1D with L96Prior
 
 # %%
-import flax.nnx as nnx
+# (NNX removed in Epic 0 — vardax is now equinox-native)
 
 batch_train = xr_to_batch1d(ds_train, state_var="state", obs_var="obs", mask_var="mask")
 batch_test = xr_to_batch1d(ds_test, state_var="state", obs_var="obs", mask_var="mask")
@@ -130,10 +130,10 @@ model = FourDVarNet1D(
     latent_dim=16,
     hidden_dim=32,
     n_solver_steps=5,
-    rngs=nnx.Rngs(jax.random.PRNGKey(1)),
+    key=jax.random.PRNGKey(1),
 )
 
-optimizer, train_losses, _ = vardax.fit(
+model, train_losses, _ = vardax.examples.fit_demo(
     model,
     [batch_train],
     n_epochs=5,

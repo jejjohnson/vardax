@@ -19,13 +19,13 @@
 # Lorenz-63 dataset.
 
 # %%
-import flax.nnx as nnx
+# (NNX removed in Epic 0 — vardax is now equinox-native)
 import jax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
 
 import vardax
-from vardax import Batch1D, FourDVarNet1D, fit
+from vardax import Batch1D, FourDVarNet1D
 
 # %% [markdown]
 # ## Generate training data
@@ -55,7 +55,7 @@ model = FourDVarNet1D(
     latent_dim=8,
     hidden_dim=16,
     n_solver_steps=5,
-    rngs=nnx.Rngs(jax.random.PRNGKey(1)),
+    key=jax.random.PRNGKey(1),
 )
 
 optimizer, train_losses, val_losses = fit(

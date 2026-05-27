@@ -139,18 +139,17 @@ trajectories from noisy partial observations:
 ```python
 import jax, jax.numpy as jnp
 import vardax as vdx
-from flax import nnx
+from vardax.adjoints import OneStepAdjoint
 
 # Build a 4DVarNet for 1D state vectors (Lorenz-63: N=3)
-key = nnx.Rngs(jax.random.PRNGKey(0))
 model = vdx.FourDVarNet1D(
     state_dim=3,
     n_time=20,
     latent_dim=8,
     hidden_dim=16,
     n_solver_steps=15,
-    grad_mode="one_step",           # Bolte et al. (2023), O(1) memory
-    rngs=key,
+    solver_adjoint=OneStepAdjoint(),   # Bolte et al. (2023), O(1) memory
+    key=jax.random.PRNGKey(0),
 )
 
 # batch.input: (B, T, N) masked observations

@@ -136,7 +136,7 @@ plt.show()
 # ## 8. Train FourDVarNet1D
 
 # %%
-import flax.nnx as nnx
+# (NNX removed in Epic 0 — vardax is now equinox-native)
 
 N = batch_train.input.shape[-1]   # 3 (X, Y, Z)
 T = batch_train.input.shape[1]    # 20
@@ -147,10 +147,10 @@ model = FourDVarNet1D(
     latent_dim=8,
     hidden_dim=16,
     n_solver_steps=5,
-    rngs=nnx.Rngs(jax.random.PRNGKey(1)),
+    key=jax.random.PRNGKey(1),
 )
 
-optimizer, train_losses, _ = vardax.fit(
+model, train_losses, _ = vardax.examples.fit_demo(
     model,
     [batch_train],
     n_epochs=5,

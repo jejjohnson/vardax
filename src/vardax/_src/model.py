@@ -1,50 +1,74 @@
 """End-to-end 4DVarNet models.
 
-Composes the prior, gradient modulator, and solver into a single Flax NNX
-module that can be trained end-to-end.
+Composes the prior, gradient modulator, and solver into a single
+``eqx.Module`` that can be trained end-to-end via ``optax`` +
+``eqx.filter_value_and_grad``.
+
+In v0.4 the differentiation strategy is selected via a
+``solver_adjoint: optimistix.AbstractAdjoint`` constructor slot
+(Decision D15). The ``grad_mode`` enum from v0.1.x is gone:
+
+- ``optimistix.RecursiveCheckpointAdjoint()`` → unrolled backprop with
+  recursive checkpointing (the default)
+- ``vardax.adjoints.OneStepAdjoint()`` → Bolte et al. 2023, O(1) memory
+- ``optimistix.ImplicitAdjoint()`` → fixed-point projection + IFT
+
+The dispatch in ``FourDVarNet*.__call__`` checks the adjoint's type
+to pick the corresponding inner-solver path.
 """
 
 from __future__ import annotations
 
-from flax import nnx
+from typing import Any
+
+import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, Float
+from jaxtyping import Array, Float, PRNGKeyArray
+import optimistix as optx
 
 from ._types import Batch1D, Batch2D, LSTMState1D, LSTMState2D
+from .adjoints import OneStepAdjoint
 from .grad_mod import ConvLSTMGradMod1D, ConvLSTMGradMod2D
 from .priors import BilinAEPrior1D, BilinAEPrior2D
-from .solver import GradMode
 
 
-class FourDVarNet1D(nnx.Module):
+def _default_adjoint() -> optx.AbstractAdjoint:
+    """Default adjoint for the FourDVarNet inner solver."""
+    return optx.RecursiveCheckpointAdjoint()
+
+
+class FourDVarNet1D(eqx.Module):
     """End-to-end 4DVarNet model for 1-D spatiotemporal reconstruction.
 
-    The model minimises the variational cost
+    Minimises the variational cost
 
     .. math::
 
         J(x) = \\|\\mathbf{m} \\odot (x - y)\\|^2 + \\lambda \\|x - \\varphi(x)\\|^2
 
-    using ``n_solver_steps`` learned gradient steps, where :math:`\\varphi` is
-    the bilinear autoencoder prior and the gradient steps are modulated by a
-    ConvLSTM.
+    using ``n_solver_steps`` learned gradient steps modulated by a ConvLSTM,
+    with the differentiation strategy selected by ``solver_adjoint``.
 
     Attributes:
-        state_dim: Spatial dimension ``N`` of the state.
-        n_time: Number of time steps ``T``.
-        latent_dim: Latent dimension of the bilinear autoencoder prior.
-        hidden_dim: Hidden dimension of the ConvLSTM gradient modulator.
         n_solver_steps: Number of solver iterations to unroll.
         alpha: Gradient step-size.
         prior_weight: Weight :math:`\\lambda` for the prior cost term.
-        grad_mode: Differentiation and solver strategy (``"unrolled"``,
-            ``"one_step"``, or ``"implicit"``).  In ``"implicit"`` mode the
-            forward pass uses a fixed-point projection based only on the
-            prior; the ConvLSTM gradient modulator, ``alpha``, and
-            ``prior_weight`` are not used in the solver, and only the
-            implicit fixed point is differentiated through.
+        solver_adjoint: ``optimistix.AbstractAdjoint`` selecting the
+            differentiation strategy. Defaults to
+            ``RecursiveCheckpointAdjoint`` (standard backprop). Use
+            ``OneStepAdjoint()`` for O(1)-memory training (Bolte et al.
+            2023) or ``ImplicitAdjoint()`` for fixed-point projection.
+        prior: BilinAEPrior1D learned prior.
+        grad_mod: ConvLSTMGradMod1D learned gradient modulator.
     """
+
+    n_solver_steps: int = eqx.field(static=True)
+    alpha: float = eqx.field(static=True)
+    prior_weight: float = eqx.field(static=True)
+    solver_adjoint: optx.AbstractAdjoint = eqx.field(static=True)
+    prior: BilinAEPrior1D
+    grad_mod: ConvLSTMGradMod1D
 
     def __init__(
         self,
@@ -55,43 +79,40 @@ class FourDVarNet1D(nnx.Module):
         n_solver_steps: int = 15,
         alpha: float = 0.2,
         prior_weight: float = 1.0,
-        grad_mode: GradMode = "unrolled",
+        solver_adjoint: optx.AbstractAdjoint | None = None,
         *,
-        rngs: nnx.Rngs,
+        key: PRNGKeyArray,
     ) -> None:
         self.n_solver_steps = n_solver_steps
         self.alpha = alpha
         self.prior_weight = prior_weight
-        self.grad_mode = grad_mode
+        self.solver_adjoint = solver_adjoint or _default_adjoint()
+        k_prior, k_grad = jax.random.split(key)
         self.prior = BilinAEPrior1D(
             state_dim=state_dim,
             latent_dim=latent_dim,
             n_time=n_time,
-            rngs=rngs,
+            key=k_prior,
         )
         self.grad_mod = ConvLSTMGradMod1D(
             state_channels=n_time,
             hidden_dim=hidden_dim,
-            rngs=rngs,
+            key=k_grad,
         )
 
     def __call__(self, batch: Batch1D) -> Float[Array, "B T N"]:
         """Run the solver and return the final state estimate.
 
-        Args:
-            batch: Input batch with ``input``, ``mask``, and ``target`` fields.
-
-        Returns:
-            Reconstructed state of shape ``(B, T, N)``.
+        Dispatches on ``solver_adjoint`` to pick the differentiation
+        path.
         """
-        if self.grad_mode == "unrolled":
-            return self._call_unrolled(batch)
-        elif self.grad_mode == "one_step":
+        if isinstance(self.solver_adjoint, OneStepAdjoint):
             return self._call_one_step(batch)
-        elif self.grad_mode == "implicit":
+        if isinstance(self.solver_adjoint, optx.ImplicitAdjoint):
             return self._call_implicit(batch)
-        else:
-            raise ValueError(f"Unknown grad_mode: {self.grad_mode!r}")
+        # Default: optimistix.RecursiveCheckpointAdjoint() and anything
+        # else falls through to the unrolled backprop path.
+        return self._call_unrolled(batch)
 
     def _call_unrolled(self, batch: Batch1D) -> Float[Array, "B T N"]:
         b, _, n = batch.input.shape
@@ -126,37 +147,59 @@ class FourDVarNet1D(nnx.Module):
         )
 
     def _call_implicit(self, batch: Batch1D) -> Float[Array, "B T N"]:
-        # Uses the fixed-point projection solver (prior only; grad_mod and
-        # alpha are not used in this mode).  A full implicit-differentiation
-        # implementation that incorporates the gradient modulator requires
-        # jaxopt or a similar fixed-point solver library.
+        # Uses the fixed-point projection solver (prior only; grad_mod
+        # and alpha are not used in this mode).
         from .solver import solve_4dvarnet_1d_fixedpoint
 
         return solve_4dvarnet_1d_fixedpoint(
             batch, self.prior, n_fp_steps=self.n_solver_steps
         )
 
+    def as_analysis_step(self) -> _FourDVarNet1DAnalysisStep:
+        """Adapt to ``pipekit_cycle.AnalysisStep`` (Decision D8)."""
+        return _FourDVarNet1DAnalysisStep(self)
 
-class FourDVarNet2D(nnx.Module):
+
+class _FourDVarNet1DAnalysisStep(eqx.Module):
+    """``pipekit_cycle.AnalysisStep`` adapter for ``FourDVarNet1D``."""
+
+    model: FourDVarNet1D
+
+    def __call__(
+        self,
+        forecast: Float[Array, "B T N"],
+        obs: Float[Array, "B T N"],
+        *,
+        obs_op: Any,  # pipekit_cycle.ObservationOperator
+        obs_err_cov: Any,
+    ) -> Float[Array, "B T N"]:
+        mask = jnp.where(jnp.isfinite(obs), 1.0, 0.0)
+        obs_clean = jnp.nan_to_num(obs)
+        batch = Batch1D(input=obs_clean, mask=mask, target=None)
+        return self.model(batch)
+
+
+class FourDVarNet2D(eqx.Module):
     """End-to-end 4DVarNet model for 2-D spatiotemporal reconstruction.
 
     Attributes:
-        n_time: Number of time steps ``T``.
-        height: Spatial height ``H``.
-        width: Spatial width ``W``.
-        latent_dim: Latent dimension of the bilinear autoencoder prior.
-        hidden_dim: Hidden dimension of the ConvLSTM gradient modulator.
         n_solver_steps: Number of solver iterations to unroll.
         alpha: Gradient step-size.
         prior_weight: Weight for the prior cost term.
-        grad_mode: Differentiation and solver strategy (``"unrolled"``,
-            ``"one_step"``, or ``"implicit"``).  In ``"implicit"`` mode the
-            forward pass uses a fixed-point projection based only on the
-            prior; the ConvLSTM gradient modulator, ``alpha``, and
-            ``prior_weight`` are not used in the solver, and only the
-            implicit fixed point is differentiated through.  Note that
-            ``"implicit"`` is not yet implemented for 2-D models.
+        solver_adjoint: ``optimistix.AbstractAdjoint`` selecting the
+            differentiation strategy. Defaults to
+            ``RecursiveCheckpointAdjoint`` (standard backprop).
+            ``ImplicitAdjoint`` is not yet implemented for 2-D models.
+        prior: BilinAEPrior2D learned prior.
+        grad_mod: ConvLSTMGradMod2D learned gradient modulator.
     """
+
+    n_solver_steps: int = eqx.field(static=True)
+    alpha: float = eqx.field(static=True)
+    prior_weight: float = eqx.field(static=True)
+    solver_adjoint: optx.AbstractAdjoint = eqx.field(static=True)
+    prior: BilinAEPrior2D
+    grad_mod: ConvLSTMGradMod2D
 
     def __init__(
         self,
@@ -168,44 +211,39 @@ class FourDVarNet2D(nnx.Module):
         n_solver_steps: int = 15,
         alpha: float = 0.2,
         prior_weight: float = 1.0,
-        grad_mode: GradMode = "unrolled",
+        solver_adjoint: optx.AbstractAdjoint | None = None,
         *,
-        rngs: nnx.Rngs,
+        key: PRNGKeyArray,
     ) -> None:
         self.n_solver_steps = n_solver_steps
         self.alpha = alpha
         self.prior_weight = prior_weight
-        self.grad_mode = grad_mode
+        self.solver_adjoint = solver_adjoint or _default_adjoint()
+        k_prior, k_grad = jax.random.split(key)
         self.prior = BilinAEPrior2D(
             latent_dim=latent_dim,
             n_time=n_time,
             height=height,
             width=width,
-            rngs=rngs,
+            key=k_prior,
         )
         self.grad_mod = ConvLSTMGradMod2D(
             state_channels=n_time,
             hidden_dim=hidden_dim,
-            rngs=rngs,
+            key=k_grad,
         )
 
     def __call__(self, batch: Batch2D) -> Float[Array, "B T H W"]:
         """Run the solver and return the final state estimate.
 
-        Args:
-            batch: Input batch with ``input``, ``mask``, and ``target`` fields.
-
-        Returns:
-            Reconstructed state of shape ``(B, T, H, W)``.
+        Dispatches on ``solver_adjoint`` to pick the differentiation
+        path.
         """
-        if self.grad_mode == "unrolled":
-            return self._call_unrolled(batch)
-        elif self.grad_mode == "one_step":
+        if isinstance(self.solver_adjoint, OneStepAdjoint):
             return self._call_one_step(batch)
-        elif self.grad_mode == "implicit":
+        if isinstance(self.solver_adjoint, optx.ImplicitAdjoint):
             return self._call_implicit(batch)
-        else:
-            raise ValueError(f"Unknown grad_mode: {self.grad_mode!r}")
+        return self._call_unrolled(batch)
 
     def _call_unrolled(self, batch: Batch2D) -> Float[Array, "B T H W"]:
         b, _, h, w = batch.input.shape
@@ -240,9 +278,30 @@ class FourDVarNet2D(nnx.Module):
         )
 
     def _call_implicit(self, batch: Batch2D) -> Float[Array, "B T H W"]:
-        # Note: the fixed-point projection solver uses only the prior (no
-        # gradient modulator).  A full implicit-diff implementation with a
-        # gradient-modulated solver requires jaxopt.
         raise NotImplementedError(
-            "Implicit differentiation for FourDVarNet2D is not yet implemented."
+            "ImplicitAdjoint for FourDVarNet2D is not yet implemented; "
+            "use RecursiveCheckpointAdjoint or OneStepAdjoint."
         )
+
+    def as_analysis_step(self) -> _FourDVarNet2DAnalysisStep:
+        """Adapt to ``pipekit_cycle.AnalysisStep`` (Decision D8)."""
+        return _FourDVarNet2DAnalysisStep(self)
+
+
+class _FourDVarNet2DAnalysisStep(eqx.Module):
+    """``pipekit_cycle.AnalysisStep`` adapter for ``FourDVarNet2D``."""
+
+    model: FourDVarNet2D
+
+    def __call__(
+        self,
+        forecast: Float[Array, "B T H W"],
+        obs: Float[Array, "B T H W"],
+        *,
+        obs_op: Any,
+        obs_err_cov: Any,
+    ) -> Float[Array, "B T H W"]:
+        mask = jnp.where(jnp.isfinite(obs), 1.0, 0.0)
+        obs_clean = jnp.nan_to_num(obs)
+        batch = Batch2D(input=obs_clean, mask=mask, target=None)
+        return self.model(batch)
