@@ -59,7 +59,7 @@ directly.
 |---|---|---|
 | **`VarDANet*`** | Learned 4DVarNet with prior + ConvLSTM grad modulator. Three differentiation modes (unrolled / one-step / implicit). Research and benchmarks. | Fablet et al. 2021–2023 |
 | **`IncrementalVarDA*`** | Operational 4DVar: tangent-linear via `jax.linearize`, Gauss-Newton outer, CG/Lanczos inner, control-variable transform via `gaussx` Matérn factorisation. | Courtier et al. 1994 |
-| **`AmortizedVarDA*`** | Direct $q_\phi(x \mid y)$ head: conditional normalising flow, score-based diffusion, or simulation-based amortized posterior. | Cohen et al. 2023; Wikle 2023 |
+| **`AmortizedVarDA*`** | Direct $q_\phi(x \mid y)$ head: conditional normalising flow, score-based diffusion, or simulation-based amortized posterior. | Cranmer et al. 2020; Cohen et al. 2023 |
 
 All three satisfy `pipekit_cycle.AnalysisStep` and compose with the same
 `ObservationOperator` and `ForwardModel` registries.

@@ -124,8 +124,13 @@ family. Summary:
 | `MultiInstrumentFusion` | Per-instrument composition at the likelihood level |
 | `InstrumentRegistry` | `dict[instrument_id, InstrumentSpec]` |
 
-All satisfy `pipekit_cycle.ObservationOperator` (Decision D8): `__call__`
-plus `linearize` returning a `lineax`/`gaussx` linear operator.
+`MaskedIdentity`, `LinearObs`, and `AveragingKernel` satisfy
+`pipekit_cycle.ObservationOperator` (Decision D8) directly: `__call__`
+returns an `Array`, `linearize` returns a `lineax` / `gaussx`
+`AbstractLinearOperator`. `MultiInstrumentFusion` returns per-instrument
+`dict[str, Array]` outputs and is consumed by the cost function directly;
+for strict-protocol contexts it exposes a `.to_observation_operator()`
+adapter that flattens to a single output + block-diagonal linear operator.
 
 ---
 

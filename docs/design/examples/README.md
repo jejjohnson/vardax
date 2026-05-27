@@ -3,7 +3,7 @@ status: draft
 version: 0.3.0
 ---
 
-# vardaX — Examples
+# vardax — Examples
 
 Usage patterns organised by API layer plus end-to-end walkthroughs.
 

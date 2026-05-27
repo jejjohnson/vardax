@@ -402,7 +402,7 @@ vardax satisfies `pipekit-cycle` protocols **by construction** (Decision D8):
 
 | Protocol | Satisfied by |
 |---|---|
-| `pipekit_cycle.ObservationOperator` | All classes in `vardax.obs_operators.*` |
+| `pipekit_cycle.ObservationOperator` | `MaskedIdentity`, `LinearObs`, `AveragingKernel` directly; `MultiInstrumentFusion` via `.to_observation_operator()` (it returns per-instrument dicts natively) |
 | `pipekit_cycle.ForwardModel` | `DynamicalPrior` wrapper around any somax / plumax forward |
 | `pipekit_cycle.AnalysisStep` | `VarDANet*.as_analysis_step()`, `IncrementalVarDA*.as_analysis_step()`, `AmortizedVarDA*.as_analysis_step()` |
 
@@ -421,7 +421,10 @@ patterns and orchestration examples.
 | Lint | `uv run ruff check .` | Entire repo |
 | Format | `uv run ruff format --check .` | Entire repo |
 | Typecheck | `uv run ty check vardax` | Package only |
-| Protocol conformance | `uv run pytest tests/test_pipekit_protocols.py` | All Layer 2 models |
+| Protocol conformance (planned, Epic 1) | `uv run pytest tests/test_pipekit_protocols.py` | All Layer 2 models |
 
-All must pass before merge. GitHub Actions on push/PR.
+All must pass before merge. GitHub Actions on push/PR. The protocol
+conformance suite is added as part of Epic 1 (see
+[boundaries.md](boundaries.md#epic-1-protocol-alignment-direct-satisfaction-decision-d8))
+— it is not yet wired into CI on the v0.1.x codebase.
 Conventional commits required (`feat:`, `fix:`, `docs:`, `test:`, …).

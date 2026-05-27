@@ -1,5 +1,10 @@
 # Posterior Covariance
 
+> **Status: v0.3.0 design reference.** `vardax.posterior` (Laplace,
+> GaussNewtonHessian, EnsembleCovariance, GaussianMarkLikelihood) is not
+> yet implemented in the v0.1.x `fourdvarjax` package. Code snippets are
+> design pseudocode targeting Epic 6.
+
 A point estimate $\mathbf{x}^*$ from minimising $J(\mathbf{x})$ is not
 enough — downstream consumers (population models, decision pipelines, alert
 systems) need posterior uncertainty. vardax exposes three families of

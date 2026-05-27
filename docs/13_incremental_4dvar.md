@@ -1,5 +1,10 @@
 # Incremental 4DVar with Control-Variable Transform
 
+> **Status: v0.3.0 design reference.** `IncrementalVarDA*` and
+> `vardax.cvt` are not yet implemented in the v0.1.x `fourdvarjax`
+> package. Code snippets are design pseudocode targeting the equinox
+> migration roadmap (Epic 5).
+
 Operational 4DVar — used by ECMWF, NCEP, JMA, UKMO — solves the
 weak-constraint variational problem by Gauss-Newton outer iterations on the
 full nonlinear cost, with CG / Lanczos inner iterations on a linearised

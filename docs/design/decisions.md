@@ -184,8 +184,9 @@ a required dependency.
   callable adapting `(forecast, obs, *, obs_op, obs_err_cov) → analysis`.
 - The training interface (`model(batch) → x_recon`) remains unchanged; it
   coexists with the operational `AnalysisStep` interface.
-- `tests/test_pipekit_protocols.py` enforces `isinstance(...)` checks on
-  every public model and obs operator.
+- `tests/test_pipekit_protocols.py` (added as part of Epic 1) enforces
+  `isinstance(...)` checks on every public model and obs operator. Not
+  yet present in the v0.1.x codebase.
 
 **Trade-off accepted.** `pipekit-cycle` becomes a required dep. Users who
 want only the JAX inference code without orchestration still get pipekit in

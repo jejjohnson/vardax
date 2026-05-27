@@ -18,8 +18,11 @@ protocol family.
   Pipekit-cycle protocol re-exports.
 - **[observation_operators.md](observation_operators.md)** — Layer 1
   observation operator family: `MaskedIdentity`, `AveragingKernel`,
-  `MultiInstrumentFusion`, `InstrumentRegistry`. All satisfy
-  `pipekit_cycle.ObservationOperator`.
+  `MultiInstrumentFusion`, `InstrumentRegistry`. `MaskedIdentity` and
+  `AveragingKernel` satisfy `pipekit_cycle.ObservationOperator` directly;
+  `MultiInstrumentFusion` returns per-instrument `dict` outputs and
+  satisfies the protocol via its `.to_observation_operator()` adapter
+  (flattening / block-diagonal representation).
 - **[models.md](models.md)** — Layer 2: `VarDANet*`, `IncrementalVarDA*`,
   `AmortizedVarDA*`. All expose `.as_analysis_step()`.
 

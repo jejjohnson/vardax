@@ -14,7 +14,7 @@ satisfaction patterns and the orchestration recipes.
 | Pipekit-cycle protocol | Satisfied by |
 |---|---|
 | `ForwardModel` | `vardax.priors.DynamicalPrior` (wraps any forward); somax / plumax forwards directly |
-| `ObservationOperator` | Every class in `vardax.obs_operators.*` |
+| `ObservationOperator` | `MaskedIdentity`, `LinearObs`, `AveragingKernel` directly; `MultiInstrumentFusion` via `.to_observation_operator()` (returns per-instrument dicts natively) |
 | `AnalysisStep` | `VarDANet*.as_analysis_step()`, `IncrementalVarDA*.as_analysis_step()`, `AmortizedVarDA*.as_analysis_step()` |
 
 ## `ForwardModel` satisfaction

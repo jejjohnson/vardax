@@ -3,11 +3,11 @@ status: draft
 version: 0.3.0
 ---
 
-# vardaX Design Doc
+# vardax Design Doc
 
 **JAX-native variational and amortized inference for data assimilation.**
 
-*Formerly fourdvarjax — renamed to vardaX.*
+*Formerly fourdvarjax — renamed to vardax.*
 
 vardax provides the variational inference layer that sits above forward-model
 libraries (`somax`, `plumax`) and below orchestration (`pipekit-cycle`). It

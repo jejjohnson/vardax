@@ -1,5 +1,11 @@
 # Six-Step Inference Cycle
 
+> **Status: v0.3.0 design reference.** This chapter describes the
+> validation methodology vardax will adopt as the equinox migration
+> (Epics 0–10) progresses. Code snippets are design pseudocode; the
+> validation utilities (`vardax.utils.validation`) are not yet present in
+> the v0.1.x `fourdvarjax` package.
+
 The "six-step inference cycle" is the research-to-operations methodology
 vardax is engineered around. Across all forward-model tiers, the same
 sequence applies:

@@ -1,5 +1,10 @@
 # Amortized Inference
 
+> **Status: v0.3.0 design reference.** `AmortizedVarDA*` and conditional
+> flow / score-based heads are not yet implemented in the v0.1.x
+> `fourdvarjax` package. Code snippets are design pseudocode targeting
+> Epic 8.
+
 Variational and incremental 4DVar (chapters 4, 13) optimise per-event. Each
 new observation triggers a fresh minimisation — fine for retrospective
 analysis, too slow for real-time alerts. **Amortized inference** trains a

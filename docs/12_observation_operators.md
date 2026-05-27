@@ -1,5 +1,12 @@
 # Observation Operators
 
+> **Status: v0.3.0 design reference.** Chapters 12–16 describe the API
+> targeted by the equinox migration roadmap (see
+> [`design/boundaries.md`](design/boundaries.md) — Epics 0–10). The
+> `vardax.obs_operators.*` modules referenced below are **not yet
+> implemented** in the v0.1.x `fourdvarjax` package. Code snippets are
+> design pseudocode showing intended call sites, not runnable examples.
+
 The observation operator $H$ maps a model state $\mathbf{x}$ to predicted
 observations $\hat{\mathbf{y}} = H(\mathbf{x})$. The variational cost
 
