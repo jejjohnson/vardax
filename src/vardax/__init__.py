@@ -35,6 +35,14 @@ from vardax._src.model import (
     FourDVarNet1D,
     FourDVarNet2D,
 )
+from vardax._src.obs_operators import (
+    AveragingKernel,
+    InstrumentRegistry,
+    InstrumentSpec,
+    LinearObs,
+    MaskedIdentity,
+    MultiInstrumentFusion,
+)
 from vardax._src.priors import (
     BilinAEPrior1D,
     BilinAEPrior2D,
@@ -44,6 +52,16 @@ from vardax._src.priors import (
     L63Prior,
     L96Prior,
     MLPAEPrior1D,
+)
+from vardax._src.protocols import (
+    AnalysisStep,
+    CostFunction,
+    ForwardModel,
+    GradModulator,
+    Minimiser,
+    ObservationOperator,
+    PosteriorAdapter,
+    Prior,
 )
 from vardax._src.solver import (
     GradMode,
@@ -80,6 +98,22 @@ __all__ = [
     "Batch2DMultivar",
     "LSTMState1D",
     "LSTMState2D",
+    # Protocols (pipekit-cycle + vardax-specific)
+    "AnalysisStep",
+    "CostFunction",
+    "ForwardModel",
+    "GradModulator",
+    "Minimiser",
+    "ObservationOperator",
+    "PosteriorAdapter",
+    "Prior",
+    # Observation operators (Decision D9)
+    "AveragingKernel",
+    "InstrumentRegistry",
+    "InstrumentSpec",
+    "LinearObs",
+    "MaskedIdentity",
+    "MultiInstrumentFusion",
     # Costs
     "decomposed_loss",
     "obs_cost_1d",

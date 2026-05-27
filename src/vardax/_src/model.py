@@ -13,6 +13,8 @@ argument are supported, but ``grad_mode`` is removed in Epic 3.
 
 from __future__ import annotations
 
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -147,6 +149,35 @@ class FourDVarNet1D(eqx.Module):
             batch, self.prior, n_fp_steps=self.n_solver_steps
         )
 
+    def as_analysis_step(self) -> _FourDVarNet1DAnalysisStep:
+        """Adapt to ``pipekit_cycle.AnalysisStep``.
+
+        Returns a callable matching
+        ``(forecast, obs, *, obs_op, obs_err_cov) -> analysis`` so the
+        model can drop into ``pipekit_cycle.DACycle`` /
+        ``SmootherCycle`` directly. Decision D8.
+        """
+        return _FourDVarNet1DAnalysisStep(self)
+
+
+class _FourDVarNet1DAnalysisStep(eqx.Module):
+    """``pipekit_cycle.AnalysisStep`` adapter for ``FourDVarNet1D``."""
+
+    model: FourDVarNet1D
+
+    def __call__(
+        self,
+        forecast: Float[Array, "B T N"],
+        obs: Float[Array, "B T N"],
+        *,
+        obs_op: Any,  # pipekit_cycle.ObservationOperator
+        obs_err_cov: Any,
+    ) -> Float[Array, "B T N"]:
+        mask = jnp.where(jnp.isfinite(obs), 1.0, 0.0)
+        obs_clean = jnp.nan_to_num(obs)
+        batch = Batch1D(input=obs_clean, mask=mask, target=None)
+        return self.model(batch)
+
 
 class FourDVarNet2D(eqx.Module):
     """End-to-end 4DVarNet model for 2-D spatiotemporal reconstruction.
@@ -248,3 +279,26 @@ class FourDVarNet2D(eqx.Module):
         raise NotImplementedError(
             "Implicit differentiation for FourDVarNet2D is not yet implemented."
         )
+
+    def as_analysis_step(self) -> _FourDVarNet2DAnalysisStep:
+        """Adapt to ``pipekit_cycle.AnalysisStep`` (Decision D8)."""
+        return _FourDVarNet2DAnalysisStep(self)
+
+
+class _FourDVarNet2DAnalysisStep(eqx.Module):
+    """``pipekit_cycle.AnalysisStep`` adapter for ``FourDVarNet2D``."""
+
+    model: FourDVarNet2D
+
+    def __call__(
+        self,
+        forecast: Float[Array, "B T H W"],
+        obs: Float[Array, "B T H W"],
+        *,
+        obs_op: Any,  # pipekit_cycle.ObservationOperator
+        obs_err_cov: Any,
+    ) -> Float[Array, "B T H W"]:
+        mask = jnp.where(jnp.isfinite(obs), 1.0, 0.0)
+        obs_clean = jnp.nan_to_num(obs)
+        batch = Batch2D(input=obs_clean, mask=mask, target=None)
+        return self.model(batch)
