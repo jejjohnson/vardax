@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.8](https://github.com/jejjohnson/vardax/compare/v0.1.7...v0.1.8) (2026-05-27)
+
+
+### Features
+
+* phase 4 — pipekit cycle integration + amortized inference (epics 7, 8) ([#42](https://github.com/jejjohnson/vardax/issues/42)) ([5c2aac0](https://github.com/jejjohnson/vardax/commit/5c2aac002e841658869150139ed0fc2156e48b96))
+
 ## [0.1.7](https://github.com/jejjohnson/vardax/compare/v0.1.6...v0.1.7) (2026-05-27)
 
 
