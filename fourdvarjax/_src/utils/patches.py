@@ -9,7 +9,7 @@ import xarray as xr
 
 def trajectory_to_xr_dataset(
     states: Float[Array, "T F"],
-    time_coords: Float[Array, T],  # type: ignore[unresolved-reference]
+    time_coords: Float[Array, T],  # type: ignore[unresolved-reference]  # ty:ignore[unresolved-reference]
     *,
     feature_names: list[str] | None = None,
 ) -> xr.Dataset:

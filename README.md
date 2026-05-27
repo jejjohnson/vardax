@@ -61,9 +61,10 @@ fourdvarjax/
 │           ├── standardize.py        ← compute_scaler_params, apply_standardization, inverse_standardization
 │           ├── preprocessing.py      ← xr_to_batch1d, train_test_split, interpolate_initial_condition
 │           └── viz.py                ← plot_3d_attractor, plot_state_grid, plot_trajectories, ...
-├── docs/                           ← mathematical reference (13 Markdown files)
+├── docs/                           ← mathematical reference (16 chapters) + design docs
 │   ├── README.md                   ← table of contents
-│   └── ...
+│   ├── 01_*.md ... 16_*.md         ← mathematical chapters
+│   └── design/                     ← architecture, API contracts, decisions D1–D13
 ├── tests/                          ← pytest test suite
 └── notebooks/                      ← Jupytext percent-format .py tutorials
     ├── 01_model_based_4dvar_L63.py
@@ -300,8 +301,28 @@ See the [`docs/`](docs/) directory for a detailed mathematical reference:
 - [§9 1-D Lorenz-63](docs/09_1d_lorenz63.md)
 - [§10 Multivariate 2-D](docs/10_multivariate_2d.md)
 - [§11 Model vs learned prior](docs/11_model_vs_learned_prior.md)
+- [§12 Observation Operators](docs/12_observation_operators.md)
+- [§13 Incremental 4DVar](docs/13_incremental_4dvar.md)
+- [§14 Posterior Covariance](docs/14_posterior_covariance.md)
+- [§15 Amortized Inference](docs/15_amortized_inference.md)
+- [§16 Six-Step Inference Cycle](docs/16_six_step_cycle.md)
 - [Notation summary](docs/notation.md)
 - [References](docs/references.md)
+
+## Design Docs
+
+See [`docs/design/`](docs/design/) for the architecture and decision log
+behind v0.3.0:
+
+- [`design/vision.md`](docs/design/vision.md) — identity, six-step cycle, scope
+- [`design/architecture.md`](docs/design/architecture.md) — three-layer
+  stack, pipekit integration, package layout
+- [`design/boundaries.md`](docs/design/boundaries.md) — ownership map and
+  roadmap (Epics 0–10)
+- [`design/decisions.md`](docs/design/decisions.md) — design decisions D1–D13
+- [`design/api/`](docs/design/api/) — protocol + class contracts by layer
+- [`design/examples/`](docs/design/examples/) — patterns and use case
+  walkthroughs
 
 ## References
 

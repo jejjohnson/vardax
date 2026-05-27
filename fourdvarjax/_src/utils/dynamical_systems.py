@@ -51,7 +51,7 @@ def simulate_lorenz63(
     n_steps: int = 5000,
     n_burn_in: int = 1000,
     x0: Float[Array, 3] | None = None,
-) -> tuple[Float[Array, T], Float[Array, "T 3"]]:  # type: ignore[unresolved-reference]
+) -> tuple[Float[Array, T], Float[Array, "T 3"]]:  # type: ignore[unresolved-reference]  # ty:ignore[unresolved-reference]
     """Simulate the Lorenz-63 system and return state trajectory.
 
     Parameters
@@ -102,7 +102,7 @@ def simulate_lorenz63(
     save_times = jnp.linspace(t0, t1, total_steps + 1)
 
     sol = diffeqsolve(
-        ODETerm(model),  # type: ignore[arg-type]
+        ODETerm(model),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
         Tsit5(),
         t0=t0,
         t1=t1,
@@ -132,9 +132,9 @@ class Lorenz96(eqx.Module):
     def __call__(
         self,
         t: float,
-        y: Float[Array, N],  # type: ignore[unresolved-reference]
+        y: Float[Array, N],  # type: ignore[unresolved-reference]  # ty:ignore[unresolved-reference]
         args: None,
-    ) -> Float[Array, N]:  # type: ignore[unresolved-reference]
+    ) -> Float[Array, N]:  # type: ignore[unresolved-reference]  # ty:ignore[unresolved-reference]
         """Evaluate the vector field at state ``y`` and time ``t``."""
         # Periodic shifts using jnp.roll
         y_km2 = jnp.roll(y, 2)  # x_{k-2}
@@ -151,7 +151,7 @@ def simulate_lorenz96(
     dt: float = 0.01,
     n_steps: int = 5000,
     n_burn_in: int = 1000,
-) -> tuple[Float[Array, T], Float[Array, "T N"]]:  # type: ignore[unresolved-reference]
+) -> tuple[Float[Array, T], Float[Array, "T N"]]:  # type: ignore[unresolved-reference]  # ty:ignore[unresolved-reference]
     """Simulate the Lorenz-96 system and return state trajectory.
 
     Parameters
@@ -190,7 +190,7 @@ def simulate_lorenz96(
     save_times = jnp.linspace(t0, t1, total_steps + 1)
 
     sol = diffeqsolve(
-        ODETerm(model),  # type: ignore[arg-type]
+        ODETerm(model),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
         Tsit5(),
         t0=t0,
         t1=t1,
