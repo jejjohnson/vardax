@@ -18,7 +18,7 @@
 # Demonstrates `FourDVarNet2D` on synthetic 2-D spatiotemporal data.
 
 # %%
-import flax.nnx as nnx
+# (NNX removed in Epic 0 — vardax is now equinox-native)
 import jax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
@@ -50,7 +50,7 @@ model = FourDVarNet2D(
     latent_dim=16,
     hidden_dim=8,
     n_solver_steps=3,
-    rngs=nnx.Rngs(jax.random.PRNGKey(1)),
+    key=jax.random.PRNGKey(1),
 )
 
 out = model(batch)

@@ -1,6 +1,5 @@
 """Tests for vardax._src.grad_mod."""
 
-# (removed: flax dropped in equinox migration)
 import jax.numpy as jnp
 
 from vardax import ConvLSTMGradMod1D, ConvLSTMGradMod2D, LSTMState1D, LSTMState2D

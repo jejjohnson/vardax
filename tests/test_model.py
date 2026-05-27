@@ -1,6 +1,5 @@
 """Tests for vardax._src.model."""
 
-# (removed: flax dropped in equinox migration)
 import jax
 import jax.numpy as jnp
 import pytest

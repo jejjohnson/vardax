@@ -75,12 +75,15 @@ print(f"Train: {batch_train.input.shape}, Test: {batch_test.input.shape}")
 # Minimise $\|x - \varphi(x)\|^2$ on clean (unmasked) state trajectories.
 
 # %%
-import flax.nnx as nnx
+# (NNX removed in Epic 0 — vardax is now equinox-native)
 
 B, T, N = batch_train.input.shape
-prior = BilinAEPrior1D(state_dim=N, latent_dim=8, n_time=T, rngs=nnx.Rngs(jax.random.PRNGKey(10)))
+prior = BilinAEPrior1D(state_dim=N, latent_dim=8, n_time=T, key=jax.random.PRNGKey(10))
 
-pre_optimizer = nnx.Optimizer(prior, optax.adam(1e-3), wrt=nnx.Param)
+import equinox as eqx
+
+pre_optimizer = optax.adam(1e-3)
+pre_opt_state = pre_optimizer.init(eqx.filter(prior, eqx.is_array))
 
 pretrain_losses = []
 n_pretrain_epochs = 20
@@ -92,8 +95,11 @@ def pretrain_loss_fn(prior, x):
 
 
 for epoch in range(n_pretrain_epochs):
-    loss_val, grads = nnx.value_and_grad(pretrain_loss_fn)(prior, batch_train.target)
-    pre_optimizer.update(prior, grads)
+    loss_val, grads = eqx.filter_value_and_grad(pretrain_loss_fn)(
+        prior, batch_train.target
+    )
+    updates, pre_opt_state = pre_optimizer.update(grads, pre_opt_state, prior)
+    prior = eqx.apply_updates(prior, updates)
     pretrain_losses.append(float(loss_val))
 
 print(f"Pre-train final loss: {pretrain_losses[-1]:.6f}")
@@ -104,11 +110,12 @@ print(f"Pre-train final loss: {pretrain_losses[-1]:.6f}")
 # %%
 model_pretrained = FourDVarNet1D(
     state_dim=N, n_time=T, latent_dim=8, hidden_dim=16, n_solver_steps=10,
-    rngs=nnx.Rngs(jax.random.PRNGKey(1)),
+    key=jax.random.PRNGKey(1),
 )
 
-# Copy pre-trained prior weights into the model's prior sub-module
-nnx.update(model_pretrained.prior, nnx.state(prior))
+# Copy pre-trained prior weights into the model's prior sub-module.
+# In Equinox, replace the prior subtree in-place with the pre-trained one.
+model_pretrained = eqx.tree_at(lambda m: m.prior, model_pretrained, prior)
 
 # %% [markdown]
 # ## 4. Stage 2b — Train from scratch (no pre-training)
@@ -116,7 +123,7 @@ nnx.update(model_pretrained.prior, nnx.state(prior))
 # %%
 model_scratch = FourDVarNet1D(
     state_dim=N, n_time=T, latent_dim=8, hidden_dim=16, n_solver_steps=10,
-    rngs=nnx.Rngs(jax.random.PRNGKey(1)),
+    key=jax.random.PRNGKey(1),
 )
 
 # %% [markdown]
@@ -125,7 +132,7 @@ model_scratch = FourDVarNet1D(
 # %%
 n_finetune_epochs = 10
 
-_, metrics_pretrained, _ = vardax.fit(
+model_pretrained, metrics_pretrained, _ = vardax.examples.fit_demo(
     model_pretrained,
     [batch_train],
     n_epochs=n_finetune_epochs,
@@ -133,7 +140,7 @@ _, metrics_pretrained, _ = vardax.fit(
     verbose=False,
 )
 
-_, metrics_scratch, _ = vardax.fit(
+model_scratch, metrics_scratch, _ = vardax.examples.fit_demo(
     model_scratch,
     [batch_train],
     n_epochs=n_finetune_epochs,

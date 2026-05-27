@@ -1,6 +1,5 @@
 """Tests for vardax._src.priors."""
 
-# (removed: flax dropped in equinox migration)
 import jax.numpy as jnp
 
 from vardax import (
