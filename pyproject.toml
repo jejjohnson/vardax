@@ -1,6 +1,6 @@
 [project]
 name = "fourdvarjax"
-version = "0.1.6"
+version = "0.1.7"
 description = "Modular variational data assimilation with learned components (JAX/Flax NNX)"
 authors = [
     { name = "Juan Emmanuel Johnson", email = "jemanjohnson34@gmail.com" },

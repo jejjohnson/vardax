@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.1.7](https://github.com/jejjohnson/vardax/compare/v0.1.6...v0.1.7) (2026-05-27)
+
+
+### Bug Fixes
+
+* address review comments and unblock type check on PR [#30](https://github.com/jejjohnson/vardax/issues/30) ([9a283d0](https://github.com/jejjohnson/vardax/commit/9a283d04b16fac17c1455649a82af9629f95ea2c))
+* **ci:** drop uv cache from Deploy Docs workflow ([db30d8e](https://github.com/jejjohnson/vardax/commit/db30d8edf7d12bf1fee574cd8905c59f343bbb2c))
+* **ci:** drop uv cache from Deploy Docs workflow ([6043d7d](https://github.com/jejjohnson/vardax/commit/6043d7d0cfef743b4714a25b1d6244dbb630e0f4))
+
 ## [0.1.6](https://github.com/jejjohnson/fourdvarjax/compare/v0.1.5...v0.1.6) (2026-03-01)
 
 
