@@ -92,7 +92,9 @@ class IncrementalFourDVar(eqx.Module):
         self.config = config or IncrementalConfig()
 
     def _rollout(
-        self, x_0: Float[Array, N], n_steps: int  # ty:ignore[unresolved-reference]
+        self,
+        x_0: Float[Array, N],
+        n_steps: int,  # ty:ignore[unresolved-reference]
     ) -> Float[Array, "T_plus_1 N"]:
         dt = self.forward.dt
 
