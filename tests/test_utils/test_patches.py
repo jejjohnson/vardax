@@ -1,9 +1,9 @@
-"""Tests for fourdvarjax._src.utils.patches."""
+"""Tests for vardax._src.utils.patches."""
 
 import numpy as np
 import pytest
 
-from fourdvarjax._src.utils.patches import extract_patches, trajectory_to_xr_dataset
+from vardax._src.utils.patches import extract_patches, trajectory_to_xr_dataset
 
 
 def _make_trajectory(n_time: int = 100, n_features: int = 3):

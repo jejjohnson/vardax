@@ -1,9 +1,9 @@
-"""Tests for fourdvarjax._src.costs."""
+"""Tests for vardax._src.costs."""
 
 import jax.numpy as jnp
 import pytest
 
-from fourdvarjax import obs_cost_1d, obs_cost_2d, prior_cost
+from vardax import obs_cost_1d, obs_cost_2d, prior_cost
 
 
 class TestObsCost1D:
@@ -56,14 +56,14 @@ class TestPriorCost:
 
 class TestVariationalCost:
     def test_scalar_output(self, batch_1d):
-        from fourdvarjax import variational_cost
+        from vardax import variational_cost
 
         identity_fn = lambda x: x
         cost = variational_cost(batch_1d.target, batch_1d, identity_fn)
         assert cost.ndim == 0
 
     def test_non_negative(self, batch_1d):
-        from fourdvarjax import variational_cost
+        from vardax import variational_cost
 
         identity_fn = lambda x: x
         cost = variational_cost(batch_1d.target, batch_1d, identity_fn)
@@ -72,7 +72,7 @@ class TestVariationalCost:
     def test_differentiable(self, batch_1d):
         import jax
 
-        from fourdvarjax import variational_cost
+        from vardax import variational_cost
 
         identity_fn = lambda x: x
         grad = jax.grad(variational_cost)(batch_1d.target, batch_1d, identity_fn)
@@ -81,7 +81,7 @@ class TestVariationalCost:
 
 class TestVariationalCostGrad:
     def test_output_shape(self, batch_1d):
-        from fourdvarjax import variational_cost_grad
+        from vardax import variational_cost_grad
 
         identity_fn = lambda x: x
         grad = variational_cost_grad(batch_1d.target, batch_1d, identity_fn)
@@ -90,7 +90,7 @@ class TestVariationalCostGrad:
 
 class TestDecomposedLoss:
     def test_keys(self, batch_1d):
-        from fourdvarjax import decomposed_loss
+        from vardax import decomposed_loss
 
         identity_fn = lambda x: x
         result = decomposed_loss(batch_1d.target, batch_1d, identity_fn)
@@ -99,7 +99,7 @@ class TestDecomposedLoss:
     def test_total_equals_sum(self, batch_1d):
         import pytest
 
-        from fourdvarjax import decomposed_loss
+        from vardax import decomposed_loss
 
         identity_fn = lambda x: x
         result = decomposed_loss(batch_1d.target, batch_1d, identity_fn)

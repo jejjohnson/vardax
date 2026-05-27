@@ -7,7 +7,7 @@ coverage:
         threshold: 5%
 
 fixes:
-  - "/home/runner/work/fourdvarjax/fourdvarjax/::"
+  - "/home/runner/work/vardax/vardax/::"
 
 ignore:
   - "setup.py"

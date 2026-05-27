@@ -1,1 +1,1 @@
-"""Test utilities for fourdvarjax.test_utils subpackage."""
+"""Test utilities for vardax.test_utils subpackage."""

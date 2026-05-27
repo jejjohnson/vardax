@@ -1,10 +1,10 @@
-"""Tests for fourdvarjax._src.solver."""
+"""Tests for vardax._src.solver."""
 
 from flax import nnx
 import jax
 import jax.numpy as jnp
 
-from fourdvarjax import (
+from vardax import (
     LSTMState1D,
     SolverState1D,
     fp_solver_step_1d,
@@ -12,7 +12,7 @@ from fourdvarjax import (
     init_solver_state_2d,
     solve_4dvarnet_1d_fixedpoint,
 )
-from fourdvarjax._src.solver import solver_step_1d
+from vardax._src.solver import solver_step_1d
 
 
 class TestInitSolverState1D:
@@ -38,7 +38,7 @@ class TestInitSolverState2D:
 
 class TestSolverStep1D:
     def test_step_increments(self, rng, batch_1d):
-        from fourdvarjax import BilinAEPrior1D, ConvLSTMGradMod1D
+        from vardax import BilinAEPrior1D, ConvLSTMGradMod1D
 
         B, T, N = batch_1d.input.shape
         hidden_dim = 16
@@ -56,7 +56,7 @@ class TestSolverStep1D:
         assert new_state.step == 1
 
     def test_state_changes_after_step(self, rng, batch_1d):
-        from fourdvarjax import BilinAEPrior1D, ConvLSTMGradMod1D
+        from vardax import BilinAEPrior1D, ConvLSTMGradMod1D
 
         B, T, N = batch_1d.input.shape
         hidden_dim = 16
@@ -93,7 +93,7 @@ class TestFpSolverStep1D:
 
 class TestSolve4dvarnet1dFixedpoint:
     def test_output_shape(self, rng, batch_1d):
-        from fourdvarjax import BilinAEPrior1D
+        from vardax import BilinAEPrior1D
 
         B, T, N = batch_1d.input.shape
         prior = BilinAEPrior1D(state_dim=N, latent_dim=4, n_time=T, rngs=nnx.Rngs(rng))
@@ -102,7 +102,7 @@ class TestSolve4dvarnet1dFixedpoint:
         assert result.shape == (B, T, N)
 
     def test_zero_steps_returns_masked_input(self, rng, batch_1d):
-        from fourdvarjax import BilinAEPrior1D
+        from vardax import BilinAEPrior1D
 
         B, T, N = batch_1d.input.shape
         prior = BilinAEPrior1D(state_dim=N, latent_dim=4, n_time=T, rngs=nnx.Rngs(rng))
@@ -115,8 +115,8 @@ class TestSolve4dvarnet1dFixedpoint:
 
 class TestOneStepSolve4dvarnet1D:
     def test_output_shape(self, rng, batch_1d):
-        from fourdvarjax import BilinAEPrior1D, ConvLSTMGradMod1D
-        from fourdvarjax._src.solver import one_step_solve_4dvarnet_1d
+        from vardax import BilinAEPrior1D, ConvLSTMGradMod1D
+        from vardax._src.solver import one_step_solve_4dvarnet_1d
 
         B, T, N = batch_1d.input.shape
         k1, k2 = jax.random.split(rng)
@@ -129,8 +129,8 @@ class TestOneStepSolve4dvarnet1D:
         assert result.shape == (B, T, N)
 
     def test_output_differs_from_initial(self, rng, batch_1d):
-        from fourdvarjax import BilinAEPrior1D, ConvLSTMGradMod1D
-        from fourdvarjax._src.solver import one_step_solve_4dvarnet_1d
+        from vardax import BilinAEPrior1D, ConvLSTMGradMod1D
+        from vardax._src.solver import one_step_solve_4dvarnet_1d
 
         _B, T, N = batch_1d.input.shape
         k1, k2 = jax.random.split(rng)
@@ -145,8 +145,8 @@ class TestOneStepSolve4dvarnet1D:
 
     def test_gradients_flow(self, rng, batch_1d):
         """Verify that gradients w.r.t. model parameters are non-zero."""
-        from fourdvarjax import BilinAEPrior1D, ConvLSTMGradMod1D
-        from fourdvarjax._src.solver import one_step_solve_4dvarnet_1d
+        from vardax import BilinAEPrior1D, ConvLSTMGradMod1D
+        from vardax._src.solver import one_step_solve_4dvarnet_1d
 
         _B, T, N = batch_1d.input.shape
         k1, k2 = jax.random.split(rng)
@@ -169,13 +169,13 @@ class TestOneStepSolve4dvarnet1D:
 
     def test_single_step_equals_solver_step(self, rng, batch_1d):
         """With n_steps=1, one-step solve should equal a single solver_step."""
-        from fourdvarjax import (
+        from vardax import (
             BilinAEPrior1D,
             ConvLSTMGradMod1D,
             LSTMState1D,
             SolverState1D,
         )
-        from fourdvarjax._src.solver import one_step_solve_4dvarnet_1d, solver_step_1d
+        from vardax._src.solver import one_step_solve_4dvarnet_1d, solver_step_1d
 
         B, T, N = batch_1d.input.shape
         k1, k2 = jax.random.split(rng)

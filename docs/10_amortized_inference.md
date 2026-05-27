@@ -202,8 +202,8 @@ ranks = simulation_based_calibration(
 All three gates are **planned** to ship as `assert_*` functions in
 `vardax._src.utils.validation` and to be wired into
 `tests/test_six_step_validation.py` as part of the v0.4 design target
-(Epic 8). Neither the module nor the test file exists in the v0.1.6
-`fourdvarjax` codebase yet.
+(Epic 8). Neither the module nor the test file exists in the v0.1.x
+codebase yet.
 
 ## When amortized inference helps
 

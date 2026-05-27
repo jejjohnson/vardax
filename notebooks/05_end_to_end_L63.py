@@ -17,7 +17,7 @@
 #
 # This notebook demonstrates the full data-preprocessing and training pipeline
 # for 4DVarNet on the Lorenz-63 attractor, using the functional utilities in
-# `fourdvarjax._src.utils`.
+# `vardax._src.utils`.
 #
 # **Pipeline overview:**
 # 1. Simulate L63 with Diffrax
@@ -35,19 +35,19 @@ import jax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
 
-import fourdvarjax
-from fourdvarjax import Batch1D, FourDVarNet1D
-from fourdvarjax._src.utils.dynamical_systems import simulate_lorenz63
-from fourdvarjax._src.utils.patches import trajectory_to_xr_dataset, extract_patches
-from fourdvarjax._src.utils.masks import regular_mask
-from fourdvarjax._src.utils.noise import add_gaussian_noise
-from fourdvarjax._src.utils.preprocessing import train_test_split, xr_to_batch1d
-from fourdvarjax._src.utils.standardize import (
+import vardax
+from vardax import Batch1D, FourDVarNet1D
+from vardax._src.utils.dynamical_systems import simulate_lorenz63
+from vardax._src.utils.patches import trajectory_to_xr_dataset, extract_patches
+from vardax._src.utils.masks import regular_mask
+from vardax._src.utils.noise import add_gaussian_noise
+from vardax._src.utils.preprocessing import train_test_split, xr_to_batch1d
+from vardax._src.utils.standardize import (
     compute_scaler_params,
     apply_standardization,
     inverse_standardization,
 )
-from fourdvarjax._src.utils.viz import (
+from vardax._src.utils.viz import (
     plot_3d_attractor,
     plot_state_grid,
     plot_trajectories,
@@ -150,7 +150,7 @@ model = FourDVarNet1D(
     rngs=nnx.Rngs(jax.random.PRNGKey(1)),
 )
 
-optimizer, train_losses, _ = fourdvarjax.fit(
+optimizer, train_losses, _ = vardax.fit(
     model,
     [batch_train],
     n_epochs=5,

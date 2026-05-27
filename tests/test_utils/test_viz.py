@@ -1,9 +1,9 @@
-"""Smoke tests for fourdvarjax._src.utils.viz."""
+"""Smoke tests for vardax._src.utils.viz."""
 
 import numpy as np
 import pytest
 
-from fourdvarjax._src.utils.viz import (
+from vardax._src.utils.viz import (
     plot_3d_attractor,
     plot_l96_grid,
     plot_l96_trajectories,

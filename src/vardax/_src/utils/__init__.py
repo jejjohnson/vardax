@@ -1,4 +1,4 @@
-"""Utility subpackage for fourdvarjax.
+"""Utility subpackage for vardax.
 
 Submodules
 ----------

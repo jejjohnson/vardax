@@ -1,9 +1,9 @@
-"""Tests for fourdvarjax._src.grad_mod."""
+"""Tests for vardax._src.grad_mod."""
 
 from flax import nnx
 import jax.numpy as jnp
 
-from fourdvarjax import ConvLSTMGradMod1D, ConvLSTMGradMod2D, LSTMState1D, LSTMState2D
+from vardax import ConvLSTMGradMod1D, ConvLSTMGradMod2D, LSTMState1D, LSTMState2D
 
 
 class TestConvLSTMGradMod1D:

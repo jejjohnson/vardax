@@ -1,9 +1,9 @@
-"""Tests for fourdvarjax._src.utils.noise."""
+"""Tests for vardax._src.utils.noise."""
 
 import numpy as np
 
-from fourdvarjax._src.utils.noise import add_gaussian_noise
-from fourdvarjax._src.utils.patches import extract_patches, trajectory_to_xr_dataset
+from vardax._src.utils.noise import add_gaussian_noise
+from vardax._src.utils.patches import extract_patches, trajectory_to_xr_dataset
 
 
 def _make_patched_ds(seed=0):

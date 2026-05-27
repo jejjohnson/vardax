@@ -1,10 +1,10 @@
-"""Shared pytest fixtures for fourdvarjax tests."""
+"""Shared pytest fixtures for vardax tests."""
 
 import jax
 import jax.numpy as jnp
 import pytest
 
-from fourdvarjax import Batch1D, Batch2D, Batch2DMultivar
+from vardax import Batch1D, Batch2D, Batch2DMultivar
 
 
 @pytest.fixture

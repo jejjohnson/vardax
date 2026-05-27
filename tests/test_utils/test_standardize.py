@@ -1,11 +1,11 @@
-"""Tests for fourdvarjax._src.utils.standardize."""
+"""Tests for vardax._src.utils.standardize."""
 
 import jax.numpy as jnp
 import numpy as np
 
-from fourdvarjax._src.utils.masks import random_mask
-from fourdvarjax._src.utils.patches import extract_patches, trajectory_to_xr_dataset
-from fourdvarjax._src.utils.standardize import (
+from vardax._src.utils.masks import random_mask
+from vardax._src.utils.patches import extract_patches, trajectory_to_xr_dataset
+from vardax._src.utils.standardize import (
     apply_standardization,
     compute_scaler_params,
     inverse_standardization,

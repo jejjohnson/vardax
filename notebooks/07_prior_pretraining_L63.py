@@ -34,18 +34,18 @@ import jax.numpy as jnp
 import matplotlib.pyplot as plt
 import optax
 
-import fourdvarjax
-from fourdvarjax import (
+import vardax
+from vardax import (
     Batch1D,
     BilinAEPrior1D,
     FourDVarNet1D,
 )
-from fourdvarjax._src.utils.dynamical_systems import simulate_lorenz63
-from fourdvarjax._src.utils.patches import trajectory_to_xr_dataset, extract_patches
-from fourdvarjax._src.utils.masks import regular_mask
-from fourdvarjax._src.utils.noise import add_gaussian_noise
-from fourdvarjax._src.utils.preprocessing import train_test_split, xr_to_batch1d
-from fourdvarjax._src.utils.standardize import compute_scaler_params, apply_standardization
+from vardax._src.utils.dynamical_systems import simulate_lorenz63
+from vardax._src.utils.patches import trajectory_to_xr_dataset, extract_patches
+from vardax._src.utils.masks import regular_mask
+from vardax._src.utils.noise import add_gaussian_noise
+from vardax._src.utils.preprocessing import train_test_split, xr_to_batch1d
+from vardax._src.utils.standardize import compute_scaler_params, apply_standardization
 
 # %% [markdown]
 # ## 1. Simulate L63 and prepare data
@@ -125,7 +125,7 @@ model_scratch = FourDVarNet1D(
 # %%
 n_finetune_epochs = 10
 
-_, metrics_pretrained, _ = fourdvarjax.fit(
+_, metrics_pretrained, _ = vardax.fit(
     model_pretrained,
     [batch_train],
     n_epochs=n_finetune_epochs,
@@ -133,7 +133,7 @@ _, metrics_pretrained, _ = fourdvarjax.fit(
     verbose=False,
 )
 
-_, metrics_scratch, _ = fourdvarjax.fit(
+_, metrics_scratch, _ = vardax.fit(
     model_scratch,
     [batch_train],
     n_epochs=n_finetune_epochs,

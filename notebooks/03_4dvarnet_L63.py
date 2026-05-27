@@ -24,8 +24,8 @@ import jax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
 
-import fourdvarjax
-from fourdvarjax import Batch1D, FourDVarNet1D, fit
+import vardax
+from vardax import Batch1D, FourDVarNet1D, fit
 
 # %% [markdown]
 # ## Generate training data

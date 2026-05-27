@@ -210,7 +210,7 @@ cycle (chapter 14) enforces three gates:
 These are **planned** as `vardax._src.utils.validation.assert_*`
 functions running in `tests/test_six_step_validation.py` (v0.4 design
 target, Epic 8). Neither the module nor the test file exists in the
-v0.1.6 `fourdvarjax` codebase yet; failing gates would block promotion
+v0.1.x codebase yet; failing gates would block promotion
 of an amortized head to operational use.
 
 ## See also

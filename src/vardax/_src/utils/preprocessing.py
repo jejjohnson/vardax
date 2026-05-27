@@ -8,7 +8,7 @@ import jax.numpy as jnp
 import numpy as np
 import xarray as xr
 
-from fourdvarjax._src._types import Batch1D
+from vardax._src._types import Batch1D
 
 
 def train_test_split(
@@ -64,11 +64,11 @@ def xr_to_batch1d(
     obs_var: str = "obs",
     mask_var: str = "mask",
 ) -> Batch1D:
-    """Convert an xarray Dataset to a :class:`~fourdvarjax.Batch1D`.
+    """Convert an xarray Dataset to a :class:`~vardax.Batch1D`.
 
     The dataset is expected to have dims ``(patch, time, feature)``; the
     feature dimension is treated as the spatial ``N`` axis of
-    :class:`~fourdvarjax.Batch1D`.
+    :class:`~vardax.Batch1D`.
 
     Parameters
     ----------
@@ -200,7 +200,7 @@ def obs_interpolation_init(
     -----
     The time dimension is assumed to be the *second* dimension of
     ``obs_variable`` (i.e. ``dims[1]`` for shape
-    ``(patch, time, feature)``), which matches the standard fourdvarjax
+    ``(patch, time, feature)``), which matches the standard vardax
     dataset layout produced by :func:`extract_patches`.
     """
     obs_da = ds[obs_variable]

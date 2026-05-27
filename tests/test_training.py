@@ -1,4 +1,4 @@
-"""Tests for fourdvarjax._src.training."""
+"""Tests for vardax._src.training."""
 
 from flax import nnx
 import jax
@@ -6,8 +6,8 @@ import jax.numpy as jnp
 import optax
 import pytest
 
-from fourdvarjax import FourDVarNet1D, reconstruction_loss
-from fourdvarjax._src.training import eval_step, train_loss_fn, train_step
+from vardax import FourDVarNet1D, reconstruction_loss
+from vardax._src.training import eval_step, train_loss_fn, train_step
 
 
 @pytest.fixture
