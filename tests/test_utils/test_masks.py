@@ -1,9 +1,9 @@
-"""Tests for fourdvarjax._src.utils.masks."""
+"""Tests for vardax._src.utils.masks."""
 
 import numpy as np
 
-from fourdvarjax._src.utils.masks import feature_mask, random_mask, regular_mask
-from fourdvarjax._src.utils.patches import extract_patches, trajectory_to_xr_dataset
+from vardax._src.utils.masks import feature_mask, random_mask, regular_mask
+from vardax._src.utils.patches import extract_patches, trajectory_to_xr_dataset
 
 
 def _make_patched_ds(n_patches=10, n_timesteps=20, n_features=3, seed=0):

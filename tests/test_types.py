@@ -1,8 +1,8 @@
-"""Tests for fourdvarjax._src._types."""
+"""Tests for vardax._src._types."""
 
 import jax.numpy as jnp
 
-from fourdvarjax import (
+from vardax import (
     LSTMState1D,
     LSTMState2D,
 )

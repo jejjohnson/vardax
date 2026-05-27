@@ -1,10 +1,10 @@
-"""Tests for fourdvarjax._src.utils.dynamical_systems."""
+"""Tests for vardax._src.utils.dynamical_systems."""
 
 import jax
 import jax.numpy as jnp
 import pytest
 
-from fourdvarjax._src.utils.dynamical_systems import (
+from vardax._src.utils.dynamical_systems import (
     Lorenz63,
     Lorenz96,
     simulate_lorenz63,

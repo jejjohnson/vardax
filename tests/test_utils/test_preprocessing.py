@@ -1,13 +1,13 @@
-"""Tests for fourdvarjax._src.utils.preprocessing."""
+"""Tests for vardax._src.utils.preprocessing."""
 
 import numpy as np
 import pytest
 
-from fourdvarjax import Batch1D
-from fourdvarjax._src.utils.masks import random_mask
-from fourdvarjax._src.utils.noise import add_gaussian_noise
-from fourdvarjax._src.utils.patches import extract_patches, trajectory_to_xr_dataset
-from fourdvarjax._src.utils.preprocessing import (
+from vardax import Batch1D
+from vardax._src.utils.masks import random_mask
+from vardax._src.utils.noise import add_gaussian_noise
+from vardax._src.utils.patches import extract_patches, trajectory_to_xr_dataset
+from vardax._src.utils.preprocessing import (
     interpolate_initial_condition,
     train_test_split,
     xr_to_batch1d,
@@ -106,7 +106,7 @@ class TestObsInterpolationInit:
         states = rng.standard_normal((500, n_features)).astype(np.float32)
         import xarray as xr
 
-        from fourdvarjax._src.utils.patches import (
+        from vardax._src.utils.patches import (
             extract_patches,
             trajectory_to_xr_dataset,
         )
@@ -117,7 +117,7 @@ class TestObsInterpolationInit:
             ds, n_patches=n_patches, n_timesteps=n_timesteps, seed=seed
         )
         # Build obs with NaN at missing positions
-        from fourdvarjax._src.utils.masks import random_mask
+        from vardax._src.utils.masks import random_mask
 
         ds = random_mask(ds, variable="state", missing_rate=0.4, seed=seed)
         state_vals = ds["state"].values
@@ -130,21 +130,21 @@ class TestObsInterpolationInit:
 
     def test_state_init_exists(self):
         ds = self._make_nan_obs_ds()
-        from fourdvarjax._src.utils.preprocessing import obs_interpolation_init
+        from vardax._src.utils.preprocessing import obs_interpolation_init
 
         result = obs_interpolation_init(ds)
         assert "state_init" in result
 
     def test_state_init_shape(self):
         ds = self._make_nan_obs_ds()
-        from fourdvarjax._src.utils.preprocessing import obs_interpolation_init
+        from vardax._src.utils.preprocessing import obs_interpolation_init
 
         result = obs_interpolation_init(ds)
         assert result["state_init"].shape == ds["obs"].shape
 
     def test_no_nan_in_output(self):
         ds = self._make_nan_obs_ds()
-        from fourdvarjax._src.utils.preprocessing import obs_interpolation_init
+        from vardax._src.utils.preprocessing import obs_interpolation_init
 
         result = obs_interpolation_init(ds, fillna=0.0)
         assert not np.any(np.isnan(result["state_init"].values))
@@ -152,7 +152,7 @@ class TestObsInterpolationInit:
     def test_observed_values_preserved(self):
         """Values at originally-observed (non-NaN) locations should be preserved."""
         ds = self._make_nan_obs_ds()
-        from fourdvarjax._src.utils.preprocessing import obs_interpolation_init
+        from vardax._src.utils.preprocessing import obs_interpolation_init
 
         result = obs_interpolation_init(ds, fillna=0.0)
         obs = ds["obs"].values

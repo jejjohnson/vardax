@@ -16,7 +16,7 @@
 # # 01 — Model-Based 4DVar on Lorenz-63
 #
 # This notebook demonstrates classical model-based 4DVar on the Lorenz-63
-# attractor using `fourdvarjax`.
+# attractor using `vardax`.
 
 # %%
 import flax.nnx as nnx
@@ -24,8 +24,8 @@ import jax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
 
-import fourdvarjax
-from fourdvarjax import Batch1D, FourDVarNet1D
+import vardax
+from vardax import Batch1D, FourDVarNet1D
 
 # %% [markdown]
 # ## Generate synthetic Lorenz-63 data

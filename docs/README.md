@@ -3,15 +3,18 @@
 > **Status — v0.4.0 design reference (forward-looking).** These docs
 > describe the target API after the equinox migration roadmap (Epics
 > 0–13, see [`design/boundaries.md`](design/boundaries.md)). The
-> shipped package is still `fourdvarjax` v0.1.6 (Flax NNX). References
-> to `vardax.models.*`, `vardax.obs_operators.*`, `vardax.adjoints.*`,
-> the `pipekit_cycle` protocols, `tests/test_pipekit_protocols.py`,
-> and `vardax._src.utils.validation` describe the design target — they
-> are not yet present in the current package. Code snippets are design
-> pseudocode showing intended call sites.
+> shipped package implements 4DVarNet only (single learned method,
+> built on Flax NNX); the seven-method DA hierarchy plus
+> pipekit-cycle protocol satisfaction is the design target.
+> References to `vardax.models.*`, `vardax.obs_operators.*`,
+> `vardax.adjoints.*`, the `pipekit_cycle` protocols,
+> `tests/test_pipekit_protocols.py`, and `vardax._src.utils.validation`
+> describe the design target — they are not yet present in the current
+> package. *(The package was previously published as `fourdvarjax`
+> v0.1.x; `vardax` is now the canonical name.)*
 
-This directory contains documentation for the vardax (formerly
-`fourdvarjax`) library, in two layers:
+This directory contains documentation for the vardax library, in two
+layers:
 
 - **Mathematical reference** (this directory, 17 chapters) — the
   equations, algorithms, and pseudocode behind every analysis method.

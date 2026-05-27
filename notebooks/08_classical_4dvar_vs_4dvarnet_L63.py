@@ -30,8 +30,8 @@ import jax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
 
-import fourdvarjax
-from fourdvarjax import (
+import vardax
+from vardax import (
     Batch1D,
     BilinAEPrior1D,
     FourDVarNet1D,
@@ -39,12 +39,12 @@ from fourdvarjax import (
     variational_cost_grad,
     decomposed_loss,
 )
-from fourdvarjax._src.utils.dynamical_systems import simulate_lorenz63
-from fourdvarjax._src.utils.patches import trajectory_to_xr_dataset, extract_patches
-from fourdvarjax._src.utils.masks import regular_mask
-from fourdvarjax._src.utils.noise import add_gaussian_noise
-from fourdvarjax._src.utils.preprocessing import train_test_split, xr_to_batch1d
-from fourdvarjax._src.utils.standardize import compute_scaler_params, apply_standardization
+from vardax._src.utils.dynamical_systems import simulate_lorenz63
+from vardax._src.utils.patches import trajectory_to_xr_dataset, extract_patches
+from vardax._src.utils.masks import regular_mask
+from vardax._src.utils.noise import add_gaussian_noise
+from vardax._src.utils.preprocessing import train_test_split, xr_to_batch1d
+from vardax._src.utils.standardize import compute_scaler_params, apply_standardization
 
 # %% [markdown]
 # ## 1. Prepare L63 data
@@ -119,7 +119,7 @@ model = FourDVarNet1D(
     rngs=nnx.Rngs(jax.random.PRNGKey(1)),
 )
 
-_, train_losses, _ = fourdvarjax.fit(
+_, train_losses, _ = vardax.fit(
     model,
     [batch_train],
     n_epochs=10,

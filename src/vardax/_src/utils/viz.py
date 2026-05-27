@@ -1,4 +1,4 @@
-"""Visualization utilities for fourdvarjax.
+"""Visualization utilities for vardax.
 
 All public functions accept an optional ``ax`` argument for composability
 and return ``(fig, ax)`` or ``(fig, axes)`` tuples.  ``matplotlib`` is

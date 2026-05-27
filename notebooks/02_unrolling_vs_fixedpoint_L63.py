@@ -36,23 +36,23 @@ import jax.numpy as jnp
 import matplotlib.pyplot as plt
 import numpy as np
 
-import fourdvarjax
-from fourdvarjax import (
+import vardax
+from vardax import (
     Batch1D,
     BilinAEPrior1D,
     FourDVarNet1D,
     solve_4dvarnet_1d_fixedpoint,
 )
-from fourdvarjax._src.utils.dynamical_systems import simulate_lorenz63
-from fourdvarjax._src.utils.patches import trajectory_to_xr_dataset, extract_patches
-from fourdvarjax._src.utils.masks import regular_mask
-from fourdvarjax._src.utils.noise import add_gaussian_noise
-from fourdvarjax._src.utils.preprocessing import (
+from vardax._src.utils.dynamical_systems import simulate_lorenz63
+from vardax._src.utils.patches import trajectory_to_xr_dataset, extract_patches
+from vardax._src.utils.masks import regular_mask
+from vardax._src.utils.noise import add_gaussian_noise
+from vardax._src.utils.preprocessing import (
     train_test_split,
     xr_to_batch1d,
     obs_interpolation_init,
 )
-from fourdvarjax._src.utils.standardize import compute_scaler_params, apply_standardization
+from vardax._src.utils.standardize import compute_scaler_params, apply_standardization
 import xarray as xr
 
 # %% [markdown]
@@ -124,7 +124,7 @@ model_unrolled = FourDVarNet1D(
     rngs=nnx.Rngs(jax.random.PRNGKey(1)),
 )
 
-optimizer, train_losses, _ = fourdvarjax.fit(
+optimizer, train_losses, _ = vardax.fit(
     model_unrolled,
     [batch_train],
     n_epochs=5,

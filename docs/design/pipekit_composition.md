@@ -194,9 +194,10 @@ reloaded = template.with_weights(registry.load_weights(hash_))
 
 After the equinox migration (Epic 0), `pipekit` and `pipekit-cycle`
 become **required** deps. They have zero third-party dependencies
-themselves, so the cost is minimal. The current `fourdvarjax` v0.1.6
-package does not yet declare them in `pyproject.toml`; the dependency
-policy described here is a v0.4 design target.
+themselves, so the cost is minimal. The current v0.1.x package
+(previously published as `fourdvarjax`) does not yet declare them in
+`pyproject.toml`; the dependency policy described here is a v0.4
+design target.
 
 `pipekit-jax`, `pipekit-experiment`, `pipekit-train` are planned as
 **optional extras** (`vardax[persist]`, `vardax[train]`).

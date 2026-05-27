@@ -1,4 +1,4 @@
-"""fourdvarjax — Modular variational data assimilation with learned components.
+"""vardax — Modular variational data assimilation with learned components.
 
 Public API
 ----------
@@ -7,19 +7,19 @@ that user code imports from the top-level namespace:
 
 .. code-block:: python
 
-    import fourdvarjax
+    import vardax
 
-    model = fourdvarjax.FourDVarNet1D(...)
+    model = vardax.FourDVarNet1D(...)
 """
 
-from fourdvarjax._src._types import (
+from vardax._src._types import (
     Batch1D,
     Batch2D,
     Batch2DMultivar,
     LSTMState1D,
     LSTMState2D,
 )
-from fourdvarjax._src.costs import (
+from vardax._src.costs import (
     decomposed_loss,
     obs_cost_1d,
     obs_cost_2d,
@@ -27,15 +27,15 @@ from fourdvarjax._src.costs import (
     variational_cost,
     variational_cost_grad,
 )
-from fourdvarjax._src.grad_mod import (
+from vardax._src.grad_mod import (
     ConvLSTMGradMod1D,
     ConvLSTMGradMod2D,
 )
-from fourdvarjax._src.model import (
+from vardax._src.model import (
     FourDVarNet1D,
     FourDVarNet2D,
 )
-from fourdvarjax._src.priors import (
+from vardax._src.priors import (
     BilinAEPrior1D,
     BilinAEPrior2D,
     BilinAEPrior2DMultivar,
@@ -45,7 +45,7 @@ from fourdvarjax._src.priors import (
     L96Prior,
     MLPAEPrior1D,
 )
-from fourdvarjax._src.solver import (
+from vardax._src.solver import (
     GradMode,
     SolverState1D,
     SolverState2D,
@@ -60,15 +60,15 @@ from fourdvarjax._src.solver import (
     solver_step_1d,
     solver_step_2d,
 )
-from fourdvarjax._src.training import (
+from vardax._src.training import (
     eval_step,
     fit,
     reconstruction_loss,
     train_loss_fn,
     train_step,
 )
-from fourdvarjax._src.utils.dynamical_systems import simulate_lorenz96
-from fourdvarjax._src.utils.viz import (
+from vardax._src.utils.dynamical_systems import simulate_lorenz96
+from vardax._src.utils.viz import (
     plot_l96_grid,
     plot_l96_trajectories,
     plot_reconstruction_comparison,

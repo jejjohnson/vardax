@@ -1,9 +1,9 @@
-"""Tests for fourdvarjax._src.priors."""
+"""Tests for vardax._src.priors."""
 
 from flax import nnx
 import jax.numpy as jnp
 
-from fourdvarjax import (
+from vardax import (
     BilinAEPrior1D,
     BilinAEPrior2D,
     BilinAEPrior2DMultivar,

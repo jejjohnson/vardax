@@ -1,1 +1,1 @@
-"""Test suite for fourdvarjax."""
+"""Test suite for vardax."""

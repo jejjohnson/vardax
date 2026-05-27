@@ -1,11 +1,11 @@
-"""Tests for fourdvarjax._src.model."""
+"""Tests for vardax._src.model."""
 
 from flax import nnx
 import jax
 import jax.numpy as jnp
 import pytest
 
-from fourdvarjax import FourDVarNet1D, FourDVarNet2D
+from vardax import FourDVarNet1D, FourDVarNet2D
 
 
 class TestFourDVarNet1D:
@@ -24,7 +24,7 @@ class TestFourDVarNet1D:
 
     @pytest.mark.slow
     def test_output_changes_with_different_masks(self, rng, batch_1d):
-        from fourdvarjax import Batch1D
+        from vardax import Batch1D
 
         _, T, N = batch_1d.input.shape
         model = FourDVarNet1D(

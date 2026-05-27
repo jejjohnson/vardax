@@ -1,4 +1,4 @@
-"""Batch and LSTM state type definitions for fourdvarjax."""
+"""Batch and LSTM state type definitions for vardax."""
 
 from typing import NamedTuple
 

@@ -23,8 +23,8 @@ import jax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
 
-import fourdvarjax
-from fourdvarjax import Batch2D, FourDVarNet2D
+import vardax
+from vardax import Batch2D, FourDVarNet2D
 
 # %% [markdown]
 # ## Generate synthetic 2-D data

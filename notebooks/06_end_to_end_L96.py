@@ -17,7 +17,7 @@
 #
 # This notebook demonstrates the full data-preprocessing and training pipeline
 # for 4DVarNet on the Lorenz-96 attractor, using the functional utilities in
-# `fourdvarjax._src.utils`.
+# `vardax._src.utils`.
 #
 # **Pipeline overview:**
 # 1. Simulate L96 with Diffrax (N=40, F=8)
@@ -33,8 +33,8 @@ import jax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
 
-import fourdvarjax
-from fourdvarjax import (
+import vardax
+from vardax import (
     Batch1D,
     FourDVarNet1D,
     simulate_lorenz96,
@@ -42,11 +42,11 @@ from fourdvarjax import (
     plot_l96_trajectories,
     plot_reconstruction_comparison,
 )
-from fourdvarjax._src.utils.patches import trajectory_to_xr_dataset, extract_patches
-from fourdvarjax._src.utils.masks import regular_mask
-from fourdvarjax._src.utils.noise import add_gaussian_noise
-from fourdvarjax._src.utils.preprocessing import train_test_split, xr_to_batch1d
-from fourdvarjax._src.utils.standardize import (
+from vardax._src.utils.patches import trajectory_to_xr_dataset, extract_patches
+from vardax._src.utils.masks import regular_mask
+from vardax._src.utils.noise import add_gaussian_noise
+from vardax._src.utils.preprocessing import train_test_split, xr_to_batch1d
+from vardax._src.utils.standardize import (
     compute_scaler_params,
     apply_standardization,
     inverse_standardization,
@@ -133,7 +133,7 @@ model = FourDVarNet1D(
     rngs=nnx.Rngs(jax.random.PRNGKey(1)),
 )
 
-optimizer, train_losses, _ = fourdvarjax.fit(
+optimizer, train_losses, _ = vardax.fit(
     model,
     [batch_train],
     n_epochs=5,

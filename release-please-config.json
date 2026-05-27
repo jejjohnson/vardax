@@ -17,7 +17,7 @@
   "packages": {
     ".": {
       "release-type": "python",
-      "package-name": "fourdvarjax",
+      "package-name": "vardax",
       "changelog-path": "CHANGELOG.md",
       "bump-minor-pre-major": true,
       "bump-patch-for-minor-pre-major": true,

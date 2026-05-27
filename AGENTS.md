@@ -1,4 +1,4 @@
-# Copilot Agent Guidelines for fourdvarjax
+# Copilot Agent Guidelines for vardax
 
 This document defines the workflow rules that every Copilot coding-agent session
 **must** follow when contributing to this repository.
@@ -12,13 +12,13 @@ all four quality gates pass locally.  Fix any failures before committing.
 
 ```bash
 # Formatting
-ruff format fourdvarjax/
+ruff format src/vardax/
 
 # Linting
-ruff check fourdvarjax/
+ruff check src/vardax/
 
 # Type checking
-ty check fourdvarjax/
+ty check src/vardax/
 
 # Tests
 python -m pytest tests/ -x -q

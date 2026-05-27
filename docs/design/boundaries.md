@@ -375,7 +375,7 @@ Vardax guarantees:
 The package code is still v0.1.6 with Flax NNX. The v0.3 and v0.4 design
 doc revisions target the equinox migration roadmap (Epics 0–13). Math
 chapters describe the API documented in `docs/design/`, which is not yet
-implemented in `fourdvarjax/_src/`.
+implemented in `src/vardax/_src/`.
 
 ### Upcoming (v0.2.0+ — equinox-native, pipekit-aligned)
 

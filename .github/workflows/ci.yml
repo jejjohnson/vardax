@@ -33,16 +33,16 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Install dependencies
-        run: uv sync --extra test
+        run: uv sync --group test
 
       - name: Run tests
-        run: uv run pytest tests/ -v --cov=./fourdvarjax --cov-report=xml:./coverage.xml
+        run: uv run pytest tests/ -v --cov=./src/vardax --cov-report=xml:./coverage.xml
 
       - name: Upload code coverage
         uses: codecov/codecov-action@v4
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           file: ./coverage.xml
-          name: fourdvarjax
+          name: vardax
           flags: unittests
           env_vars: OS,PYTHON
