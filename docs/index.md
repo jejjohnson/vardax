@@ -4,6 +4,17 @@
 
 *Formerly `fourdvarjax` — renamed to `vardax`.*
 
+!!! warning "Status — v0.4.0 design reference (forward-looking)"
+    These docs describe the **target API** of vardax after the equinox
+    migration roadmap (Epics 0–13, see
+    [boundaries](design/boundaries.md)). The shipped package is still
+    `fourdvarjax` v0.1.6, built on Flax NNX. References to
+    `vardax.models.*`, `vardax.obs_operators.*`, `vardax.adjoints.*`,
+    the `pipekit_cycle` protocols, `tests/test_pipekit_protocols.py`,
+    and `vardax._src.utils.validation` describe the design target —
+    they are not yet runnable against the current package. Code
+    snippets are design pseudocode showing intended call sites.
+
 vardax provides the seven classical and modern DA analysis methods as
 peer [`pipekit_cycle.AnalysisStep`](design/pipekit_composition.md)
 implementations:

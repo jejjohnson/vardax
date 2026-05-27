@@ -236,7 +236,12 @@ instance can run in a notebook, a batch pipeline, and a streaming API.
 
 ## Implementation
 
-`vardax._src.utils.validation` ships:
+> **Planned (v0.4 design target).** The validation utilities and the
+> test module below are part of the equinox migration roadmap (Epic 1
+> + Epic 8); they are not yet present in the v0.1.6 `fourdvarjax`
+> codebase.
+
+`vardax._src.utils.validation` will ship:
 
 - `assert_forward_agreement(emulator, physics, val_states, eps)`
 - `assert_adjoint_calibrated(emulator, physics, val_states, threshold)` —

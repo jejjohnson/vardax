@@ -9,8 +9,9 @@ multi-instrument fusion.
 All four satisfy `pipekit_cycle.ObservationOperator` (the first three
 directly; multi-instrument fusion via its `.to_observation_operator()`
 adapter — chapter 2). All four expose `__call__(x)` and `linearize(x)`,
-with the tangent-linear / adjoint contract enforced by
-`tests/test_pipekit_protocols.py`.
+with the tangent-linear / adjoint contract enforced by the planned
+`tests/test_pipekit_protocols.py` conformance suite (Epic 1; not yet
+present in the v0.1.6 codebase).
 
 ## Masked identity
 

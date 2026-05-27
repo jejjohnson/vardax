@@ -175,7 +175,8 @@ y_inc = H_lin @ dx                     # forward TLM
 adj   = H_lin.T @ residual             # adjoint
 ```
 
-The adjoint test is part of `test_pipekit_protocols.py`:
+The adjoint test is part of the planned `tests/test_pipekit_protocols.py`
+conformance suite (Epic 1; not yet present in the v0.1.6 codebase):
 
 $$
 \langle H' u, v \rangle = \langle u, (H')^\top v \rangle
@@ -199,7 +200,7 @@ parameterisations:
   spatially correlated (rare but matters for high-resolution imaging
   spectrometers).
 
-The choice flows into `J_\text{obs}$ via $R^{-1}$, computed lazily —
+The choice flows into $J_\text{obs}$ via $R^{-1}$, computed lazily —
 the inverse is never materialised, only applied to vectors via
 `lineax.CG`.
 

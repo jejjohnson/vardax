@@ -192,16 +192,22 @@ reloaded = template.with_weights(registry.load_weights(hash_))
 
 ## Dependency policy
 
-`pipekit` and `pipekit-cycle` are **required** deps. They have zero
-third-party dependencies themselves, so the cost is minimal.
+After the equinox migration (Epic 0), `pipekit` and `pipekit-cycle`
+become **required** deps. They have zero third-party dependencies
+themselves, so the cost is minimal. The current `fourdvarjax` v0.1.6
+package does not yet declare them in `pyproject.toml`; the dependency
+policy described here is a v0.4 design target.
 
-`pipekit-jax`, `pipekit-experiment`, `pipekit-train` are **optional
-extras** (`vardax[persist]`, `vardax[train]`).
+`pipekit-jax`, `pipekit-experiment`, `pipekit-train` are planned as
+**optional extras** (`vardax[persist]`, `vardax[train]`).
 
 ## Testing protocol conformance
 
+The test module below is part of the planned Epic 1 conformance suite
+— not yet present in the v0.1.6 codebase.
+
 ```python
-# tests/test_pipekit_protocols.py
+# tests/test_pipekit_protocols.py    (planned, Epic 1)
 
 import pytest
 from pipekit_cycle import ObservationOperator, ForwardModel, AnalysisStep

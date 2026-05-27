@@ -288,6 +288,14 @@ jupyter lab notebooks/01_model_based_4dvar_L63.ipynb           # open
 
 ## Mathematical Reference
 
+> **Note:** [`docs/`](docs/) is a **v0.4.0 design reference** — it
+> describes the target API after the equinox migration (Epics 0–13).
+> The shipped `fourdvarjax` v0.1.6 package does not yet expose
+> `vardax.models.*`, `vardax.adjoints.*`, the `pipekit_cycle`
+> protocols, or `vardax._src.utils.validation`. Snippets are design
+> pseudocode showing intended call sites, not runnable examples
+> against the current package.
+
 See the [`docs/`](docs/) directory for the full mathematical reference
 (17 chapters, rewritten in v0.4 to a DA-textbook style):
 

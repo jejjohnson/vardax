@@ -207,9 +207,11 @@ cycle (chapter 14) enforces three gates:
 3. **Simulation-based calibration** — posterior coverage matches
    nominal coverage (Talts et al. 2018).
 
-These ship as `vardax._src.utils.validation.assert_*` functions and
-run in `tests/test_six_step_validation.py`. Failing gates block
-promotion of an amortized head to operational use.
+These are **planned** as `vardax._src.utils.validation.assert_*`
+functions running in `tests/test_six_step_validation.py` (v0.4 design
+target, Epic 8). Neither the module nor the test file exists in the
+v0.1.6 `fourdvarjax` codebase yet; failing gates would block promotion
+of an amortized head to operational use.
 
 ## See also
 

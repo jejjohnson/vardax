@@ -1,5 +1,15 @@
 # vardax — Documentation
 
+> **Status — v0.4.0 design reference (forward-looking).** These docs
+> describe the target API after the equinox migration roadmap (Epics
+> 0–13, see [`design/boundaries.md`](design/boundaries.md)). The
+> shipped package is still `fourdvarjax` v0.1.6 (Flax NNX). References
+> to `vardax.models.*`, `vardax.obs_operators.*`, `vardax.adjoints.*`,
+> the `pipekit_cycle` protocols, `tests/test_pipekit_protocols.py`,
+> and `vardax._src.utils.validation` describe the design target — they
+> are not yet present in the current package. Code snippets are design
+> pseudocode showing intended call sites.
+
 This directory contains documentation for the vardax (formerly
 `fourdvarjax`) library, in two layers:
 

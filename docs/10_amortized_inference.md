@@ -199,9 +199,11 @@ ranks = simulation_based_calibration(
 # Plot rank histogram; assert χ² uniformity test p > 0.01
 ```
 
-All three gates ship as `assert_*` functions in
-`vardax._src.utils.validation` and are wired into
-`tests/test_six_step_validation.py`.
+All three gates are **planned** to ship as `assert_*` functions in
+`vardax._src.utils.validation` and to be wired into
+`tests/test_six_step_validation.py` as part of the v0.4 design target
+(Epic 8). Neither the module nor the test file exists in the v0.1.6
+`fourdvarjax` codebase yet.
 
 ## When amortized inference helps
 
