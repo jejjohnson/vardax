@@ -1,158 +1,201 @@
 ---
 status: draft
-version: 0.3.0
+version: 0.4.0
 ---
 
 # vardax — Vision
 
-## Q1: What is vardax?
+## What vardax is
 
-> What is the core identity and scope of vardax?
+**vardax is the data assimilation inference layer for JAX.** It provides
+the seven classical and modern analysis methods that turn observations
+into state estimates:
 
-### Decision
+1. **`OptimalInterpolation`** — BLUE / OI, the closed-form linear-Gaussian
+   analysis. The right tool when $H$ is linear and $B$, $R$ are Gaussian.
+2. **`ThreeDVar`** — 3D variational analysis. Nonlinear observation
+   operator, snapshot in time.
+3. **`StrongFourDVar`** — strong-constraint 4DVar. Control variable is
+   the initial state $x_0$; dynamics $M_t$ are treated as exact.
+4. **`WeakFourDVar`** — weak-constraint 4DVar. Augmented control vector
+   $(x_0, \eta_1, \ldots, \eta_T)$ admits model error.
+5. **`IncrementalFourDVar`** — the operational fast path of strong-constraint
+   4DVar. Gauss-Newton outer iterations on the full nonlinear cost, CG
+   inner iterations on the linearised quadratic subproblem, control-variable
+   transform for preconditioning.
+6. **`FourDVarNet`** — the learned variant of 4DVar. Prior $\varphi_\theta$
+   replaces the Gaussian $B$; the inner solver becomes a learned gradient
+   modulator $\Phi_\phi$.
+7. **`AmortizedPosterior`** — the direct head $q_\phi(x \mid y)$. Real-time
+   inference via conditional flow, score-based diffusion, or regression.
 
-**vardax is the variational and amortized inference layer for data assimilation
-in JAX.** It implements learned 4DVarNet, operational incremental 4DVar with
-control-variable transform, and amortized posterior heads on a shared
-protocol-driven core that directly satisfies the `pipekit-cycle` contracts
-(`ForwardModel`, `ObservationOperator`, `AnalysisStep`).
+All seven are siblings, not parent–child relationships. They satisfy the
+same `pipekit_cycle.AnalysisStep` protocol and compose with the same
+observation operators, forward models, priors, and posterior adapters.
+The DA hierarchy is **horizontal**; you pick the method that matches the
+regime, not a family.
 
-It is **not** a forward model, a simulation framework, or an experiment runner.
-It provides the inference machinery (variational costs, observation operators,
-solvers, posterior approximations) that *other* libraries supply the physics
-to. Forward models come from [`somax`](https://github.com/jejjohnson/somax)
-(geophysical fluid dynamics) and `plumax` (atmospheric transport / methane).
-Ensembles come from `filterax`. Structured linear algebra comes from `gaussx`.
+## The single equation
 
-### Identity in one sentence
+Every analysis method in vardax is a special case of
 
-> vardax is to data assimilation inference what somax is to forward modeling —
-> a composable library of variational and amortized inference building blocks
-> powered by JAX, satisfying pipekit-cycle protocols by construction.
+$$x^* = \underset{x,\,\boldsymbol{\eta}}{\arg\min}\;
+  \underbrace{\tfrac{1}{2}\|x - x_b\|^2_{B^{-1}}}_{\text{background term}}
+  + \underbrace{\tfrac{1}{2}\sum_{t=0}^{T} \|y_t - H_t(M_t(x; \boldsymbol{\eta}))\|^2_{R_t^{-1}}}_{\text{observation term}}
+  \;[\,+\;\underbrace{\tfrac{1}{2}\sum_{t=1}^{T} \|\eta_t\|^2_{Q_t^{-1}}}_{\text{model-error term}}\,].$$
 
-### Core variational cost
+| Method | $T$ | Prior | Model error $\boldsymbol{\eta}$ | Inner solver |
+|---|---|---|---|---|
+| `OptimalInterpolation` | 0 | Gaussian $B$, linear $H$ | — | closed-form |
+| `ThreeDVar` | 0 | Gaussian $B$, nonlinear $H$ | — | iterative (optimistix) |
+| `StrongFourDVar` | $>0$ | Gaussian $B$ | absent | iterative (optimistix) |
+| `WeakFourDVar` | $>0$ | Gaussian $B$, $Q$ | active | iterative (optimistix) |
+| `IncrementalFourDVar` | $>0$ | Gaussian $B$ | absent | GN outer + CG inner |
+| `FourDVarNet` | $>0$ | learned $\varphi_\theta$ | absent | learned $\Phi_\phi$ |
+| `AmortizedPosterior` | any | implicit in $q_\phi$ | implicit | none (single forward pass) |
 
-Reconstruction is the minimization of
+Each method specialises the unified cost differently, but the surface
+that user code touches — `model.as_analysis_step()` — is identical.
 
-$$
-J(x) = \alpha_\text{obs} \|H(x) - y\|^2_{R^{-1}} + \alpha_\text{prior} \|x - \varphi(x)\|^2_{B^{-1}}
-$$
+## Composable gradients
 
-with
+vardax does not re-implement automatic differentiation. Gradients flow
+through two upstream libraries:
 
-- $x$ — state estimate
-- $y$ — noisy, partial observations (multi-instrument permitted)
-- $H$ — observation operator (identity, masked, averaging kernel, multi-instrument fusion, …)
-- $R$ — observation-error covariance (per-instrument; often diagonal)
-- $\varphi$ — prior (learned autoencoder, learned diffusion, physics integrator from somax)
-- $B$ — prior-error covariance (often Matérn-3/2; factorised via `gaussx` for incremental 4DVar)
+- **`diffrax`** — gradients through ODE integration via
+  `RecursiveCheckpointAdjoint`, `BacksolveAdjoint` (continuous adjoint),
+  `ForwardMode` (forward sensitivity), or `DirectAdjoint`. This is how
+  4DVar's adjoint of $M_t$ is computed.
+- **`optimistix`** — gradients through the inner minimisation via
+  `RecursiveCheckpointAdjoint`, `ImplicitAdjoint` (IFT-based), or
+  `DirectAdjoint`. This is how training gradients propagate through
+  `FourDVarNet`'s solver.
 
-For 4DVarNet, minimization proceeds via learned gradient steps modulated by a
-ConvLSTM. For incremental 4DVar, via Gauss-Newton outer / CG inner iterations
-on the control-variable-transformed problem $\chi = B^{-1/2}(x - x_b)$.
-Amortized heads bypass minimization entirely by learning $q_\phi(x \mid y)$
-directly.
+Both are exposed as constructor slots on the Layer 2 classes:
 
-### Three model families
+```python
+model = StrongFourDVar(
+    forward=somax_model,
+    obs_op=AveragingKernel(...),
+    prior_mean=x_b, prior_cov_op=B_op, obs_cov_op=R_op,
+    minimiser=optimistix.GaussNewton(rtol=1e-5, atol=1e-5),
+    minimiser_adjoint=optimistix.ImplicitAdjoint(),
+    forward_adjoint=diffrax.BacksolveAdjoint(),
+)
+```
 
-| Family | When | Reference |
-|---|---|---|
-| **`VarDANet*`** | Learned 4DVarNet with prior + ConvLSTM grad modulator. Three differentiation modes (unrolled / one-step / implicit). Research and benchmarks. | Fablet et al. 2021–2023 |
-| **`IncrementalVarDA*`** | Operational 4DVar: tangent-linear via `jax.linearize`, Gauss-Newton outer, CG/Lanczos inner, control-variable transform via `gaussx` Matérn factorisation. | Courtier et al. 1994 |
-| **`AmortizedVarDA*`** | Direct $q_\phi(x \mid y)$ head: conditional normalising flow, score-based diffusion, or simulation-based amortized posterior. | Cranmer et al. 2020; Cohen et al. 2023 |
+A user who wants memory-efficient operational 4DVar reaches for
+`diffrax.BacksolveAdjoint()`. A user training `FourDVarNet` reaches for
+`optimistix.RecursiveCheckpointAdjoint()` or a custom one-step adjoint.
+Vardax owns the DA algorithm, not the differentiation strategy.
 
-All three satisfy `pipekit_cycle.AnalysisStep` and compose with the same
-`ObservationOperator` and `ForwardModel` registries.
+## Three-layer architecture
 
-### The six-step inference cycle
+```
+Layer 2  Models (each satisfies pipekit_cycle.AnalysisStep)
+         OptimalInterpolation, ThreeDVar, StrongFourDVar, WeakFourDVar,
+         IncrementalFourDVar, FourDVarNet, AmortizedPosterior
+            ↑
+Layer 1  Components (eqx.Module operators)
+         priors, observation operators, gradient modulators (4DVarNet only),
+         cost functions, posterior adapters, minimiser adapters
+            ↑
+Layer 0  Primitives (pure JAX)
+         cost terms, control-variable transform, Laplace covariance,
+         adjoint wiring (diffrax + optimistix passthrough)
+```
 
-vardax is engineered around the **six-step research-to-operations cycle** that
-runs across all forward-model tiers:
+Users enter at the level appropriate to their task:
+
+- **Layer 0** — integrating vardax algorithms into another framework
+- **Layer 1** — building custom DA pipelines (new prior + AK obs op)
+- **Layer 2** — operational analysis or training
+
+## What vardax is NOT
+
+(See [`boundaries.md`](boundaries.md) for the full ownership map.)
+
+- It does not define forward models. Use `somax` (geophysics) or
+  `plumax` (atmospheric transport / methane). Lorenz-63 / Lorenz-96 demos
+  in `vardax._src.utils.dynamical_systems` are toy examples.
+- It does not own ensemble methods. Use `filterax`. vardax exposes hooks
+  (`EnsembleCovariance` posterior adapter, ensemble batch dimension) but
+  EnKF / EnKS / EnKI propagation lives elsewhere.
+- It does not own structured linear algebra. Use `gaussx` for Matérn
+  factorisations, Kronecker / LowRank / BlockDiag operators.
+- It does not own data I/O. Use `georeader` (sensors), `coordax`
+  (labelled arrays). vardax consumes `Batch*` containers; how they're
+  populated is upstream.
+- It does not own optimisers or ODE solvers. Use `optimistix` and
+  `diffrax`. vardax composes them via the adjoint slots described above.
+- It does not own experiment orchestration. Use `pipekit-cycle` for DA
+  cycles, `pipekit-experiment` for run tracking. vardax satisfies the
+  protocols.
+
+## The six-step research-to-operations cycle
+
+vardax is engineered around the cycle that turns a new forward model into
+operational analysis:
 
 ```
 (1) Physics forward (somax / plumax)
-      → (2) Model-based inference: MAP / MCMC / 4DVarNet                — slow, exact
-      → (3) Neural emulator of the forward (trained from Step 1)         — fast surrogate
-      → (4) Emulator-based inference: same loop, 100–1000× faster        — same vardax code
-      → (5) Amortized predictor: y → posterior directly                  — sub-second
-      → (6) Improve: swap any block; the previous step is the oracle    — validation loop
+      → (2) Classical inference: OI / 3DVar / 4DVar               — slow, exact
+      → (3) Neural emulator of the forward (trained from Step 1)   — fast surrogate
+      → (4) Emulator-based inference: same vardax loop             — 100–1000× faster
+      → (5) Amortized predictor: y → posterior directly            — sub-second
+      → (6) Improve: swap any block; prior step is the oracle
 ```
 
-vardax's job is to make Steps 2, 4, and 5 use **the same library code**
-parameterised only by which `ForwardModel` and which inference family
-(`VarDANet*` / `IncrementalVarDA*` / `AmortizedVarDA*`) is plugged in.
+Crucially: **Step 2 uses the same vardax code as Step 4**. The forward
+model is swapped via the `pipekit_cycle.ForwardModel` protocol; the
+analysis class doesn't know whether $M_t$ is physics or an emulator. This
+is what makes the cycle a cycle and not a rewrite.
 
-### Three-layer architecture
+The validation gates between steps (adjoint calibration, posterior
+agreement, simulation-based calibration) are part of the test suite, not
+just documentation. See chapter 14 in the math reference.
 
-```
-Layer 2: Models           VarDANet / IncrementalVarDA / AmortizedVarDA
-                          (each satisfies pipekit_cycle.AnalysisStep)
-                              ↑
-Layer 1: Components       priors (φ), observation operators (H),
-                          grad modulators (Φ), cost functions, solver loops
-                              ↑
-Layer 0: Primitives       pure-JAX cost terms, solver steps, CVT,
-                          Laplace covariance, autodiff-based TLM/adjoint
-```
+## Why a JAX-native DA library
 
-Users can enter at any level:
-- **Layer 0** when integrating vardax algorithms into another framework
-- **Layer 1** when composing custom DA pipelines (e.g. a new prior + AK obs op)
-- **Layer 2** when running turnkey training or operational analysis
+The DA community has excellent Fortran/C++ implementations of incremental
+4DVar (IFS, GSI, ICON, WRFDA), excellent Python ensemble libraries
+(DAPPER, PyOSSE), and excellent research code for 4DVarNet
+(`4dvarnet-starter`). What's missing is a single library where:
 
-### Framework choices
+- **All classical methods are first-class.** BLUE / OI is not a footnote;
+  it's the first thing you should reach for when the regime is
+  linear-Gaussian. Today this means dropping into NumPy / SciPy or
+  rolling your own.
+- **The same code transitions research → operations.** A `ThreeDVar`
+  trained in a notebook becomes the analysis step in a `pipekit-cycle`
+  pipeline without changes to the inversion logic.
+- **Gradients are uniform.** `diffrax` adjoints handle the dynamics,
+  `optimistix` adjoints handle the inner solver, vardax just composes
+  them. No per-method bespoke differentiation.
+- **Learned methods coexist with classical ones.** `FourDVarNet` and
+  `AmortizedPosterior` are siblings of `OptimalInterpolation`, not a
+  replacement. They use the same priors, observation operators, and
+  posterior adapters.
 
-vardax is **equinox-native** (deprecating Flax NNX from v0.1.x), and the
-required dependency stack is:
+This is the gap vardax fills.
 
-| Package | Role |
-|---|---|
-| **`equinox`** | Module system; all priors / models / operators are `eqx.Module` |
-| **`optax`** | Outer-loop training (replaces `nnx.Optimizer`) |
-| **`optimistix`** | Inner-loop minimization (Gauss-Newton, BFGS, fixed-point) |
-| **`diffrax`** | ODE integration for dynamical priors (wraps somax forward models) |
-| **`lineax`** | Linear solves (CG / GMRES) for incremental 4DVar inner loop |
-| **`gaussx`** | Structured linear operators; Matérn factorisation of $B$; Kronecker / LowRank for $R$ |
-| **`pipekit`** + **`pipekit-cycle`** | Protocol contracts (`ForwardModel`, `ObservationOperator`, `AnalysisStep`) and `DACycle` / `SmootherCycle` orchestration |
+## Framework stack
 
-Optional extras:
+| Package | Role | Required? |
+|---|---|---|
+| `equinox` | Module system | yes |
+| `optax` | Outer-loop training optimiser | yes |
+| `optimistix` | Inner-loop minimisers + adjoints | yes |
+| `diffrax` | ODE integration + adjoints | yes |
+| `lineax` | Linear solvers, `AbstractLinearOperator` | yes |
+| `gaussx` | Structured operators (Matérn, Kronecker, LowRank) | yes |
+| `pipekit` + `pipekit-cycle` | Operator base + protocol contracts | yes |
+| `jaxtyping` | Shape annotations | yes |
+| `pipekit-jax` | `JaxModelOp` for weight persistence | optional `[persist]` |
+| `pipekit-experiment` | `ModelRegistry`, run tracking | optional `[persist]` |
+| `pipekit-train` | `Loss` / `Callback` / `MetricWriter` protocols | optional `[train]` |
+| `filterax` | Ensemble methods (EnKF / EnKS / EnKI) | optional `[ensemble]` |
+| `coordax` | Coordinate-aware fields | optional `[coords]` |
+| `numpyro` | Full Bayesian fallback | optional `[mcmc]` |
 
-| Package | Use |
-|---|---|
-| `pipekit-jax` | Persist trained models via `JaxModelOp` + weight serialisation |
-| `pipekit-experiment` | Content-addressed `ModelRegistry` for trained heads |
-| `pipekit-train` | `Loss` / `Callback` / `MetricWriter` protocols vardax `train_step` plugs into |
-| `filterax` | Hybrid ensemble-variational (En4DVar, EnVar) |
-| `coordax` | Coordinate-aware batch construction from `xarray` |
-
-### What vardax enables
-
-- **Drop-in tier swaps.** Same vardax inference code accepts a Gaussian-plume
-  forward from plumax, a shallow-water forward from somax, or a learned
-  emulator — the `ForwardModel` interface is fixed.
-- **Multi-instrument satellite inversion.** Per-instrument
-  `(A, x_a, h, mask, R)` registries, fused at the likelihood level — no
-  pre-regridding.
-- **Research → operations arc.** The Jupyter cell that validated methodology
-  becomes the backend for the FastAPI handler. Same `DACycle`, same
-  `AnalysisStep`, different deployment.
-- **Posterior provenance.** Every analysis carries enough metadata
-  (`PosteriorAdapter`) to feed downstream population models (TMTPP) without
-  retraining.
-
-### What vardax does NOT do
-
-(See [boundaries.md](boundaries.md) for the full ownership map.)
-
-- It does not define forward models. Use `somax` (geophysics) or `plumax`
-  (atmospheric transport / methane). Lorenz-63 / Lorenz-96 demos in
-  `vardax._src.utils` are toys, not the library API.
-- It does not own ensemble methods. Use `filterax`. vardax exposes
-  ensemble-variational hooks but EnKF / EnKS proper lives elsewhere.
-- It does not own structured linear algebra. Use `gaussx` for Matérn
-  factorisations and Kronecker operators.
-- It does not own data I/O. Use `georeader` (sensors) and `coordax` (labelled
-  arrays). vardax accepts `Batch*` containers; how you fill them is upstream.
-- It does not own experiment orchestration. Use `pipekit-cycle` for DA cycles
-  and `pipekit-experiment` for run tracking. vardax provides `train_step` /
-  `eval_step` / `AnalysisStep` — composing them is the user's job.
+`flax` and `jaxopt` are removed by the equinox migration.

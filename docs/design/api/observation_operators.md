@@ -1,6 +1,6 @@
 ---
 status: draft
-version: 0.3.0
+version: 0.4.0
 ---
 
 # Layer 1 — Observation Operators
@@ -231,7 +231,7 @@ class BiasAwareFusion(eqx.Module):
         }
 ```
 
-Per-instrument bias becomes a joint state element in `IncrementalVarDA*` —
+Per-instrument bias becomes a joint state element in `IncrementalFourDVar` —
 `Posterior.mean` carries both state and bias estimates.
 
 ---

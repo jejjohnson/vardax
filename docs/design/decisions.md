@@ -1,12 +1,13 @@
 ---
 status: draft
-version: 0.3.0
+version: 0.4.0
 ---
 
 # vardax — Design Decisions
 
-This log captures architectural commitments with rationale. Each decision is
-referenced by ID throughout the rest of the design docs.
+Each decision is referenced by ID throughout the design docs and math
+reference. New in v0.4.0: D14, D15, D16. Revised: D8 (seven peers), D11
+(rename), D6 (clarified upstream adjoint contribution).
 
 ## Index
 
@@ -17,323 +18,366 @@ referenced by ID throughout the rest of the design docs.
 | D3 | Dimensional inheritance over duplication | Layer 2 |
 | D4 | Nested module configuration | Layer 1 |
 | D5 | Training step as library code, training loop as example | Layer 2 |
-| D6 | optimistix for novel solvers | Layer 0 |
+| D6 | optimistix for novel solvers — contribute upstream | Layer 0 |
 | D7 | Demo-quality dynamical priors (forwards live elsewhere) | Boundary |
-| D8 | Direct pipekit-cycle protocol satisfaction | Layer 1/2 |
+| D8 | Direct pipekit-cycle protocol satisfaction (seven peer AnalysisStep classes) | Layer 1/2 |
 | D9 | Averaging kernel + multi-instrument as first-class | Layer 1 |
 | D10 | Posterior export adapter pattern | Layer 1 |
-| D11 | Incremental 4DVar with CVT as operational path | Layer 2 |
+| D11 | `IncrementalFourDVar` as the operational fast path of `StrongFourDVar` | Layer 2 |
 | D12 | Six-step inference cycle as testing scaffold | Methodology |
 | D13 | `pipekit-jax` `JaxModelOp` + `ModelRegistry` for persistence | Layer 1 |
+| **D14** | **DA hierarchy as horizontal peer classes** | **Layer 2** |
+| **D15** | **Lean on `optimistix` / `diffrax` adjoints, not in-house grad modes** | **Layer 0** |
+| **D16** | **BLUE / OI as a first-class method** | **Layer 2** |
 
 ---
 
 ## D1: Equinox over Flax NNX
 
-**Decision.** Use `equinox.Module` as the foundation for all components,
-replacing Flax NNX `nnx.Module`.
+All components are `eqx.Module`, not `nnx.Module`. The migration enables
+direct use of `lineax`, `optimistix`, `diffrax`, and `pipekit-jax`
+without adapter layers, and gives a simpler immutable pytree model than
+Flax NNX's mutable state.
 
-**Why.** Ecosystem consistency (finitevolX, somax, spectraldiffx are all
-equinox-based). Direct integration with `lineax`, `optimistix`, and `diffrax`
-without adapter layers. Equinox's immutable pytree model is simpler than
-Flax NNX's mutable state, and composes cleanly with `pipekit-jax.JaxModelOp`
-weight serialisation (Decision D13).
-
-**How to apply.** `nnx.Module` → `eqx.Module`. `nnx.Linear` → `eqx.nn.Linear`.
-`nnx.Conv` → `eqx.nn.Conv1d` / `Conv2d`. Training uses `optax` +
-`eqx.filter_value_and_grad` instead of `nnx.Optimizer`.
+Apply: `nnx.Module` → `eqx.Module`, `nnx.Linear` → `eqx.nn.Linear`,
+`nnx.Optimizer` → `optax` + `eqx.filter_value_and_grad`.
 
 ---
 
 ## D2: Protocol-driven extensibility
 
-**Decision.** Vardax defines **vardax-specific** runtime-checkable protocols
-for `Prior`, `GradModulator`, `CostFunction`, and `PosteriorAdapter`. Where
-pipekit-cycle already names the contract (`ForwardModel`,
-`ObservationOperator`, `AnalysisStep`), vardax re-exports and satisfies those
-directly — no parallel `Abstract*` hierarchy (see Decision D8).
-
-**Why.** DA is inherently modular: cost, prior, obs operator, grad modulator,
-posterior adapter are independent choices. Hard-coding any of them limits
-reuse. Naming conventions should align with the wider ecosystem so users
-don't learn two protocols for the same concept.
-
-**How to apply.** Every new prior / grad mod / posterior adapter satisfies the
-relevant vardax `Protocol`. Every observation operator satisfies
-`pipekit_cycle.ObservationOperator`. `VarDANet` / `IncrementalVarDA` /
-`AmortizedVarDA` accept protocols, not concrete types.
+Vardax defines vardax-specific runtime-checkable protocols for `Prior`,
+`GradModulator`, `CostFunction`, `PosteriorAdapter`, and `Minimiser`.
+Where `pipekit-cycle` already names the contract (`ForwardModel`,
+`ObservationOperator`, `AnalysisStep`), vardax re-exports and satisfies
+those directly — no parallel `Abstract*` hierarchy (see D8).
 
 ---
 
 ## D3: Dimensional inheritance over duplication
 
-**Decision.** Base classes (`VarDANet`, `IncrementalVarDA`, `AmortizedVarDA`)
-hold the dimension-agnostic algorithm. `*1D`, `*2D`, `*3D` subclasses set
-dimension-specific defaults (conv kernel shape, ConvLSTM layout).
-
-**Why.** The inference algorithm (cost → gradient → update or GN outer / CG
-inner) is identical regardless of spatial dimension. Only tensor shapes
-differ. Separate classes per dimension led to ~300 lines of duplicated logic
-in the v0.1.x codebase.
-
-**How to apply.** Base class implements `__call__`, `_solve_*`,
-`.as_analysis_step()`. Subclasses may override defaults (e.g., default grad
-modulator for that dimension).
+Each Layer 2 class holds a dimension-agnostic algorithm; `*1D`, `*2D`,
+`*3D` subclasses set defaults (conv kernel shape, ConvLSTM layout). The
+algorithm is identical regardless of spatial dimension; only tensor
+shapes differ.
 
 ---
 
 ## D4: Nested module configuration
 
-**Decision.** Use `SolverConfig(eqx.Module)`, `IncrementalConfig(eqx.Module)`,
-`AmortizedConfig(eqx.Module)` for inference parameters rather than flat
-constructor arguments.
-
-**Why.** Configuration as a pytree is serialisable (round-trips through
-`pipekit-experiment.ModelRegistry`), JIT-friendly, and groups related
-settings. It simplifies the model constructor (4 arguments instead of 10+)
-and is forward-compatible with swapping the config for an
-`optimistix.AbstractMinimiser`.
-
-**How to apply.** Solver-specific settings (`n_steps`, `alpha`,
-`prior_weight`, `grad_mode`, `n_outer`, `n_inner`, `cvt`, …) live in the
-config object. Model-level components (prior, obs_op, grad_mod, forward)
-stay as direct constructor arguments.
+`SolverConfig`, `IncrementalConfig`, `AmortizedConfig` are themselves
+`eqx.Module`. Serialisable, JIT-friendly, round-trip through
+`pipekit-experiment.ModelRegistry`.
 
 ---
 
 ## D5: Training step as library code, training loop as example
 
-**Decision.** Ship `train_step` and `eval_step` as library functions. `fit()`
-moves to example notebooks. Production training composes vardax `train_step`
-with `pipekit-train.Loss` / `Callback` / `MetricWriter` protocols.
-
-**Why.** `train_step` encodes the non-obvious part — how to correctly
-differentiate through the VarDANet inner solver (especially with implicit
-diff or one-step). The outer loop (epochs, logging, checkpointing,
-distributed) is always project-specific. Users get the hard parts as library
-code; they compose the rest with their preferred tools.
-
-**How to apply.** `from vardax import train_step, eval_step` gives users the
-correctness-critical primitive. `pipekit-train.TrainingLoop` wraps it for
-production runs (see Epic 7). The `fit()` helper in v0.1.x is moved to an
-example notebook.
+`train_step` and `eval_step` ship as library functions — they encode the
+correctness-critical differentiation through the inner solver. `fit()`
+is example-only. Production training composes vardax `train_step` with
+`pipekit-train.Loss` / `Callback` / `MetricWriter` protocols.
 
 ---
 
-## D6: optimistix for novel solvers
+## D6: optimistix for novel solvers — contribute upstream
 
-**Decision.** Use existing `optimistix` solvers as-is for standard
-minimisation. If vardax develops novel solver strategies (learned gradient
-step, hybrid classical-learned warm-start), contribute them upstream as
-`optimistix.AbstractMinimiser` subclasses rather than maintaining them
-in-tree.
+**Updated in v0.4.0.** Use existing `optimistix.AbstractMinimiser`
+subclasses for standard minimisation. The unique contribution from the
+4DVarNet line of work — the learned ConvLSTM gradient step, and the
+one-step differentiation of Bolte et al. (2023) — should be packaged as
+`optimistix.AbstractMinimiser` and `optimistix.AbstractAdjoint`
+subclasses respectively, and **contributed upstream** rather than
+maintained as parallel implementations in vardax.
 
-**Why.** Avoids a parallel optimisation library. Novel contributions benefit
-the broader JAX community. optimistix already handles implicit
-differentiation correctly (Decision D8 protocol satisfaction extends to
-optimistix's solver interface).
-
-**How to apply.** Evaluate `optimistix.GradientDescent`, `BFGS`, and
-`FixedPointIteration` first. If the learned ConvLSTM step proves useful
-beyond `VarDANet`, package it as an optimistix solver.
+Apply: vardax ships `vardax._src.adjoints.one_step.OneStepAdjoint(
+optimistix.AbstractAdjoint)` initially, with the goal of upstreaming
+once stable. Same for any learned-step minimiser.
 
 ---
 
 ## D7: Demo-quality dynamical priors (forwards live elsewhere)
 
-**Decision.** L63 / L96 priors and simulators are demo utilities under
-`vardax._src.utils.dynamical_systems`, **not** library-grade components.
-Production dynamical priors come from `somax` (geophysics) or `plumax`
-(atmospheric transport / methane).
-
-**Why.** Vardax's job is the **inference** machinery. Maintaining parallel
-forward model implementations creates divergence. `somax` and `plumax` are
-the authoritative sources.
-
-**How to apply.** L63 / L96 code stays in `utils/` and is imported by
-notebooks. It is not part of the core public API. The `Prior` /
-`ForwardModel` protocols are what make somax / plumax models work in vardax.
+L63 / L96 / SWM simulators are demo utilities in
+`vardax._src.utils.dynamical_systems`. Production forward models come
+from `somax` (geophysics) or `plumax` (atmospheric transport / methane).
+Vardax owns inference, not physics.
 
 ---
 
-## D8: Direct pipekit-cycle protocol satisfaction
+## D8: Direct pipekit-cycle protocol satisfaction (seven peer `AnalysisStep` classes)
 
-**Decision.** Vardax classes **directly satisfy** `pipekit_cycle.ForwardModel`,
-`ObservationOperator`, and `AnalysisStep` protocols — without a parallel
-`Abstract*` hierarchy or a `vardax.adapters.pipekit` shim module. Where
-pipekit-cycle names the contract, vardax uses that name.
+**Updated in v0.4.0** with the new class hierarchy.
 
-**Why.** The user is committed to the pipekit ecosystem for orchestration
-(`DACycle`, `SmootherCycle`, `EnsembleDACycle`). An adapter-only pattern
-would double the abstraction surface and require users to learn two
-hierarchies for the same concept. Direct satisfaction makes vardax a
-"first-class citizen" of pipekit's protocol world. `pipekit-cycle` becomes
-a required dependency.
+Vardax classes directly satisfy `pipekit_cycle.{ForwardModel,
+ObservationOperator, AnalysisStep}` protocols. **Seven Layer 2 classes
+implement `AnalysisStep`** as peers, not a parent–child family:
 
-**How to apply.**
+1. `OptimalInterpolation` (closed-form BLUE / OI)
+2. `ThreeDVar`
+3. `StrongFourDVar`
+4. `WeakFourDVar`
+5. `IncrementalFourDVar`
+6. `FourDVarNet`
+7. `AmortizedPosterior`
 
-- `vardax.protocols` re-exports `pipekit_cycle.{ForwardModel,
-  ObservationOperator, AnalysisStep}` so users can import from a single
-  place. Vardax adds `Prior`, `GradModulator`, `CostFunction`,
-  `PosteriorAdapter` for concepts pipekit-cycle doesn't name.
-- Every Layer 1 observation operator implements `__call__(state) → obs` and
-  `linearize(state) → AbstractLinearOperator` (the `ObservationOperator`
-  protocol).
-- Every Layer 2 model (`VarDANet*`, `IncrementalVarDA*`, `AmortizedVarDA*`)
-  exposes `.as_analysis_step()` returning an `AnalysisStep`-compliant
-  callable adapting `(forecast, obs, *, obs_op, obs_err_cov) → analysis`.
-- The training interface (`model(batch) → x_recon`) remains unchanged; it
-  coexists with the operational `AnalysisStep` interface.
-- `tests/test_pipekit_protocols.py` (added as part of Epic 1) enforces
-  `isinstance(...)` checks on every public model and obs operator. Not
-  yet present in the v0.1.x codebase.
+Each exposes `.as_analysis_step()` returning a callable matching
+`(forecast, obs, *, obs_op, obs_err_cov) → analysis`. The training
+interface `model(batch) → x_recon` is preserved on the learned variants
+(`FourDVarNet`, `AmortizedPosterior`).
 
-**Trade-off accepted.** `pipekit-cycle` becomes a required dep. Users who
-want only the JAX inference code without orchestration still get pipekit in
-their environment — pipekit has zero third-party deps, so the cost is
-minimal.
+Apply:
+- `vardax.protocols` re-exports the three pipekit-cycle protocols.
+- Vardax-specific protocols (`Prior`, `GradModulator`, `CostFunction`,
+  `PosteriorAdapter`, `Minimiser`) are added for concepts pipekit-cycle
+  doesn't name.
+- `tests/test_pipekit_protocols.py` enforces `isinstance(...)` checks on
+  every public model and obs operator (added as part of Epic 1).
+
+`pipekit-cycle` is a required dependency. It has zero third-party deps,
+so the cost is minimal.
 
 ---
 
 ## D9: Averaging kernel + multi-instrument as first-class
 
-**Decision.** `AveragingKernel(A, x_a, h)` and `MultiInstrumentFusion(registry)`
-are part of the day-one `vardax.obs_operators` package — not Epic 6
-upgrades, not example-only patterns.
+`AveragingKernel(A, x_a, h)` and `MultiInstrumentFusion(registry)` are
+part of the day-one `vardax.obs_operators` package. Skipping the
+averaging kernel is the most common cause of bias in operational
+satellite inversions.
 
-**Why.** Every real satellite inversion (methane, SSH altimetry, soil
-moisture, atmospheric chemistry) requires either an averaging kernel
-operator (RTM-based L2 products) or multi-instrument fusion (any operational
-satellite product). Pushing these to "future work" means vardax can't be
-used for its primary use case. Research notes (`methane/1.3_*`,
-`methane/2.3_*`, `methane/roadmap/04_rtm_stack.md`) flag this as a hard
-day-one requirement.
-
-**How to apply.**
-
-- `AveragingKernel(eqx.Module)` implements `ŷ = A(h·x + (1-h)·x_a)` with
-  `A: AbstractLinearOperator` (via gaussx if structured), `x_a: Array`
-  (retrieval prior), `h: Array` (weighting). Satisfies
-  `pipekit_cycle.ObservationOperator`.
-- `MultiInstrumentFusion(registry)` composes per-instrument operators into
-  a single H at the **likelihood level**. Fuses without pre-regridding.
-- `InstrumentRegistry` carries `(A, x_a, h, mask, R)` per `instrument_id`.
-  Per-pixel `instrument` index on `Batch*` selects the operator.
-- Per-instrument bias terms are first-class state elements when joint
-  inversion is enabled (Epic 9).
+`MultiInstrumentFusion` returns `dict[str, Array]` natively and
+satisfies `pipekit_cycle.ObservationOperator` via its
+`.to_observation_operator()` adapter (block-diagonal flattening).
 
 ---
 
 ## D10: Posterior export adapter pattern
 
-**Decision.** Every Layer 2 model emits a `Posterior` object via a
-`PosteriorAdapter` (Laplace / Gauss-Newton-Hessian / Ensemble). The
-`Posterior` carries mean + covariance + samples + provenance. A
-`GaussianMarkLikelihood` serialiser converts `Posterior` to mark-likelihood
-form for downstream population models (Tier V TMTPP, hierarchical models).
+Every Layer 2 model emits a `Posterior(mean, cov, samples, provenance)`
+via a `PosteriorAdapter`. `GaussianMarkLikelihood` serialises to
+JSON-friendly form for downstream population models (Tier V TMTPP,
+hierarchical Bayesian inversions).
 
-**Why.** Research notes (`methane/paradox/missing_methane_paradox.md`,
-`methane/paradox/mttpp.md`) require that per-event posteriors flow into
-population-level models without retraining. A uniform `Posterior` ↔
-mark-likelihood adapter keeps the inference layer decoupled from the
-population layer; Tier V automatically absorbs improvements to Tier I-IV
-forwards.
+Adapter selection by inference family:
 
-**How to apply.**
-
-- `vardax.posterior` provides `LaplaceCovariance`, `GaussNewtonHessian`,
-  `EnsembleCovariance` — each satisfies `PosteriorAdapter`.
-- `Posterior(mean, cov, samples, provenance)` is the standard output
-  container. `cov` is an `AbstractLinearOperator` from `gaussx` /
-  `lineax` (not necessarily materialised).
-- `provenance: dict` carries `{forward_model_id, obs_ops_used, n_iter, J_star,
-  converged, gaussx_op_hash, model_hash}`.
-- `GaussianMarkLikelihood.to_dict()` serialises to JSON-friendly form for
-  storage in catalogs / databases.
+| Family | Default adapter |
+|---|---|
+| `OptimalInterpolation` | direct (closed-form posterior cov) |
+| `ThreeDVar`, `StrongFourDVar`, `WeakFourDVar` | `LaplaceCovariance` at MAP |
+| `IncrementalFourDVar` | `GaussNewtonHessian` (reuses last outer Hessian) |
+| `FourDVarNet` | `LaplaceCovariance` |
+| `AmortizedPosterior` | direct sampling (`Posterior.samples`) |
+| Hybrid `EnVar` (filterax) | `EnsembleCovariance` |
 
 ---
 
-## D11: Incremental 4DVar with control-variable transform as operational path
+## D11: `IncrementalFourDVar` as the operational fast path of `StrongFourDVar`
 
-**Decision.** Operational 4DVar uses `IncrementalVarDA*` — Gauss-Newton outer
-iterations on the full nonlinear cost, CG inner iterations on the
-tangent-linear cost, with the control-variable transform $\chi = B^{-1/2}(x - x_b)$
-applied via `gaussx.MaternLinearOperator` factorisation by default.
+**Renamed in v0.4.0** (was `IncrementalVarDA`).
 
-**Why.** Operational DA centres (ECMWF, NCEP, JMA, UKMO) all use incremental
-4DVar with CVT as their inner-loop foundation. The transform converts a
-Matérn-correlated prior into an identity-Gaussian on $\chi$, which
-preconditions the CG solver and makes the inner solve well-conditioned. The
-unrolled / one-step / implicit 4DVarNet flavour (`VarDANet*`) is for
-research; `IncrementalVarDA*` is for production.
+`IncrementalFourDVar` is functionally a `StrongFourDVar` with a
+specialised inner solver: Gauss-Newton outer iterations on the full
+nonlinear cost, CG / Lanczos inner iterations on the linearised
+quadratic subproblem, control-variable transform via
+`gaussx.MaternLinearOperator.half()` for preconditioning.
 
-**How to apply.**
+For users:
+- Use `StrongFourDVar` with `minimiser=optimistix.NonlinearCG(...)` for
+  general 4DVar problems.
+- Use `IncrementalFourDVar` when you want the operational pattern — fewer
+  outer iterations, exact tangent-linear via `jax.linearize`, and CG
+  inner with `gaussx`-preconditioned Hessian.
 
-- `IncrementalVarDA(forward, obs_op, prior_mean, prior_cov_op, obs_cov_op, config)`
-  takes `gaussx` linear operators for $B$ and $R$.
-- Tangent-linear model derived via `jax.linearize` on the `ForwardModel`.
-- Inner CG solver via `lineax.CG`; outer loop via plain Python `for` (no
-  scan — outer iterations are not unrollable due to relinearisation).
-- `cvt_transform(x, B_op) → χ` and inverse, exposed in `vardax.cvt`.
-- `IncrementalConfig.cvt: bool` toggles the transform (default `True`).
-  When `False`, falls back to identity preconditioning.
+The two share `ForwardModel`, `ObservationOperator`, and `Posterior`
+contracts. The choice between them is performance-driven, not
+semantic — both solve the same minimisation problem.
 
 ---
 
 ## D12: Six-step inference cycle as testing scaffold
 
-**Decision.** The six-step research-to-operations cycle (physics →
-MAP/MCMC → emulator → faster inference → amortized → improve) is the
-**validation methodology** for vardax. Step N validates against Step N-1 as
-oracle. Hard gates (adjoint calibration, posterior agreement) are part of
-the test suite, not just documentation.
+The cycle (physics → MAP / MCMC → emulator → faster inference →
+amortized → improve) is the **validation methodology**. Step N validates
+against Step N–1 as oracle. Hard gates (adjoint calibration, posterior
+agreement, simulation-based calibration) are part of
+`tests/test_six_step_validation.py`, not just documentation.
 
-**Why.** Research notes (`methane/roadmap/00_prerequisites.md`,
-`geotoolz/master_plan/toolz_6_usecases.md`) emphasise that emulators and
-amortized predictors are only useful if their output agrees with the
-physics-based inference they replace. Without explicit validation gates,
-"faster inference" becomes "wrong inference, faster". Vardax codifies the
-gates.
-
-**How to apply.**
-
-- Step 2 (model-based) is the oracle for Step 4 (emulator-based). Vardax
-  ships `tests/test_six_step_validation.py` with template assertions:
-  emulator MAP within $1\sigma_\text{post}$ of physics MAP.
-- Step 3 → Step 4 transition requires an adjoint calibration test:
-  $\|\partial \text{emulator} / \partial x - \partial \text{physics} / \partial x\|_\text{op} < 5\%$.
-- Step 5 (amortized) is validated against Step 2 + Step 4 across a held-out
-  set of events.
-- `vardax._src.utils.validation` provides `assert_posterior_agreement`,
-  `assert_adjoint_calibrated`, `simulation_based_calibration`.
-- Notebook tutorials (Epic 10) walk through the cycle end-to-end on Lorenz
-  + on a methane case study.
+`vardax._src.utils.validation` exposes `assert_posterior_agreement`,
+`assert_adjoint_calibrated`, `simulation_based_calibration`.
 
 ---
 
 ## D13: `pipekit-jax` `JaxModelOp` + `ModelRegistry` for persistence
 
-**Decision.** Trained `VarDANet*`, `IncrementalVarDA*`, and `AmortizedVarDA*`
-models are persisted via `pipekit-jax.JaxModelOp` (weight serialisation) +
-`pipekit-experiment.ModelRegistry` (content-addressed storage). Vardax
-provides thin shortcuts (`vardax.persist.save`, `vardax.persist.load`) but
-does **not** define its own persistence format.
+Trained models are persisted via `pipekit-jax.JaxModelOp` (weight
+serialisation) + `pipekit-experiment.ModelRegistry` (content-addressed
+storage). Vardax provides thin shortcuts (`vardax.persist.save`,
+`vardax.persist.load`) but does not define its own persistence format.
 
-**Why.** Reusing the pipekit registry means trained vardax models are
-discoverable alongside any other pipekit operator (somax forwards, neural
-emulators, etc.) in the same registry. Content-addressing avoids name
-collisions across projects. `JaxModelOp` handles the split between Python
-structure (class skeleton) and weights (serialised bytes) correctly.
+`pipekit-jax` and `pipekit-experiment` are `[persist]` extras.
 
-**How to apply.**
+---
 
-- Wrap trained model as `pipekit_jax.JaxModelOp(model)` before storing.
-- `registry.store(model_op, weights=model_op.serialize_weights())` returns
-  a content hash.
-- Reload via `template = JaxModelOp(fresh_skeleton); reloaded =
-  template.with_weights(registry.load_weights(hash))`.
-- `vardax.persist.save(model, registry, tags={...})` is sugar.
-- `vardax.persist.load(registry, ref, skeleton_factory)` is sugar.
+## D14: DA hierarchy as horizontal peer classes
 
-`pipekit-jax` and `pipekit-experiment` are `[persist]` extras — required
-only for users who want to persist models.
+**New in v0.4.0.**
+
+The previous v0.3 design organised methods into three families —
+`VarDANet*` (learned), `IncrementalVarDA*` (operational), `AmortizedVarDA*`
+(direct). This was 4DVarNet-centric: it treated the learned method as
+the canonical case and the classical methods as historical variants.
+
+The v0.4 design treats **classical and learned DA methods as siblings**.
+Seven peer classes, all implementing `pipekit_cycle.AnalysisStep`, none
+inheriting from any of the others:
+
+| Method | Use when |
+|---|---|
+| `OptimalInterpolation` | Linear $H$, Gaussian $B$, $R$. Static field. The right default. |
+| `ThreeDVar` | Nonlinear $H$, single time. Snapshot inversion. |
+| `StrongFourDVar` | Multi-time, control = $x_0$, model treated as exact. |
+| `WeakFourDVar` | Multi-time, control = $(x_0, \eta_1, \ldots, \eta_T)$. Model-error-aware. |
+| `IncrementalFourDVar` | Operational fast path: GN outer + CG inner + CVT (= `StrongFourDVar`). |
+| `FourDVarNet` | Learned prior + learned grad modulator. Research, data-rich regimes. |
+| `AmortizedPosterior` | Direct $q_\phi(x \mid y)$. Real-time / many-event regimes. |
+
+**Why horizontal.**
+
+- BLUE / OI is the right tool when the regime allows it. Forcing it
+  through `ThreeDVar` with an "isLinear" branch hides the closed-form
+  fast path and confuses the reader about complexity.
+- Strong- and weak-constraint 4DVar are different problems (different
+  control vectors, different cost terms), not configurations of a
+  single class. Burying them under a `mode: Literal["strong", "weak"]`
+  flag obscures the structural difference.
+- `FourDVarNet` is one variant of 4DVar with learned components — but it
+  is **not the parent** of classical 4DVar. Treating it as such was a
+  category error inherited from the 4DVarNet-starter codebase.
+
+**Apply.**
+
+- All seven classes live as siblings in `vardax/_src/models/`.
+- All seven implement `.as_analysis_step()` returning the same protocol
+  shape.
+- Naming convention: spelled-out names (`StrongFourDVar`, not
+  `VarDA4DStrong` or `FourDVarStrong`). No `VarDA` prefix on the class
+  names — `vardax` is the package, the classes are named for the
+  method.
+- Math reference chapters 4–10 cover one method each, with chapter 1
+  (problem setting), chapter 2 (observation model), and chapter 3
+  (dynamical model) supplying the shared foundation.
+
+---
+
+## D15: Lean on `optimistix` / `diffrax` adjoints, not in-house grad modes
+
+**New in v0.4.0.**
+
+The v0.3 design defined `grad_mode: Literal["unrolled", "one_step",
+"implicit"]` on `FourDVarNet*` and hand-rolled the three corresponding
+differentiation paths in `vardax._src.solver`. This was useful as a
+proof of concept but is the wrong long-term design:
+
+- `optimistix.AbstractAdjoint` already provides
+  `RecursiveCheckpointAdjoint`, `ImplicitAdjoint`, `DirectAdjoint` for
+  gradients through minimisers.
+- `diffrax.AbstractAdjoint` already provides
+  `RecursiveCheckpointAdjoint`, `BacksolveAdjoint` (continuous adjoint),
+  `ForwardMode`, `DirectAdjoint` for gradients through ODE integration.
+
+Vardax exposes both as constructor slots and delegates the actual
+gradient computation upstream:
+
+```python
+class StrongFourDVar(eqx.Module):
+    ...
+    minimiser: optimistix.AbstractMinimiser
+    minimiser_adjoint: optimistix.AbstractAdjoint = ImplicitAdjoint()
+    forward_adjoint: diffrax.AbstractAdjoint = RecursiveCheckpointAdjoint()
+```
+
+A user who wants the operational memory profile:
+
+```python
+minimiser_adjoint = optimistix.ImplicitAdjoint()
+forward_adjoint = diffrax.BacksolveAdjoint()
+```
+
+A user training `FourDVarNet`:
+
+```python
+minimiser_adjoint = optimistix.RecursiveCheckpointAdjoint()
+# or — once contributed upstream:
+minimiser_adjoint = vardax.adjoints.OneStepAdjoint()   # Bolte et al. 2023
+```
+
+**Apply.**
+
+- Drop `GradMode` enum from the public API.
+- Drop `unrolled_solve`, `one_step_solve`, `implicit_solve` as separate
+  Layer 0 primitives. Their logic moves into the appropriate
+  `optimistix.AbstractAdjoint` subclasses.
+- Bolte 2023 "one-step" differentiation is implemented as
+  `vardax._src.adjoints.one_step.OneStepAdjoint(optimistix.AbstractAdjoint)`
+  with the goal of upstreaming (continues D6).
+- The continuous adjoint via `diffrax.BacksolveAdjoint` becomes the
+  recommended default for memory-constrained 4DVar with long
+  assimilation windows.
+
+This decision composes with D6: vardax's novel solver / adjoint
+contributions become upstream `optimistix` / `diffrax` subclasses, not
+parallel in-tree code.
+
+---
+
+## D16: BLUE / OI as a first-class method
+
+**New in v0.4.0.**
+
+Optimal interpolation (BLUE) — the closed-form linear-Gaussian analysis
+— is the **first** method vardax users should reach for when the regime
+permits. It is not a degenerate case of 3DVar to be invoked via an
+auto-detected branch; it is its own `OptimalInterpolation` class with
+its own fast path.
+
+The analysis is
+
+$$x^* = x_b + B H^\top (H B H^\top + R)^{-1} (y - H x_b),$$
+
+with posterior covariance
+
+$$P^* = B - B H^\top (H B H^\top + R)^{-1} H B = (B^{-1} + H^\top R^{-1} H)^{-1}.$$
+
+When $B$, $R$, $H$ are structured (Matérn, Kronecker, AveragingKernel),
+`gaussx` solves these expressions efficiently without materialising
+dense matrices. The whole analysis runs in a handful of structured
+mat-vec operations.
+
+**Why first-class.**
+
+- The closed form is exact; no iteration, no convergence criterion, no
+  adjoint. When applicable it is faster *and* more accurate than
+  3DVar's iterative solution.
+- The posterior covariance comes for free in the same expression — no
+  separate `PosteriorAdapter` call needed.
+- It is the canonical baseline. Every more sophisticated method must
+  agree with OI in the linear-Gaussian limit; if it doesn't, something
+  is wrong. Making OI a first-class method makes this baseline easy to
+  produce.
+- The Kalman filter analysis step *is* OI. Code reuse between vardax
+  and ensemble libraries (filterax) is direct.
+
+**Apply.**
+
+- `vardax/_src/models/optimal_interpolation.py` implements
+  `OptimalInterpolation(eqx.Module)` with no `minimiser` slot.
+- `linearize()` is required on the observation operator. If $H$ is
+  intrinsically nonlinear, the user picks `ThreeDVar` instead;
+  `OptimalInterpolation.__init__` validates linearity and refuses
+  nonlinear `obs_op`.
+- A new Layer 0 primitive `blue_analysis(x_b, y, B_op, R_op, H_op)`
+  implements the closed-form math via `gaussx`.
+- Math chapter 4 covers BLUE / OI in detail, including the Sherman–
+  Morrison–Woodbury identity used to pick between the $B$-space and
+  the $R$-space form.
