@@ -21,13 +21,17 @@ import jax.numpy as jnp
 import pytest
 
 from vardax import (
+    AmortizedConfig,
+    AmortizedPosterior,
     AnalysisStep,
     BilinAEPrior1D,
     ConvLSTMGradMod1D,
     CostFunction,
     FourDVarNet1D,
     GradModulator,
+    IdentityObsEncoder,
     Prior,
+    RegressionHead,
 )
 
 
@@ -82,6 +86,37 @@ class TestAnalysisStepProtocol:
         # Forecast + obs with NaN-masked entries
         forecast = jnp.zeros((2, 3, 4))
         obs = forecast.at[:, 0, 0].set(jnp.nan)  # one missing pixel
+        analysis = step(forecast, obs, obs_op=None, obs_err_cov=None)
+        assert analysis.shape == forecast.shape
+
+
+class TestAmortizedPosteriorProtocol:
+    """`AmortizedPosterior` is the seventh AnalysisStep (Epic 8)."""
+
+    def _model(self, rng):
+        head = RegressionHead(
+            context_dim=2 * 3 * 4,
+            state_shape=(3, 4),
+            hidden_dim=4,
+            depth=2,
+            key=rng,
+        )
+        return AmortizedPosterior(
+            encoder=IdentityObsEncoder(),
+            head=head,
+            config=AmortizedConfig(head_type="regression"),
+        )
+
+    def test_yields_analysis_step(self, rng):
+        model = self._model(rng)
+        step = model.as_analysis_step()
+        assert isinstance(step, AnalysisStep)
+
+    def test_analysis_step_callable(self, rng):
+        model = self._model(rng)
+        step = model.as_analysis_step()
+        forecast = jnp.zeros((2, 3, 4))
+        obs = forecast.at[:, 0, 0].set(jnp.nan)
         analysis = step(forecast, obs, obs_op=None, obs_err_cov=None)
         assert analysis.shape == forecast.shape
 

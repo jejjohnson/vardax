@@ -389,8 +389,8 @@ implemented in `src/vardax/_src/`.
 | P1 | Epic 4 | Incremental 4DVar with CVT |
 | P1 | Epic 5 | Posterior adapters |
 | P1 | Epic 6 | FourDVarNet (learned variant of strong-4DVar) |
-| P2 | Epic 7 | pipekit-jax + pipekit-experiment + pipekit-train integration |
-| P2 | Epic 8 | Amortized inference |
+| **P2** | **Epic 7** | **pipekit-cycle integration (`VarDACycle`, `VarSmootherCycle`) — landed in v0.5** |
+| **P2** | **Epic 8** | **Amortized inference (`AmortizedPosterior`, regression head, six-step gates) — landed in v0.5; flow/score heads ship as stubs pending `gauss_flows`** |
 | P3 | Epic 9 | Hybrid ensemble-variational |
 | P3 | Epic 10 | Math reference (17 chapters) — landed in v0.4 |
 | P3 | Epic 11 | Tutorials |

@@ -24,6 +24,15 @@ from vardax._src.adjoints import (
     OneStepAdjoint,
     RecursiveCheckpointAdjoint,
 )
+from vardax._src.amortized import (
+    AmortizedConfig,
+    AmortizedPosterior,
+    ConditionalFlowHead,
+    IdentityObsEncoder,
+    MLPObsEncoder,
+    RegressionHead,
+    ScoreDiffusionHead,
+)
 from vardax._src.costs import (
     decomposed_loss,
     obs_cost_1d,
@@ -32,6 +41,7 @@ from vardax._src.costs import (
     variational_cost,
     variational_cost_grad,
 )
+from vardax._src.cycle import VarDACycle, VarSmootherCycle
 from vardax._src.grad_mod import (
     ConvLSTMGradMod1D,
     ConvLSTMGradMod2D,
@@ -98,12 +108,19 @@ from vardax._src.solver import (
     solver_step_2d,
 )
 from vardax._src.training import (
+    amortized_nll_loss_fn,
+    amortized_train_step,
     eval_step,
     reconstruction_loss,
     train_loss_fn,
     train_step,
 )
 from vardax._src.utils.dynamical_systems import simulate_lorenz96
+from vardax._src.utils.validation import (
+    assert_adjoint_calibrated,
+    assert_posterior_agreement,
+    simulation_based_calibration,
+)
 from vardax._src.utils.viz import (
     plot_l96_grid,
     plot_l96_trajectories,
@@ -185,7 +202,24 @@ __all__ = [
     "StrongFourDVar",
     "ThreeDVar",
     "WeakFourDVar",
+    # Amortized inference (Epic 8 / Decision D12)
+    "AmortizedConfig",
+    "AmortizedPosterior",
+    "ConditionalFlowHead",
+    "IdentityObsEncoder",
+    "MLPObsEncoder",
+    "RegressionHead",
+    "ScoreDiffusionHead",
+    # pipekit cycle integration (Epic 7 / Decision D8)
+    "VarDACycle",
+    "VarSmootherCycle",
+    # Six-step validation gates (Decision D12)
+    "assert_adjoint_calibrated",
+    "assert_posterior_agreement",
+    "simulation_based_calibration",
     # Training
+    "amortized_nll_loss_fn",
+    "amortized_train_step",
     "eval_step",
     "reconstruction_loss",
     "train_loss_fn",

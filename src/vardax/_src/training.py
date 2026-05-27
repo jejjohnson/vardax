@@ -112,3 +112,53 @@ def eval_step(
     if target is None:
         raise ValueError("eval_step requires batch.target to be set.")
     return reconstruction_loss(pred, target)
+
+
+def amortized_nll_loss_fn(
+    model: Any,
+    batch: Batch1D | Batch2D,
+) -> Float[Array, ""]:
+    """Negative log-likelihood for amortized inference (Epic 8).
+
+    For ``AmortizedPosterior`` with flow / regression heads the maximum-
+    likelihood objective on simulated pairs is
+
+    .. math::
+
+        \\mathcal{L}_\\text{MLE}(\\phi) = -\\mathbb{E}_{(x, y)} \\log q_\\phi(x \\mid y).
+
+    Args:
+        model: ``AmortizedPosterior`` (any head with a ``.log_prob``
+            method).
+        batch: Training batch with ``target = x`` and ``input = y``.
+
+    Returns:
+        Scalar NLL averaged over the batch.
+    """
+    target = batch.target
+    if target is None:
+        raise ValueError(
+            "amortized_nll_loss_fn requires batch.target (the true x) to be set."
+        )
+    log_p = model.log_prob(target, batch)
+    return -jnp.mean(log_p)
+
+
+@eqx.filter_jit
+def amortized_train_step(
+    model: Any,
+    batch: Batch1D | Batch2D,
+    optimizer: optax.GradientTransformation,
+    opt_state: optax.OptState,
+) -> tuple[Any, optax.OptState, Float[Array, ""]]:
+    """Single training step for ``AmortizedPosterior``.
+
+    Same shape as ``train_step`` but uses ``amortized_nll_loss_fn``
+    instead of the MSE reconstruction loss. Use this for simulation-
+    based training of amortized variants; use ``train_step`` for
+    ``FourDVarNet`` and classical models that reconstruct fields.
+    """
+    loss, grads = eqx.filter_value_and_grad(amortized_nll_loss_fn)(model, batch)
+    updates, opt_state = optimizer.update(grads, opt_state, model)
+    model = eqx.apply_updates(model, updates)
+    return model, opt_state, loss
