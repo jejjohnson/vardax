@@ -162,5 +162,8 @@ Reserved for follow-up; current `IncrementalVarDA*` is strong-constraint.
 
 - Chapter 12: Observation operators — including `linearize()` contract
 - Chapter 14: Posterior covariance — GN Hessian is reusable for UQ
-- Decision D11 in design docs — CVT as operational path
+- Decision [D11](design/decisions.md#d11-incremental-4dvar-with-control-variable-transform-as-operational-path)
+  — CVT as operational path
+- Design doc: [`design/api/models.md`](design/api/models.md#incrementalvarda--operational-4dvar-decision-d11)
+  for class contract
 - `vardax.cvt` module reference

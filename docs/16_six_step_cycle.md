@@ -180,5 +180,8 @@ vardax makes the research-to-operations arc auditable, not just fast.
 - Chapter 13: Incremental 4DVar — Step 2 / Step 4 implementation
 - Chapter 15: Amortized inference — Step 5 implementation
 - Chapter 14: Posterior covariance — gate computations
-- Decision D12 in design docs — methodology rationale
+- Decision [D12](design/decisions.md#d12-six-step-inference-cycle-as-testing-scaffold)
+  — methodology rationale
+- Design doc: [`design/examples/use_cases.md`](design/examples/use_cases.md)
+  — methane single-overpass walkthrough exercises Steps 1–5
 - `vardax.utils.validation` module — gate implementations

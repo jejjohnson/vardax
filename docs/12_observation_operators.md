@@ -142,4 +142,7 @@ up to numerical tolerance.
 - Chapter 13: Incremental 4DVar — uses `linearize()` for tangent-linear obs
 - Chapter 14: Posterior covariance — uses `linearize()` for Hessian
   assembly
-- Design doc: `api/observation_operators.md` for the full class hierarchy
+- Design doc: [`design/api/observation_operators.md`](design/api/observation_operators.md)
+  for the full class hierarchy
+- Decision [D9](design/decisions.md#d9-averaging-kernel--multi-instrument-as-first-class)
+  — averaging kernel + multi-instrument as first-class

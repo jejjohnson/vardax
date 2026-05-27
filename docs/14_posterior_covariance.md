@@ -154,5 +154,8 @@ This is the contract between inference and audit — don't break it lightly.
 
 - Chapter 13: Incremental 4DVar — GN Hessian assembly
 - Chapter 16: Six-step cycle — validation gates
-- Decision D10 in design docs — posterior export adapter pattern
+- Decision [D10](design/decisions.md#d10-posterior-export-adapter-pattern)
+  — posterior export adapter pattern
+- Design doc: [`design/posterior.md`](design/posterior.md) for the full
+  posterior contract
 - `vardax.posterior` module reference

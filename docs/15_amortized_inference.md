@@ -154,7 +154,10 @@ simulation_based_calibration(model, prior_distribution, forward_model, n_runs=20
 
 - Chapter 16: Six-step inference cycle — methodology framing
 - Chapter 14: Posterior covariance — UQ for amortized samples
-- Decision D12 in design docs — six-step cycle as testing scaffold
+- Decision [D12](design/decisions.md#d12-six-step-inference-cycle-as-testing-scaffold)
+  — six-step cycle as testing scaffold
+- Design doc: [`design/api/models.md`](design/api/models.md#amortizedvarda--direct-posterior-head-decision-d12)
+  for class contract
 - `gauss_flows` for the conditional flow head
 - Cranmer, K., Brehmer, J., Louppe, G. (2020). "The frontier of
   simulation-based inference." *PNAS*.
