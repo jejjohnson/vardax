@@ -19,6 +19,11 @@ from vardax._src._types import (
     LSTMState1D,
     LSTMState2D,
 )
+from vardax._src.adjoints import (
+    ImplicitAdjoint,
+    OneStepAdjoint,
+    RecursiveCheckpointAdjoint,
+)
 from vardax._src.costs import (
     decomposed_loss,
     obs_cost_1d,
@@ -64,7 +69,6 @@ from vardax._src.protocols import (
     Prior,
 )
 from vardax._src.solver import (
-    GradMode,
     SolverState1D,
     SolverState2D,
     fp_solver_step_1d,
@@ -133,8 +137,11 @@ __all__ = [
     # Gradient modulators
     "ConvLSTMGradMod1D",
     "ConvLSTMGradMod2D",
+    # Adjoints (Decision D15 — replaces v0.1 grad_mode enum)
+    "ImplicitAdjoint",
+    "OneStepAdjoint",
+    "RecursiveCheckpointAdjoint",
     # Solver
-    "GradMode",
     "SolverState1D",
     "SolverState2D",
     "fp_solver_step_1d",

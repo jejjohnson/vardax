@@ -139,6 +139,7 @@ trajectories from noisy partial observations:
 ```python
 import jax, jax.numpy as jnp
 import vardax as vdx
+from vardax.adjoints import OneStepAdjoint
 
 # Build a 4DVarNet for 1D state vectors (Lorenz-63: N=3)
 model = vdx.FourDVarNet1D(
@@ -147,7 +148,7 @@ model = vdx.FourDVarNet1D(
     latent_dim=8,
     hidden_dim=16,
     n_solver_steps=15,
-    grad_mode="one_step",           # Bolte et al. (2023), O(1) memory
+    solver_adjoint=OneStepAdjoint(),   # Bolte et al. (2023), O(1) memory
     key=jax.random.PRNGKey(0),
 )
 

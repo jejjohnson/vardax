@@ -6,7 +6,7 @@ the variational cost minimisation, guided by the learned gradient modulator.
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -15,15 +15,10 @@ from jaxtyping import Array, Float
 
 from ._types import Batch1D, Batch2D, LSTMState1D, LSTMState2D
 
-GradMode = Literal["unrolled", "implicit", "one_step"]
-"""Differentiation strategy for the 4DVarNet solver.
-
-- ``"unrolled"``: backprop through all ``K`` solver steps (O(K) memory).
-- ``"implicit"``:  fixed-point / implicit differentiation (O(1) memory,
-  requires the solver to have converged to a fixed point).
-- ``"one_step"``:  one-step differentiation (Bolte et al., NeurIPS 2023);
-  O(1) memory, only the last solver step is differentiated.
-"""
+# v0.4 removes the `GradMode` enum (`"unrolled" | "implicit" | "one_step"`).
+# Differentiation strategy is now selected via ``solver_adjoint`` on the
+# model — an ``optimistix.AbstractAdjoint`` instance. See
+# ``vardax.adjoints`` (Decision D15).
 
 # ---------------------------------------------------------------------------
 # Solver state containers
