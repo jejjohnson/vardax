@@ -12,6 +12,10 @@ that user code imports from the top-level namespace:
     model = vardax.FourDVarNet1D(...)
 """
 
+# Bind public submodules into the ``vardax`` namespace so the
+# advertised ``vdx.cycle.VarDACycle(...)`` / ``vdx.amortized.X`` /
+# ``vdx.adjoints.X`` access pattern works after a plain ``import vardax``.
+from vardax import adjoints, amortized, cycle  # noqa: F401
 from vardax._src._types import (
     Batch1D,
     Batch2D,

@@ -78,3 +78,25 @@ class TestVarSmootherCycle:
             window=3,
         )
         assert isinstance(cycle, pc.SmootherCycle)
+
+
+class TestPublicNamespace:
+    """Submodules must be reachable via the advertised
+    ``import vardax as vdx; vdx.cycle.X`` pattern."""
+
+    def test_cycle_submodule(self):
+        import vardax as vdx
+
+        assert vdx.cycle.VarDACycle is VarDACycle
+        assert vdx.cycle.VarSmootherCycle is VarSmootherCycle
+
+    def test_amortized_submodule(self):
+        import vardax as vdx
+
+        assert vdx.amortized.AmortizedPosterior is vdx.AmortizedPosterior
+        assert vdx.amortized.RegressionHead is vdx.RegressionHead
+
+    def test_adjoints_submodule(self):
+        import vardax as vdx
+
+        assert vdx.adjoints.OneStepAdjoint is vdx.OneStepAdjoint

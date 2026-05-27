@@ -141,8 +141,8 @@ smoother = pc.SmootherCycle(
     forward_model=somax_model,
     obs_op=vdx.obs_operators.AveragingKernel(...),
     analysis_step=model.as_analysis_step(),
-    window_size=72,           # hours
-    window_overlap=12,        # hours
+    window=72,    # forecast steps per window
+    stride=60,    # step between window starts (12-step overlap)
 )
 trajectory = smoother(initial_state, ...)
 ```
