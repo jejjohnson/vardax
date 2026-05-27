@@ -62,7 +62,6 @@ from vardax._src.solver import (
 )
 from vardax._src.training import (
     eval_step,
-    fit,
     reconstruction_loss,
     train_loss_fn,
     train_step,
@@ -119,7 +118,6 @@ __all__ = [
     "FourDVarNet2D",
     # Training
     "eval_step",
-    "fit",
     "reconstruction_loss",
     "train_loss_fn",
     "train_step",

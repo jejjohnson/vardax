@@ -18,9 +18,12 @@ class TestBatch1D:
         assert batch_1d.input.shape == batch_1d.mask.shape
         assert batch_1d.input.shape == batch_1d.target.shape
 
-    def test_is_named_tuple(self, batch_1d):
-        assert isinstance(batch_1d, tuple)
-        assert len(batch_1d) == 3
+    def test_is_pytree(self, batch_1d):
+        # Batch1D is now an eqx.Module (a JAX pytree, not a NamedTuple).
+        import jax
+
+        leaves = jax.tree_util.tree_leaves(batch_1d)
+        assert len(leaves) == 3
 
 
 class TestBatch2D:

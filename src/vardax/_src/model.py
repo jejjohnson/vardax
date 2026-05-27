@@ -1,15 +1,22 @@
 """End-to-end 4DVarNet models.
 
-Composes the prior, gradient modulator, and solver into a single Flax NNX
-module that can be trained end-to-end.
+Composes the prior, gradient modulator, and solver into a single
+``eqx.Module`` that can be trained end-to-end via ``optax`` +
+``eqx.filter_value_and_grad``.
+
+In v0.4, the differentiation strategy is selected via an
+``optimistix.AbstractAdjoint`` slot rather than a ``grad_mode`` enum
+(Decision D15). For backward compatibility during the equinox migration
+window, both the old ``grad_mode`` argument and the new ``solver_adjoint``
+argument are supported, but ``grad_mode`` is removed in Epic 3.
 """
 
 from __future__ import annotations
 
-from flax import nnx
+import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, Float
+from jaxtyping import Array, Float, PRNGKeyArray
 
 from ._types import Batch1D, Batch2D, LSTMState1D, LSTMState2D
 from .grad_mod import ConvLSTMGradMod1D, ConvLSTMGradMod2D
@@ -17,7 +24,7 @@ from .priors import BilinAEPrior1D, BilinAEPrior2D
 from .solver import GradMode
 
 
-class FourDVarNet1D(nnx.Module):
+class FourDVarNet1D(eqx.Module):
     """End-to-end 4DVarNet model for 1-D spatiotemporal reconstruction.
 
     The model minimises the variational cost
@@ -31,20 +38,25 @@ class FourDVarNet1D(nnx.Module):
     ConvLSTM.
 
     Attributes:
-        state_dim: Spatial dimension ``N`` of the state.
-        n_time: Number of time steps ``T``.
-        latent_dim: Latent dimension of the bilinear autoencoder prior.
-        hidden_dim: Hidden dimension of the ConvLSTM gradient modulator.
         n_solver_steps: Number of solver iterations to unroll.
         alpha: Gradient step-size.
         prior_weight: Weight :math:`\\lambda` for the prior cost term.
-        grad_mode: Differentiation and solver strategy (``"unrolled"``,
-            ``"one_step"``, or ``"implicit"``).  In ``"implicit"`` mode the
-            forward pass uses a fixed-point projection based only on the
-            prior; the ConvLSTM gradient modulator, ``alpha``, and
-            ``prior_weight`` are not used in the solver, and only the
-            implicit fixed point is differentiated through.
+        grad_mode: Differentiation strategy (``"unrolled"``, ``"one_step"``,
+            or ``"implicit"``). In ``"implicit"`` mode the forward pass uses
+            a fixed-point projection based only on the prior; the ConvLSTM
+            gradient modulator, ``alpha``, and ``prior_weight`` are not used
+            in the solver, and only the implicit fixed point is
+            differentiated through.
+        prior: BilinAEPrior1D learned prior.
+        grad_mod: ConvLSTMGradMod1D learned gradient modulator.
     """
+
+    n_solver_steps: int = eqx.field(static=True)
+    alpha: float = eqx.field(static=True)
+    prior_weight: float = eqx.field(static=True)
+    grad_mode: GradMode = eqx.field(static=True)
+    prior: BilinAEPrior1D
+    grad_mod: ConvLSTMGradMod1D
 
     def __init__(
         self,
@@ -57,22 +69,23 @@ class FourDVarNet1D(nnx.Module):
         prior_weight: float = 1.0,
         grad_mode: GradMode = "unrolled",
         *,
-        rngs: nnx.Rngs,
+        key: PRNGKeyArray,
     ) -> None:
         self.n_solver_steps = n_solver_steps
         self.alpha = alpha
         self.prior_weight = prior_weight
         self.grad_mode = grad_mode
+        k_prior, k_grad = jax.random.split(key)
         self.prior = BilinAEPrior1D(
             state_dim=state_dim,
             latent_dim=latent_dim,
             n_time=n_time,
-            rngs=rngs,
+            key=k_prior,
         )
         self.grad_mod = ConvLSTMGradMod1D(
             state_channels=n_time,
             hidden_dim=hidden_dim,
-            rngs=rngs,
+            key=k_grad,
         )
 
     def __call__(self, batch: Batch1D) -> Float[Array, "B T N"]:
@@ -127,9 +140,7 @@ class FourDVarNet1D(nnx.Module):
 
     def _call_implicit(self, batch: Batch1D) -> Float[Array, "B T N"]:
         # Uses the fixed-point projection solver (prior only; grad_mod and
-        # alpha are not used in this mode).  A full implicit-differentiation
-        # implementation that incorporates the gradient modulator requires
-        # jaxopt or a similar fixed-point solver library.
+        # alpha are not used in this mode).
         from .solver import solve_4dvarnet_1d_fixedpoint
 
         return solve_4dvarnet_1d_fixedpoint(
@@ -137,26 +148,26 @@ class FourDVarNet1D(nnx.Module):
         )
 
 
-class FourDVarNet2D(nnx.Module):
+class FourDVarNet2D(eqx.Module):
     """End-to-end 4DVarNet model for 2-D spatiotemporal reconstruction.
 
     Attributes:
-        n_time: Number of time steps ``T``.
-        height: Spatial height ``H``.
-        width: Spatial width ``W``.
-        latent_dim: Latent dimension of the bilinear autoencoder prior.
-        hidden_dim: Hidden dimension of the ConvLSTM gradient modulator.
         n_solver_steps: Number of solver iterations to unroll.
         alpha: Gradient step-size.
         prior_weight: Weight for the prior cost term.
-        grad_mode: Differentiation and solver strategy (``"unrolled"``,
-            ``"one_step"``, or ``"implicit"``).  In ``"implicit"`` mode the
-            forward pass uses a fixed-point projection based only on the
-            prior; the ConvLSTM gradient modulator, ``alpha``, and
-            ``prior_weight`` are not used in the solver, and only the
-            implicit fixed point is differentiated through.  Note that
-            ``"implicit"`` is not yet implemented for 2-D models.
+        grad_mode: Differentiation strategy (``"unrolled"``, ``"one_step"``,
+            or ``"implicit"``). ``"implicit"`` is not yet implemented for
+            2-D models.
+        prior: BilinAEPrior2D learned prior.
+        grad_mod: ConvLSTMGradMod2D learned gradient modulator.
     """
+
+    n_solver_steps: int = eqx.field(static=True)
+    alpha: float = eqx.field(static=True)
+    prior_weight: float = eqx.field(static=True)
+    grad_mode: GradMode = eqx.field(static=True)
+    prior: BilinAEPrior2D
+    grad_mod: ConvLSTMGradMod2D
 
     def __init__(
         self,
@@ -170,34 +181,28 @@ class FourDVarNet2D(nnx.Module):
         prior_weight: float = 1.0,
         grad_mode: GradMode = "unrolled",
         *,
-        rngs: nnx.Rngs,
+        key: PRNGKeyArray,
     ) -> None:
         self.n_solver_steps = n_solver_steps
         self.alpha = alpha
         self.prior_weight = prior_weight
         self.grad_mode = grad_mode
+        k_prior, k_grad = jax.random.split(key)
         self.prior = BilinAEPrior2D(
             latent_dim=latent_dim,
             n_time=n_time,
             height=height,
             width=width,
-            rngs=rngs,
+            key=k_prior,
         )
         self.grad_mod = ConvLSTMGradMod2D(
             state_channels=n_time,
             hidden_dim=hidden_dim,
-            rngs=rngs,
+            key=k_grad,
         )
 
     def __call__(self, batch: Batch2D) -> Float[Array, "B T H W"]:
-        """Run the solver and return the final state estimate.
-
-        Args:
-            batch: Input batch with ``input``, ``mask``, and ``target`` fields.
-
-        Returns:
-            Reconstructed state of shape ``(B, T, H, W)``.
-        """
+        """Run the solver and return the final state estimate."""
         if self.grad_mode == "unrolled":
             return self._call_unrolled(batch)
         elif self.grad_mode == "one_step":
@@ -240,9 +245,6 @@ class FourDVarNet2D(nnx.Module):
         )
 
     def _call_implicit(self, batch: Batch2D) -> Float[Array, "B T H W"]:
-        # Note: the fixed-point projection solver uses only the prior (no
-        # gradient modulator).  A full implicit-diff implementation with a
-        # gradient-modulated solver requires jaxopt.
         raise NotImplementedError(
             "Implicit differentiation for FourDVarNet2D is not yet implemented."
         )

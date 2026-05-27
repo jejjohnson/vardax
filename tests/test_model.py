@@ -1,6 +1,6 @@
 """Tests for vardax._src.model."""
 
-from flax import nnx
+# (removed: flax dropped in equinox migration)
 import jax
 import jax.numpy as jnp
 import pytest
@@ -17,7 +17,7 @@ class TestFourDVarNet1D:
             latent_dim=8,
             hidden_dim=16,
             n_solver_steps=2,
-            rngs=nnx.Rngs(rng),
+            key=rng,
         )
         out = model(batch_1d)
         assert out.shape == (B, T, N)
@@ -33,7 +33,7 @@ class TestFourDVarNet1D:
             latent_dim=8,
             hidden_dim=16,
             n_solver_steps=2,
-            rngs=nnx.Rngs(rng),
+            key=rng,
         )
         out1 = model(batch_1d)
         # All-zero mask
@@ -56,7 +56,7 @@ class TestFourDVarNet2D:
             latent_dim=8,
             hidden_dim=8,
             n_solver_steps=2,
-            rngs=nnx.Rngs(rng),
+            key=rng,
         )
         out = model(batch_2d)
         assert out.shape == (B, T, H, W)
@@ -71,7 +71,7 @@ class TestFourDVarNet2D:
             hidden_dim=8,
             n_solver_steps=2,
             grad_mode="implicit",
-            rngs=nnx.Rngs(rng),
+            key=rng,
         )
         with pytest.raises(NotImplementedError):
             model(batch_2d)
@@ -88,7 +88,7 @@ class TestFourDVarNet1DGradMode:
             hidden_dim=16,
             n_solver_steps=3,
             grad_mode=grad_mode,
-            rngs=nnx.Rngs(rng),
+            key=rng,
         )
         out = model(batch_1d)
         assert out.shape == (B, T, N)
@@ -102,13 +102,13 @@ class TestFourDVarNet1DGradMode:
             hidden_dim=16,
             n_solver_steps=3,
             grad_mode="invalid",  # type: ignore[arg-type]
-            rngs=nnx.Rngs(rng),
+            key=rng,
         )
         with pytest.raises(ValueError, match="Unknown grad_mode"):
             model(batch_1d)
 
     def test_one_step_gradients_are_finite(self, rng, batch_1d):
-        import optax
+        import equinox as eqx
 
         _B, T, N = batch_1d.input.shape
         model = FourDVarNet1D(
@@ -118,15 +118,14 @@ class TestFourDVarNet1DGradMode:
             hidden_dim=16,
             n_solver_steps=3,
             grad_mode="one_step",
-            rngs=nnx.Rngs(rng),
+            key=rng,
         )
-        nnx.Optimizer(model, optax.adam(1e-3), wrt=nnx.Param)
 
         def loss_fn(model):
             x_hat = model(batch_1d)
             return jnp.mean((x_hat - batch_1d.target) ** 2)
 
-        loss, grads = nnx.value_and_grad(loss_fn)(model)
+        loss, grads = eqx.filter_value_and_grad(loss_fn)(model)
         assert jnp.isfinite(loss)
-        leaves = jax.tree_util.tree_leaves(nnx.state(grads))
+        leaves = jax.tree_util.tree_leaves(eqx.filter(grads, eqx.is_array))
         assert all(jnp.all(jnp.isfinite(g)) for g in leaves)

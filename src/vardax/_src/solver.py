@@ -6,8 +6,9 @@ the variational cost minimisation, guided by the learned gradient modulator.
 
 from __future__ import annotations
 
-from typing import Any, Literal, NamedTuple
+from typing import Any, Literal
 
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 from jaxtyping import Array, Float
@@ -29,7 +30,7 @@ GradMode = Literal["unrolled", "implicit", "one_step"]
 # ---------------------------------------------------------------------------
 
 
-class SolverState1D(NamedTuple):
+class SolverState1D(eqx.Module):
     """Mutable solver state for 1-D problems.
 
     Attributes:
@@ -43,7 +44,7 @@ class SolverState1D(NamedTuple):
     step: int
 
 
-class SolverState2D(NamedTuple):
+class SolverState2D(eqx.Module):
     """Mutable solver state for 2-D problems.
 
     Attributes:
