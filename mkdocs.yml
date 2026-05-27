@@ -1,0 +1,135 @@
+site_name: vardax
+site_description: JAX-native data assimilation inference — seven peer analysis methods built on pipekit-cycle protocols.
+site_author: J. Emmanuel Johnson
+repo_url: https://github.com/jejjohnson/vardax
+repo_name: jejjohnson/vardax
+edit_uri: edit/main/docs/
+
+# docs/README.md exists for GitHub directory navigation; mkdocs uses index.md.
+# The leading slash anchors to docs root so design/README.md stays in the build.
+exclude_docs: |
+  /README.md
+
+theme:
+  name: material
+  features:
+    - navigation.tabs
+    - navigation.tabs.sticky
+    - navigation.sections
+    - navigation.top
+    - navigation.indexes
+    - toc.follow
+    - content.code.copy
+    - content.code.annotate
+    - content.action.edit
+  palette:
+    - scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths:
+            - .
+          options:
+            docstring_style: numpy
+            show_source: true
+            show_root_heading: true
+            show_signature_annotations: true
+            separate_signature: true
+            members_order: source
+  - mkdocs-jupyter:
+      execute: false
+      ignore_h1_titles: true
+
+nav:
+  - Home: index.md
+  - Mathematical Reference:
+      - Foundation:
+          - 1. Problem Setting: 01_problem_setting.md
+          - 2. Observation Model: 02_observation_model.md
+          - 3. Dynamical Model: 03_dynamical_model.md
+      - Analysis Methods:
+          - 4. Optimal Interpolation / BLUE: 04_oi_blue.md
+          - 5. 3DVar: 05_threedvar.md
+          - 6. Strong-constraint 4DVar: 06_strong_4dvar.md
+          - 7. Weak-constraint 4DVar: 07_weak_4dvar.md
+          - 8. Incremental 4DVar with CVT: 08_incremental_4dvar.md
+          - 9. 4DVarNet — Learned 4DVar: 09_4dvarnet.md
+          - 10. Amortized Inference: 10_amortized_inference.md
+      - Cross-cutting:
+          - 11. Observation Operators: 11_observation_operators.md
+          - 12. Adjoint Methods: 12_adjoint_methods.md
+          - 13. Posterior Covariance: 13_posterior_covariance.md
+          - 14. Six-Step Inference Cycle: 14_six_step_cycle.md
+      - End-to-end Examples:
+          - 15. Lorenz Examples: 15_lorenz_examples.md
+          - 16. SSH Reconstruction: 16_ssh_example.md
+          - 17. Methane Single-Overpass: 17_methane_example.md
+      - Reference:
+          - Notation: notation.md
+          - References: references.md
+  - Design Docs:
+      - Overview: design/README.md
+      - Vision: design/vision.md
+      - Architecture: design/architecture.md
+      - Boundaries: design/boundaries.md
+      - Decisions: design/decisions.md
+      - pipekit Composition: design/pipekit_composition.md
+      - Posterior Adapter: design/posterior.md
+      - API:
+          - Overview: design/api/README.md
+          - Primitives (Layer 0): design/api/primitives.md
+          - Components (Layer 1): design/api/components.md
+          - Observation Operators: design/api/observation_operators.md
+          - Models (Layer 2): design/api/models.md
+      - Examples:
+          - Overview: design/examples/README.md
+          - Primitives: design/examples/primitives.md
+          - Components: design/examples/components.md
+          - Models: design/examples/models.md
+          - Integration: design/examples/integration.md
+          - Use Cases: design/examples/use_cases.md
+
+markdown_extensions:
+  - admonition
+  - pymdownx.arithmatex:
+      generic: true
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.details
+  - pymdownx.snippets
+  - attr_list
+  - md_in_html
+  - tables
+  - footnotes
+  - toc:
+      permalink: true
+      toc_depth: 3
+
+extra_javascript:
+  - javascripts/mathjax.js
+  - https://unpkg.com/mathjax@3.2.2/es5/tex-mml-chtml.js
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/jejjohnson/vardax

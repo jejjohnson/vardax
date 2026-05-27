@@ -64,7 +64,7 @@ fourdvarjax/
 ├── docs/                           ← mathematical reference (16 chapters) + design docs
 │   ├── README.md                   ← table of contents
 │   ├── 01_*.md ... 16_*.md         ← mathematical chapters
-│   └── design/                     ← architecture, API contracts, decisions D1–D13
+│   └── design/                     ← architecture, API contracts, decisions D1–D16
 ├── tests/                          ← pytest test suite
 └── notebooks/                      ← Jupytext percent-format .py tutorials
     ├── 01_model_based_4dvar_L63.py
@@ -288,38 +288,56 @@ jupyter lab notebooks/01_model_based_4dvar_L63.ipynb           # open
 
 ## Mathematical Reference
 
-See the [`docs/`](docs/) directory for a detailed mathematical reference:
+> **Note:** [`docs/`](docs/) is a **v0.4.0 design reference** — it
+> describes the target API after the equinox migration (Epics 0–13).
+> The shipped `fourdvarjax` v0.1.6 package does not yet expose
+> `vardax.models.*`, `vardax.adjoints.*`, the `pipekit_cycle`
+> protocols, or `vardax._src.utils.validation`. Snippets are design
+> pseudocode showing intended call sites, not runnable examples
+> against the current package.
 
+See the [`docs/`](docs/) directory for the full mathematical reference
+(17 chapters, rewritten in v0.4 to a DA-textbook style):
+
+**Foundation** (1–3)
 - [§1 Problem Setting](docs/01_problem_setting.md)
-- [§2 Variational cost functional](docs/02_variational_cost.md)
-- [§3 Bilinear autoencoder prior](docs/03_autoencoder_architecture.md)
-- [§4 Learned gradient solver](docs/04_learned_gradient_solver.md)
-- [§5 ConvLSTM gradient modulator](docs/05_gradient_modulator.md)
-- [§6 Implicit differentiation](docs/06_implicit_differentiation.md)
-- [§7 Training objective](docs/07_training_objective.md)
-- [§8 Algorithm pseudocode](docs/08_algorithm_pseudocode.md)
-- [§9 1-D Lorenz-63](docs/09_1d_lorenz63.md)
-- [§10 Multivariate 2-D](docs/10_multivariate_2d.md)
-- [§11 Model vs learned prior](docs/11_model_vs_learned_prior.md)
-- [§12 Observation Operators](docs/12_observation_operators.md)
-- [§13 Incremental 4DVar](docs/13_incremental_4dvar.md)
-- [§14 Posterior Covariance](docs/14_posterior_covariance.md)
-- [§15 Amortized Inference](docs/15_amortized_inference.md)
-- [§16 Six-Step Inference Cycle](docs/16_six_step_cycle.md)
+- [§2 Observation Model](docs/02_observation_model.md)
+- [§3 Dynamical Model](docs/03_dynamical_model.md)
+
+**The seven analysis methods** (4–10)
+- [§4 Optimal Interpolation / BLUE](docs/04_oi_blue.md)
+- [§5 3DVar](docs/05_threedvar.md)
+- [§6 Strong-constraint 4DVar](docs/06_strong_4dvar.md)
+- [§7 Weak-constraint 4DVar](docs/07_weak_4dvar.md)
+- [§8 Incremental 4DVar with CVT](docs/08_incremental_4dvar.md)
+- [§9 4DVarNet — Learned 4DVar](docs/09_4dvarnet.md)
+- [§10 Amortized Inference](docs/10_amortized_inference.md)
+
+**Cross-cutting** (11–14)
+- [§11 Observation Operators](docs/11_observation_operators.md)
+- [§12 Adjoint Methods](docs/12_adjoint_methods.md)
+- [§13 Posterior Covariance](docs/13_posterior_covariance.md)
+- [§14 Six-Step Inference Cycle](docs/14_six_step_cycle.md)
+
+**End-to-end examples** (15–17)
+- [§15 Lorenz Examples](docs/15_lorenz_examples.md)
+- [§16 SSH Reconstruction](docs/16_ssh_example.md)
+- [§17 Methane Single-Overpass](docs/17_methane_example.md)
+
 - [Notation summary](docs/notation.md)
 - [References](docs/references.md)
 
 ## Design Docs
 
 See [`docs/design/`](docs/design/) for the architecture and decision log
-behind v0.3.0:
+behind v0.4.0:
 
-- [`design/vision.md`](docs/design/vision.md) — identity, six-step cycle, scope
+- [`design/vision.md`](docs/design/vision.md) — identity, DA hierarchy, six-step cycle
 - [`design/architecture.md`](docs/design/architecture.md) — three-layer
   stack, pipekit integration, package layout
 - [`design/boundaries.md`](docs/design/boundaries.md) — ownership map and
-  roadmap (Epics 0–10)
-- [`design/decisions.md`](docs/design/decisions.md) — design decisions D1–D13
+  roadmap (Epics 0–13)
+- [`design/decisions.md`](docs/design/decisions.md) — design decisions D1–D16
 - [`design/api/`](docs/design/api/) — protocol + class contracts by layer
 - [`design/examples/`](docs/design/examples/) — patterns and use case
   walkthroughs

@@ -1,6 +1,6 @@
 ---
 status: draft
-version: 0.3.0
+version: 0.4.0
 ---
 
 # End-to-end Use Cases
@@ -9,7 +9,7 @@ Two case studies that ground the abstractions on real workflows:
 
 1. **Methane single-overpass MAP** — plumax Tier I + vardax MAP + averaging
    kernel + multi-instrument fusion.
-2. **SSH 4DVarNet** — somax shallow-water + learned `VarDANet2D` +
+2. **SSH 4DVarNet** — somax shallow-water + learned `FourDVarNet` +
    altimetry-style masking.
 
 ---
@@ -59,7 +59,7 @@ stack height $H_\text{eff}$ for a known facility. Single overpass.
                                   │
                                   ▼
    ┌──────────────────────────────────────────────────────┐
-   │ IncrementalVarDA(forward=plume, obs_op=fusion,       │
+   │ IncrementalFourDVar(forward=plume, obs_op=fusion,       │
    │   prior_mean=Q_inventory, prior_cov_op=lognormal,    │
    │   obs_cov_op=block_diag_per_instrument, ...)         │
    └──────────────────────────────┬───────────────────────┘
@@ -117,7 +117,7 @@ R_op = lx.BlockDiagonalLinearOperator([
 ])
 
 # (6) Configure inversion
-inversion = vdx.models.IncrementalVarDA(
+inversion = vdx.models.IncrementalFourDVar(
     forward=plume, obs_op=fusion,
     prior_mean=jnp.array([Q_prior_mu, 0.0, 0.0, 50.0]),  # Q, x0, y0, H
     prior_cov_op=B_op, obs_cov_op=R_op,
@@ -151,7 +151,7 @@ catalog.write_posterior(event.id, mark.to_dict())
 
 ### What this exercises in vardax
 
-- `IncrementalVarDA` (Decision D11)
+- `IncrementalFourDVar` (Decision D11)
 - `AveragingKernel` + `MultiInstrumentFusion` (Decision D9)
 - `GaussNewtonHessian` posterior + `GaussianMarkLikelihood` export (D10)
 - `gaussx` structured prior + `lineax` block-diag obs cov
@@ -163,10 +163,10 @@ catalog.write_posterior(event.id, mark.to_dict())
 | Step | Component |
 |---|---|
 | 1 (physics) | plumax Gaussian plume |
-| 2 (MAP / MCMC) | vardax `IncrementalVarDA` above |
+| 2 (MAP / MCMC) | vardax `IncrementalFourDVar` above |
 | 3 (emulator) | train plumax neural emulator + adjoint-calibrate |
 | 4 (emulator MAP) | swap `forward=plume` → `forward=plume_nn`; vardax code unchanged |
-| 5 (amortized) | `AmortizedVarDA(encoder, head=ConditionalFlowHead)` trained on simulated (Q, y) pairs |
+| 5 (amortized) | `AmortizedPosterior(encoder, head=ConditionalFlowHead)` trained on simulated (Q, y) pairs |
 | 6 (improve) | swap any block; previous step is the oracle for validation tests |
 
 ---
@@ -176,7 +176,7 @@ catalog.write_posterior(event.id, mark.to_dict())
 **Goal.** Reconstruct sea surface height $\eta(t, x, y)$ from along-track
 altimeter observations with mesoscale gaps. End-to-end learned solver.
 
-**Tier.** somax shallow-water as physics oracle, learned `VarDANet2D` as
+**Tier.** somax shallow-water as physics oracle, learned `FourDVarNet` as
 inference.
 
 ### Data flow
@@ -199,7 +199,7 @@ inference.
             │
             ▼
    ┌──────────────────────────────────────────┐
-   │ VarDANet2D(prior=BilinAE2D,              │
+   │ FourDVarNet(prior=BilinAE2D,              │
    │            obs_op=MaskedIdentity,        │
    │            grad_mod=ConvLSTMGradMod2D,   │
    │            config=SolverConfig("one_step"))│
@@ -222,11 +222,12 @@ from pipekit_jax import JaxModelOp
 from pipekit_experiment import LocalModelRegistry
 
 # (1) Build model
-model = vdx.models.VarDANet2D(
+model = vdx.models.FourDVarNet(
     prior=vdx.priors.BilinAEPrior2D(latent_dim=128, n_time=10, height=128, width=128),
     obs_op=vdx.obs_operators.MaskedIdentity(),
     grad_mod=vdx.grad_mod.ConvLSTMGradMod2D(state_channels=10, hidden_dim=64),
-    config=vdx.SolverConfig(n_steps=15, alpha=0.2, grad_mode="one_step"),
+    config=vdx.SolverConfig(n_steps=15, alpha=0.2),
+    solver_adjoint=vdx.adjoints.OneStepAdjoint(),   # O(1) memory training
 )
 
 # (2) Training (OceanBench SSH benchmark)
@@ -262,7 +263,7 @@ posterior = posterior_adapter(result, model.as_analysis_step(), batch)
 
 ### What this exercises in vardax
 
-- `VarDANet2D` learned 4DVarNet (D3) with `grad_mode="one_step"` (Bolte 2023)
+- `FourDVarNet` learned 4DVarNet (D3) with `solver_adjoint=OneStepAdjoint()` (Bolte 2023, D15)
 - `BilinAEPrior2D` learned prior
 - `MaskedIdentity` observation operator (simplest case)
 - `LaplaceCovariance` posterior (D10)
@@ -271,11 +272,11 @@ posterior = posterior_adapter(result, model.as_analysis_step(), batch)
 
 ### Comparison to incremental 4DVar
 
-The same problem can be tackled with `IncrementalVarDA2D` for a physics-based
+The same problem can be tackled with `IncrementalFourDVar` for a physics-based
 baseline:
 
 ```python
-incremental = vdx.models.IncrementalVarDA2D(
+incremental = vdx.models.IncrementalFourDVar(
     forward=somax_shallow_water,
     obs_op=vdx.obs_operators.MaskedIdentity(),
     prior_mean=climatology_ssh,
@@ -306,7 +307,7 @@ forward (somax / plumax)
    ↓
    ──→  ObservationOperator (Masked / AveragingKernel / MultiInstrument)
             ↓
-            ──→  Layer 2 model (VarDANet / IncrementalVarDA / AmortizedVarDA)
+            ──→  Layer 2 model (FourDVarNet / IncrementalFourDVar / AmortizedPosterior)
                     ↓
                     ──→  PosteriorAdapter (Laplace / GN-Hessian / Ensemble)
                             ↓

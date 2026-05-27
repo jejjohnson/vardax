@@ -1,114 +1,88 @@
 ---
 status: draft
-version: 0.3.0
+version: 0.4.0
 ---
 
 # vardax — Boundaries
 
 ## What vardax does NOT do
 
-- **Define forward models.** Geophysics → `somax` (shallow water, QG, MQG, SWM,
-  spherical). Atmospheric transport / methane → `plumax` (Gaussian plume,
-  Lagrangian Markov-1, Eulerian FV, RTM). vardax accepts any of them via
-  `pipekit_cycle.ForwardModel`.
+- **Define forward models.** Geophysics → `somax` (shallow water, QG,
+  MQG, SWM, spherical). Atmospheric transport / methane → `plumax`
+  (Gaussian plume, Lagrangian Markov-1, Eulerian FV, RTM). Vardax
+  accepts any of them via `pipekit_cycle.ForwardModel`.
 - **Own spatial operators.** Finite-volume → `finitevolX`. Spectral →
-  `spectraldiffx`. Used inside `somax` / `plumax`, not by vardax directly.
+  `spectraldiffx`. Used inside `somax` / `plumax`, not by vardax.
 - **Own structured linear algebra.** Matérn factorisations, Kronecker /
-  LowRank / BlockDiag operators → `gaussx`. vardax composes them.
-- **Own ensemble methods.** EnKF, EnKS, EnKI → `filterax`. vardax exposes
-  ensemble-variational hooks (`EnsembleCovariance` posterior adapter) but
-  filterax owns the propagation.
-- **Own data I/O.** Satellite L1/L2 reading → `georeader`. Labelled arrays →
-  `coordax` + `xarray`. vardax consumes `Batch*` containers; how they're
-  populated is upstream.
+  LowRank / BlockDiag operators → `gaussx`. Vardax composes them.
+- **Own optimisers.** Gauss-Newton, BFGS, NonlinearCG, fixed-point
+  iteration → `optimistix`. Vardax wraps them as `Minimiser` for the
+  `CostFunction` interface but does not reimplement them.
+- **Own ODE solvers or adjoints.** `diffrax` provides the integrators
+  and the `RecursiveCheckpointAdjoint` / `BacksolveAdjoint` /
+  `ForwardMode` / `DirectAdjoint` family. Vardax passes them through as
+  constructor slots (Decision D15).
+- **Own ensemble methods.** EnKF, EnKS, EnKI → `filterax`. Vardax
+  exposes `EnsembleCovariance` for posterior assembly and accepts
+  ensemble batches, but propagation lives in filterax.
+- **Own data I/O.** Sensor data → `georeader`. Labelled arrays →
+  `coordax` + `xarray`. Vardax consumes `Batch*` containers.
 - **Own experiment orchestration.** Cycles → `pipekit-cycle`. Training
-  callbacks → `pipekit-train`. Model storage → `pipekit-experiment`. Vardax
-  satisfies the protocols and composes.
-- **Provide an opinionated training loop.** Ships `train_step` / `eval_step`
-  as library code (encodes correct differentiation). `fit()` is an example
-  notebook.
-- **Provide production observation operators for specific instruments.**
-  `AveragingKernel` is generic — instrument-specific `(A, x_a, h, mask, R)`
-  comes from the user (or `plumax.instruments` for methane).
+  callbacks → `pipekit-train`. Model storage → `pipekit-experiment`.
+- **Provide an opinionated training loop.** `train_step` / `eval_step`
+  ship as library code. `fit()` is example-only.
 
 ## Ownership Map
 
 | Concern | Owner |
 |---|---|
-| Variational cost functions (weak / strong / incremental) | **vardax** |
-| `Prior` protocol + AE / diffusion implementations | **vardax** |
-| `pipekit_cycle.ObservationOperator` satisfaction + masked/AK/multi-instrument impls | **vardax** |
-| `GradModulator` protocol + ConvLSTM / MLP / Attention / Identity impls | **vardax** |
-| `pipekit_cycle.AnalysisStep` satisfaction (VarDANet, Incremental, Amortized) | **vardax** |
-| `PosteriorAdapter` protocol + Laplace / GN-Hessian / Ensemble impls | **vardax** |
+| Variational cost functions (weak / strong / incremental / 3DVar / BLUE) | **vardax** |
+| `Prior` protocol + AE / diffusion / dynamical impls | **vardax** |
+| `ObservationOperator` impls (masked, AK, multi-instrument) | **vardax** |
+| `GradModulator` protocol + impls (`FourDVarNet` only) | **vardax** |
+| `AnalysisStep` impls (the seven Layer 2 classes) | **vardax** |
+| `PosteriorAdapter` impls (Laplace / GN-Hessian / Ensemble) | **vardax** |
 | Control-variable transform machinery | **vardax** (composes `gaussx`) |
 | `train_step` / `eval_step` | **vardax** (thin) |
-| `fit()` training loop | **user code** / examples |
+| `fit()` training loop | **user code / examples** |
 | Geophysical forward models (SWM, QG, MQG, primitive eq.) | **somax** |
-| Atmospheric transport forward models (Gaussian plume, Lagrangian, Eulerian) | **plumax** |
+| Atmospheric transport forward models | **plumax** |
 | Radiative transfer (HAPI LUTs, neural RTM) | **plumax** (RTM stack) |
-| Spatial operators (FV, spectral) | **finitevolX** / **spectraldiffx** |
-| ODE / SDE integration | **diffrax** |
-| Optimisers (BFGS, GN, fixed-point) | **optimistix** |
+| Spatial operators (FV, spectral) | **finitevolX / spectraldiffx** |
+| ODE / SDE integration + adjoints | **diffrax** |
+| Optimisers + adjoints | **optimistix** |
 | Linear solvers (CG, GMRES, Lanczos) | **lineax** |
 | Structured operators (Matérn, Kronecker, LowRank) | **gaussx** |
-| Ensemble methods (EnKF, EnKS, EnKI) | **filterax** |
-| MCMC / NumPyro models | **user code** (vardax provides priors / costs as building blocks) |
-| Cycle orchestration (DACycle, SmootherCycle) | **pipekit-cycle** |
-| Run tracking (W&B, MLflow, DVC) | **pipekit-experiment** + adapters |
-| Trained model persistence | **pipekit-jax** (`JaxModelOp`) + **pipekit-experiment** |
-| Sensor data I/O (L1, L2, footprints) | **georeader** |
+| Ensemble propagation (EnKF / EnKS / EnKI) | **filterax** |
+| MCMC sampling | **user code** (vardax provides costs / priors as building blocks for NumPyro) |
+| Cycle orchestration (`DACycle`, `SmootherCycle`) | **pipekit-cycle** |
+| Run tracking | **pipekit-experiment** |
+| Trained model persistence | **pipekit-jax** + **pipekit-experiment** |
+| Sensor data I/O | **georeader** |
 | Coordinate-aware arrays | **coordax** |
 | Geospatial catalogs | **GeoCatalog** (geotoolz) |
 
 ## The "where does X go" test
 
-| Question | If yes | If no |
-|---|:---:|---|
-| Is it the inference algorithm (cost, solver, posterior)? | → **vardax** | |
-| Could a non-DA code use it as a forward model? | | → somax / plumax |
-| Is it a spatial operator (diff, interp, advection)? | | → finitevolX |
-| Is it a spectral transform or filter? | | → spectraldiffx |
-| Is it an ODE/SDE integrator? | | → diffrax |
-| Is it an optimisation algorithm? | | → optimistix |
-| Is it a linear solver primitive? | | → lineax |
-| Is it a structured matrix factorisation? | | → gaussx |
-| Is it ensemble propagation / Kalman update? | | → filterax |
-| Is it a cycle orchestrator (forecast/analysis loop)? | | → pipekit-cycle |
-| Is it about persisting / versioning trained models? | | → pipekit-jax + pipekit-experiment |
-
-## How somax / plumax models become priors and forward models
-
-```python
-import somax, plumax, vardax as vdx
-
-# somax / plumax forward model satisfies pipekit_cycle.ForwardModel directly.
-# vardax wraps it as a Prior when used as φ(x) in the variational cost.
-
-class DynamicalPrior(eqx.Module, vdx.Prior):
-    """Wrap any pipekit_cycle.ForwardModel as φ(x)."""
-    forward: ForwardModel
-    n_steps: int = eqx.field(static=True)
-
-    def __call__(self, x):
-        state = x
-        for _ in range(self.n_steps):
-            state = self.forward.step(state, self.forward.dt)
-        return state
-
-# Geophysics use case:
-swm = somax.ShallowWaterModel(grid=grid, params=params)
-prior = DynamicalPrior(forward=swm, n_steps=10)
-
-# Methane use case (plumax provides the forward):
-plume = plumax.GaussianPlumeForward(met=met_field, dispersion="MO")
-# The plume forward is the prior on concentration field given source params.
-```
+| Question | Answer |
+|---|:---|
+| Is it a DA analysis algorithm (cost, minimiser wiring, adjoint composition)? | → **vardax** |
+| Could a non-DA code use it as a forward model? | → somax / plumax |
+| Is it a spatial differential operator? | → finitevolX / spectraldiffx |
+| Is it an ODE / SDE integrator? | → diffrax |
+| Is it an adjoint method for ODE integration? | → diffrax |
+| Is it an optimisation algorithm? | → optimistix |
+| Is it an adjoint method for optimisation? | → optimistix |
+| Is it a linear solver primitive (CG, GMRES, Lanczos)? | → lineax |
+| Is it a structured matrix factorisation (Matérn, Kronecker, LowRank)? | → gaussx |
+| Is it ensemble propagation / Kalman update? | → filterax |
+| Is it a forecast/analysis cycle orchestrator? | → pipekit-cycle |
+| Is it about persisting / versioning trained models? | → pipekit-jax + pipekit-experiment |
 
 ## Dependency graph
 
 ```
-                georeader ─→ coordax ─→ pipekit (Carrier-agnostic core)
+                georeader ─→ coordax ─→ pipekit (carrier-agnostic core)
                                             ↓
                                        pipekit-cycle ─→ DACycle, SmootherCycle
                                             ↑
@@ -121,289 +95,328 @@ spectraldiffx ─────┘  │                     │
                           │           lineax │                     │
                           ↓           optimistix                   │
                        diffrax ──────────────┘                     │
-                                                                   │
                                                               pipekit-train
                                                                    │
                                                               filterax (optional)
 ```
 
-## Roadmap — Epics 0 through 10
+## Roadmap — Epics 0 through 13
 
 ### Epic 0: Equinox Migration (foundational)
 
-The foundational migration from Flax NNX to Equinox. Blocks every other epic.
+Blocks every other epic. Replace Flax NNX with equinox; replace
+`nnx.Optimizer` with `optax` + `eqx.filter_value_and_grad`; convert
+`NamedTuple` types to `eqx.Module`; introduce `SolverConfig`,
+`IncrementalConfig`, `AmortizedConfig` as `eqx.Module`. Remove `flax`
+and `jaxopt`. Add `optimistix`, `lineax`, `gaussx`, `pipekit`,
+`pipekit-cycle` as required.
 
-| Task | Description |
-|---|---|
-| `nnx.Module` → `eqx.Module` (priors, grad mods, models) | Type migration |
-| `nnx.Linear/Conv` → `eqx.nn.Linear/Conv1d/Conv2d` | Layer migration |
-| `nnx.Optimizer` → `optax` + `eqx.filter_value_and_grad` | Training migration |
-| `NamedTuple` → `eqx.Module` for `Batch*`, `LSTMState*`, `SolverState*` | Type migration |
-| Introduce `SolverConfig`, `IncrementalConfig`, `AmortizedConfig` as `eqx.Module` | Config |
-| Remove `flax`; add `optimistix`, `lineax`, `gaussx` | pyproject.toml |
+### Epic 1: Protocol Alignment (Decision D8)
 
-### Epic 1: Protocol Alignment (direct satisfaction, Decision D8)
+Vardax classes satisfy `pipekit-cycle` protocols directly.
+`vardax.protocols` re-exports `ForwardModel`, `ObservationOperator`,
+`AnalysisStep`. Vardax-specific protocols added for `Prior`,
+`GradModulator`, `CostFunction`, `PosteriorAdapter`, `Minimiser`.
+Conformance test suite `tests/test_pipekit_protocols.py` added.
 
-Vardax classes satisfy `pipekit-cycle` protocols directly. No `Abstract*`
-parallel hierarchy.
+### Epic 2: Observation Operators (Decision D9)
 
-| Task | Description |
-|---|---|
-| `vardax.protocols` re-exports `ForwardModel`, `ObservationOperator`, `AnalysisStep` from pipekit-cycle | API surface |
-| Add vardax-specific `Prior`, `GradModulator`, `CostFunction`, `PosteriorAdapter` protocols (runtime-checkable) | API surface |
-| Every Layer 2 model exposes `.as_analysis_step()` returning an `AnalysisStep` | Adapter pattern |
-| Every Layer 1 obs operator satisfies `pipekit_cycle.ObservationOperator` (`__call__` + `linearize`) | API surface |
-| `tests/test_pipekit_protocols.py` enforces conformance | Conformance |
+`MaskedIdentity`, `LinearObs`, `AveragingKernel(A, x_a, h)`,
+`MultiInstrumentFusion(registry)`, `InstrumentRegistry`. All expose
+`linearize()` via `lineax.JacobianLinearOperator` or a structured
+override.
 
-### Epic 2: Legacy Port from mvardax
+### Epic 2.5: Classical DA Methods (**New in v0.4 — Decisions D14, D16**)
 
-| Task | Description |
-|---|---|
-| `DynamicalPrior` wrapping any `ForwardModel` | Physics priors |
-| `StrongVarCost` (background term + forward-model rollout) | Strong-constraint 4DVar |
-| NaN-safe observation operators | Robustness |
-| Strong-constraint vs weak-constraint switch | Cost function variant |
+The classical DA hierarchy as first-class peer classes:
 
-### Epic 3: Model Architecture (three families)
+- `OptimalInterpolation` — closed-form BLUE / OI via `gaussx`. Layer 0
+  primitive `blue_analysis(x_b, y, B_op, R_op, H_op)`.
+- `ThreeDVar` — `optimistix.GaussNewton` / `BFGS` over the nonlinear
+  cost.
+- `StrongFourDVar` — control = $x_0$, dynamics rollout via diffrax,
+  adjoint via `forward_adjoint` slot.
+- `WeakFourDVar` — augmented control, model-error cost term, separate
+  `model_err_cov_op` (Q).
 
-| Task | Description |
-|---|---|
-| Base `VarDANet` + `1D/2D/3D` subclasses (learned 4DVarNet, retained from v0.1.x) | Existing → migrated |
-| `IncrementalVarDA` + `2D/3D` (operational incremental 4DVar) | **New** |
-| `AmortizedVarDA` (conditional flow / score head / regression) | **New** |
-| `IdentityGradMod` (classical 4DVar with hand-tuned step size) | New |
-| `MLPGradMod`, `AttentionGradMod` | New |
-| Ensemble batch dim support across all three families | New |
+This epic establishes the foundation. `FourDVarNet` (Epic 6) and
+`AmortizedPosterior` (Epic 8) are learned variants of these classical
+methods.
 
-### Epic 4: Observation Operators (multi-instrument first)
+### Epic 3: Adjoint Composition (**New in v0.4 — Decision D15**)
 
-| Task | Description |
-|---|---|
-| `MaskedIdentity`, `LinearObs` | Baseline |
-| `AveragingKernel(A, x_a, h)` | **First-class, day-one (Decision D9)** |
-| `MultiInstrumentFusion(registry)` | Composition at likelihood level |
-| `InstrumentRegistry` schema (`(A, x_a, h, mask, R)` per instrument_id) | Data contract |
-| `linearize()` method via `lineax.JacobianLinearOperator` for all obs ops | TLM/adjoint |
+Drop `grad_mode` enum. Add `forward_adjoint: diffrax.AbstractAdjoint`
+and `minimiser_adjoint: optimistix.AbstractAdjoint` constructor slots.
+Validate default selections (`RecursiveCheckpointAdjoint` for both) via
+the conformance suite. Add `BacksolveAdjoint` example for long-window
+4DVar.
 
-### Epic 5: Solver Integration (incremental + optimistix)
+Implement `vardax._src.adjoints.one_step.OneStepAdjoint(
+optimistix.AbstractAdjoint)` as the Bolte 2023 method; goal: contribute
+upstream once stable (Decision D6).
 
-| Task | Description |
-|---|---|
-| Incremental cost (tangent-linear via `jax.linearize`) | Operational 4DVar |
-| Gauss-Newton outer + CG inner via `lineax.CG` | Operational solver |
-| Control-variable transform via `gaussx` Matérn factorisation | Preconditioning (Decision D11) |
-| `optimistix.FixedPointIteration` for implicit grad mode | Existing → migrated |
-| Custom `optimistix.AbstractMinimiser` wrapping the learned ConvLSTM step | Future upstream |
+### Epic 4: Incremental 4DVar (Decision D11)
 
-### Epic 6: Posterior Adapters (Decision D10)
+`IncrementalFourDVar` as the operational fast path. Tangent-linear via
+`jax.linearize`, Gauss-Newton outer, CG inner via `lineax.CG`,
+control-variable transform via `gaussx.MaternLinearOperator.half()`.
+Layer 0 primitives: `incremental_cost`, `cvt_transform`,
+`gauss_newton_inner`, `incremental_outer`.
 
-| Task | Description |
-|---|---|
-| `LaplaceCovariance` at MAP | Cheap UQ |
-| `GaussNewtonHessian` via Krylov / lineax | Mid-cost UQ |
-| `EnsembleCovariance` (delegates to `filterax`) | Ensemble UQ |
-| `Posterior` container (mean, cov, samples, provenance) | Output contract |
-| `GaussianMarkLikelihood` serialiser → mark-likelihood for population models | Tier V hand-off |
+### Epic 5: Posterior Adapters (Decision D10)
+
+`LaplaceCovariance`, `GaussNewtonHessian` (Krylov via `lineax`),
+`EnsembleCovariance` (filterax bridge). `Posterior` container.
+`GaussianMarkLikelihood` serialiser → mark-likelihood for downstream
+population models.
+
+### Epic 6: `FourDVarNet`
+
+Learned variant of strong-constraint 4DVar. Learned prior $\varphi_\theta$
+(AE family) + learned gradient modulator $\Phi_\phi$ (ConvLSTM / MLP /
+Attention). The inner solver is itself a learned iteration; the adjoint
+choice (`RecursiveCheckpointAdjoint` / `OneStepAdjoint` / `ImplicitAdjoint`)
+comes from the `minimiser_adjoint` slot (Epic 3).
 
 ### Epic 7: pipekit Integration (Decision D8)
 
-Vardax exposes everything as `pipekit.Operator`s; `AnalysisStep` satisfaction
-is built-in. Optional extras for persistence / training callbacks / cycles.
-
-| Task | Description |
-|---|---|
-| `vardax.cycle.VarDACycle(forward, obs_op, model)` constructor that returns a configured `pipekit_cycle.DACycle` | Orchestration sugar |
-| `vardax.cycle.SmootherDACycle` for retrospective analysis | Sliding-window 4DVar |
-| `JaxModelOp` wrappers for `VarDANet*`, `AmortizedVarDA*` (for registry persistence) | `[persist]` extra |
-| `pipekit-train` `Loss` / `Callback` adapters around `train_step` | `[train]` extra |
-| `vardax.experiment.LocalModelRegistry` shortcut | `[persist]` extra |
+`vardax.cycle.VarDACycle(forward, obs_op, model)` constructor returning
+a configured `pipekit_cycle.DACycle`. `JaxModelOp` wrappers for
+`FourDVarNet`, `AmortizedPosterior`. `pipekit-train` `Loss` / `Callback`
+adapters around `train_step`.
 
 ### Epic 8: Amortized Inference (Decision D12)
 
-| Task | Description |
-|---|---|
-| `AmortizedVarDA` with conditional-flow head (`gauss_flows`) | Direct $q_\phi(x \mid y)$ |
-| Score-based posterior head | Diffusion variant |
-| Simulation-based amortized training (forward + prior → (x, y) pairs) | Training pipeline |
-| Six-step cycle validation: amortized vs MAP vs MCMC oracle | Decision D12 gate |
-| Adjoint-calibration test (amortized gradient ≈ physics gradient) | Hard gate |
+`AmortizedPosterior` with conditional-flow head (`gauss_flows`),
+score-based head, and regression head. Simulation-based training loop.
+Six-step cycle validation gates as part of
+`tests/test_six_step_validation.py`.
 
-### Epic 9: Hybrid Ensemble-Variational (Decision D12)
+### Epic 9: Hybrid Ensemble-Variational
 
-| Task | Description |
-|---|---|
-| `EnVarDA` hybrid: ensemble cov + variational solve | Depends on filterax |
-| Per-instrument bias as joint state element | Multi-instrument fusion |
-| Ornstein-Uhlenbeck process prior on $Q(t)$ (or analogous time-varying source) | Temporal coupling |
+`EnVarFourDVar` hybrid: ensemble cov + variational solve. Depends on
+filterax. Per-instrument bias as joint state element. Ornstein-Uhlenbeck
+process prior on time-varying source (or analogous).
 
-### Epic 10: Documentation & Tutorials
+### Epic 10: Documentation & Math Reference
 
-| Issue | Title |
-|---|---|
-| #20 | Physical models & ODE prior docs |
-| #21 | Uncertainty quantification docs (Laplace, GN-Hessian, ensemble) |
-| #22 | OceanBench SSH interpolation walkthrough |
-| #23 | Parameter estimation tutorial (joint state + parameters) |
-| #24 | Bilevel optimisation tutorial |
-| #25 | Methane single-overpass walkthrough (plumax + vardax) |
-| #26 | Multi-instrument fusion tutorial (TROPOMI + EMIT + GHGSat) |
-| #27 | Incremental 4DVar tutorial (CVT, GN outer, CG inner) |
-| #28 | Amortized inference tutorial (conditional flow head) |
+The 17-chapter math reference (v0.4 rewrite — see
+[`../index.md`](../index.md) for TOC). Includes the seven Layer 2
+methods as separate chapters (4–10), shared foundation chapters (1–3),
+and concrete example chapters (15–17).
+
+### Epic 11: Real-World Tutorials
+
+OceanBench SSH interpolation walkthrough; methane single-overpass with
+plumax; multi-instrument fusion (TROPOMI + EMIT + GHGSat); incremental
+4DVar tutorial; amortized inference tutorial.
+
+### Epic 12: Performance Benchmarking
+
+Per-method benchmarks on Lorenz / SSH / methane synthetic problems.
+Adjoint-method memory/time tradeoffs (RecursiveCheckpoint vs Backsolve
+vs ForwardMode). Comparison of FourDVarNet adjoint choices.
+
+### Epic 13: Operational Deployment Patterns
+
+FastAPI handler example; persistent GeoCatalog integration; real-time
+alerting demo. The "research → operations arc" worked through
+end-to-end.
 
 ### Dependency graph
 
 ```
 Epic 0 (equinox migration)
   ↓
-Epic 1 (protocol alignment) ──→ Epic 2 (legacy port)
-  ↓                                ↓
-Epic 3 (model architecture) ────→ Epic 4 (obs operators)
-  ↓                                ↓
-Epic 5 (solver integration) ←─── Epic 6 (posterior adapters)
-  ↓                                ↓
-Epic 7 (pipekit integration) ─→ Epic 8 (amortized) ─→ Epic 9 (hybrid EnVar)
+Epic 1 (protocol alignment)  ──→  Epic 2 (obs operators)
+  ↓                                  ↓
+Epic 2.5 (classical DA)  ──────→ Epic 3 (adjoint composition)
+  ↓                                  ↓
+Epic 4 (incremental 4DVar)  ←── Epic 5 (posterior adapters)
   ↓
-Epic 10 (docs & tutorials, continuous)
+Epic 6 (FourDVarNet)
+  ↓
+Epic 7 (pipekit integration)  ──→ Epic 8 (amortized) ──→ Epic 9 (hybrid EnVar)
+  ↓
+Epic 10 (docs)  ──→  Epic 11 (tutorials)  ──→  Epic 12 (benchmarks)  ──→  Epic 13 (ops)
 ```
 
 ### Rough timeline
 
 | Phase | Focus | Order |
 |---|---|---|
-| Phase 1 | Equinox migration + protocol alignment (Epics 0, 1) | First |
-| Phase 2 | Architecture + obs operators (Epics 2, 3, 4) | Second |
-| Phase 3 | Incremental 4DVar + posterior + pipekit (Epics 5, 6, 7) | Third |
-| Phase 4 | Amortized + hybrid EnVar (Epics 8, 9) | Research |
-| Phase 5 | Tutorials + real-world examples (Epic 10) | Continuous |
+| Phase 1 | Equinox migration + protocols + obs operators (Epics 0–2) | First |
+| Phase 2 | **Classical DA + adjoint composition (Epics 2.5, 3)** | **Second — foundation for everything learned** |
+| Phase 3 | Incremental + posterior + FourDVarNet (Epics 4–6) | Third |
+| Phase 4 | pipekit + amortized + hybrid (Epics 7–9) | Fourth |
+| Phase 5 | Docs + tutorials + benchmarks + ops (Epics 10–13) | Continuous |
 
 ## Open Questions
 
-1. **`coordax` adoption in `Batch*`.** Should `Batch*` carry `coordax.Field`
-   instead of `Array`? Better provenance / coordinate-aware operations, but
-   couples vardax to coordax. Defer to Epic 7.
+1. **`coordax` adoption in `Batch*`.** Should batches carry
+   `coordax.Field` instead of `Array`? Better provenance, but couples
+   vardax to coordax. Defer to Epic 7.
 
-2. **3D support depth.** True volumetric `VarDANet3D` vs multilayer-2D via
-   `eqx.filter_vmap` over a leading axis. Decision deferred until first 3D
-   use case (likely Eulerian methane in plumax Tier III).
+2. **3D support depth.** True volumetric `*3D` classes vs multilayer-2D
+   via `eqx.filter_vmap` over a leading axis. Decision deferred until
+   first 3D use case (likely Eulerian methane in plumax Tier III).
 
-3. **`numpyro` integration depth.** Should vardax priors / costs expose
-   `dist.Distribution` interfaces for NumPyro sampling, or stay JAX-array
-   only? Lean toward staying JAX-only; users wrap costs in NumPyro outside
-   vardax.
+3. **`numpyro` integration depth.** Vardax priors / costs as
+   `dist.Distribution` objects for NumPyro sampling, or stay JAX-array
+   only? Lean toward JAX-only; users wrap outside vardax.
 
-4. **Package rename `vardax` → `4dvarX`.** Defer indefinitely. Keep `vardax`
-   as the canonical name.
-
-5. **`gaussx` maturity gate.** Incremental 4DVar with CVT depends on
-   `gaussx.MaternLinearOperator` and structured solves. If gaussx isn't ready,
-   fall back to `lineax`-only CG with identity preconditioner. Document the
+4. **`gaussx` maturity gate.** Incremental 4DVar with CVT depends on
+   `gaussx.MaternLinearOperator.half()`. If gaussx isn't ready, fall
+   back to `lineax`-only CG with identity preconditioner. Document the
    fallback path.
 
-6. **Posterior provenance schema.** What metadata does `Posterior.provenance`
-   carry? Proposal: `{forward_model_id, obs_ops_used, n_iter, J_star,
-   converged, gaussx_op_hash, model_hash}`. Refine in Epic 6.
+5. **`OneStepAdjoint` upstreaming.** When does
+   `vardax._src.adjoints.one_step.OneStepAdjoint` become
+   `optimistix.OneStepAdjoint`? Depends on optimistix maintainer
+   appetite. Track via Epic 3.
+
+6. **Posterior provenance schema.** Open from v0.3 — refine in Epic 5.
+
+7. **Hybrid analysis: which class owns `EnVarFourDVar`?** Could be in
+   vardax (as the eighth model) or in filterax (as the variational
+   variant of EnKF). Defer to Epic 9.
 
 ## Testing Strategy
 
-### Test organization
+### Test organisation
 
-- **9 test modules** covering all components plus pipekit conformance
-- One test class per component per dimension
-- Fixtures in `conftest.py` for batch construction (single + multi-instrument)
+- One test module per Layer 2 class
+- One test module per major Layer 1 family (obs operators, priors, grad
+  mods, posteriors, minimisers)
+- Conformance suite: `tests/test_pipekit_protocols.py`
+- Six-step cycle validation: `tests/test_six_step_validation.py`
 
 ### Test categories
 
 | Category | What's tested | Module |
 |---|---|---|
-| Types | `Batch*`, `SolverState*`, `Posterior` shape validation | `test_types.py` |
-| Costs | obs / prior / weak-variational / incremental | `test_costs.py` |
-| Obs operators | `MaskedIdentity`, `AveragingKernel`, `MultiInstrumentFusion` (+ `linearize()`) | `test_obs_operators.py` |
-| Priors | All prior architectures + `DynamicalPrior` wrap of toy forward | `test_priors.py` |
-| Grad mods | ConvLSTM / MLP / Attention / Identity forward + state | `test_grad_mod.py` |
-| Solver | Steps, unrolled scan, one-step, implicit, incremental GN+CG | `test_solver.py` |
+| Types | `Batch*`, `Posterior` shape validation | `test_types.py` |
+| Costs | obs / prior / weak / strong / incremental / 3DVar / BLUE | `test_costs.py` |
+| Obs operators | `MaskedIdentity`, `LinearObs`, `AveragingKernel`, `MultiInstrumentFusion` (+ `linearize()` adjoint test) | `test_obs_operators.py` |
+| Priors | All AE archs + `DynamicalPrior` wrap | `test_priors.py` |
+| Grad mods | ConvLSTM / MLP / Attention / Identity (FourDVarNet only) | `test_grad_mod.py` |
+| Minimisers | optimistix wrappers — GaussNewton, BFGS, NonlinearCG | `test_minimisers.py` |
+| Adjoints | `RecursiveCheckpointAdjoint`, `BacksolveAdjoint`, `OneStepAdjoint` correctness | `test_adjoints.py` |
 | Posterior | Laplace / GN-Hessian / Ensemble adapters | `test_posterior.py` |
-| Models | `VarDANet*`, `IncrementalVarDA*`, `AmortizedVarDA*` end-to-end | `test_models.py` |
-| Training | `train_step`, `eval_step`, loss computation | `test_training.py` |
-| **Pipekit conformance** | Every Layer 2 model passes `isinstance(model.as_analysis_step(), AnalysisStep)`. Every obs op passes `isinstance(..., ObservationOperator)`. | `test_pipekit_protocols.py` |
+| Models — classical | `OptimalInterpolation`, `ThreeDVar`, `StrongFourDVar`, `WeakFourDVar`, `IncrementalFourDVar` | `test_classical_models.py` |
+| Models — learned | `FourDVarNet`, `AmortizedPosterior` | `test_learned_models.py` |
+| Training | `train_step`, `eval_step`, reconstruction loss | `test_training.py` |
+| **Pipekit conformance** | All seven Layer 2 models pass `isinstance(model.as_analysis_step(), AnalysisStep)`. All obs ops (or their `.to_observation_operator()` adapters) pass `isinstance(..., ObservationOperator)`. | `test_pipekit_protocols.py` |
+| Six-step cycle gates | Posterior agreement, adjoint calibration, SBC | `test_six_step_validation.py` |
 | Utils | Dynamical systems, masks, preprocessing | `test_utils/` |
 
-### Test priorities for migration
+### Test priorities
 
-1. **Protocol conformance** — every Prior / ObsOp / GradMod / AnalysisStep satisfies its protocol
-2. **JAX transform compatibility** — all components work under `jax.jit`, `jax.grad`, `eqx.filter_vmap`
-3. **Gradient mode equivalence** — unrolled / one-step / implicit produce similar results (up to tolerance)
-4. **Dimensional consistency** — 1D / 2D / 3D produce correct output shapes
-5. **Six-step cycle validation gates** — emulator MAP ≈ physics MAP within tolerance (Decision D12)
-6. **Adjoint correctness** — `linearize().T @ v ≈ jax.vjp(H)(x, v)` for all obs ops
+1. **Protocol conformance** — every Layer 2 class satisfies
+   `AnalysisStep`; every obs op satisfies `ObservationOperator`.
+2. **Linear-Gaussian baseline** — `OptimalInterpolation` agrees with
+   `ThreeDVar(linear obs op)`, agrees with `StrongFourDVar(T=0,
+   linear)`, agrees with `FourDVarNet(IdentityPrior, n_steps=∞)` in
+   the linear-Gaussian limit. All four converge to the same posterior.
+3. **JAX transform compatibility** — every component works under
+   `jax.jit`, `jax.grad`, `eqx.filter_vmap`.
+4. **Adjoint correctness** — every adjoint variant produces the same
+   gradient up to floating-point tolerance.
+5. **Dimensional consistency** — 1D / 2D / 3D subclasses produce correct
+   output shapes.
+6. **Six-step cycle gates** — emulator MAP ≈ physics MAP within
+   tolerance (D12).
 
 ## Relationship to Downstream Libraries
 
 | Library | Role | Coupling |
 |---|---|---|
-| **somax** | Geophysical forward models, dynamical priors | Optional — accepts via `Prior` / `ForwardModel` protocols |
-| **plumax** | Atmospheric transport + RTM forwards (Tier I-IV) | Optional — accepts via `ForwardModel` |
-| **finitevolX / spectraldiffx** | Spatial operators inside somax/plumax | Indirect (via somax/plumax) |
-| **diffrax** | ODE integration | Required (toy demo priors) |
-| **optimistix** | Optimisers (Gauss-Newton, BFGS, FixedPoint) | Required |
-| **lineax** | Linear solvers (CG, GMRES) | Required (incremental 4DVar) |
-| **gaussx** | Structured operators (Matérn, Kronecker, LowRank) | Required (CVT) |
-| **filterax** | Ensemble methods | Optional (`[ensemble]` extra) |
-| **pipekit / pipekit-cycle** | Operator composition + cycle protocols | Required |
-| **pipekit-jax / -experiment / -train** | Persistence, registry, training callbacks | Optional (`[persist]`, `[train]`) |
-| **georeader / coordax** | Data I/O, labelled arrays | Optional (`[coords]`) |
+| `somax` | Geophysical forward models, dynamical priors | Optional — accepts via `Prior` / `ForwardModel` protocols |
+| `plumax` | Atmospheric transport + RTM forwards | Optional — accepts via `ForwardModel` |
+| `finitevolX / spectraldiffx` | Spatial operators inside somax / plumax | Indirect |
+| `diffrax` | ODE integration + adjoints | **Required** (Decision D15) |
+| `optimistix` | Optimisers + adjoints | **Required** (Decision D15) |
+| `lineax` | Linear solvers | Required (incremental 4DVar, AbstractLinearOperator) |
+| `gaussx` | Structured operators | Required (CVT, BLUE) |
+| `filterax` | Ensemble methods | Optional (`[ensemble]` extra) |
+| `pipekit / pipekit-cycle` | Operator composition + cycle protocols | **Required** |
+| `pipekit-jax / -experiment / -train` | Persistence, registry, training callbacks | Optional |
+| `georeader / coordax` | Data I/O, labelled arrays | Optional |
 
 ### Key contract: JAX + pipekit transform compatibility
 
-vardax guarantees:
+Vardax guarantees:
+
 - `jax.jit` — no Python-level side effects in operator `__call__`
-- `jax.grad` / `eqx.filter_value_and_grad` — differentiable w.r.t. array params
-- `eqx.filter_vmap` — batch over leading dims
-- `pipekit_cycle.ObservationOperator` — `__call__(state) → obs`, `linearize(state) → LinearOp`
-- `pipekit_cycle.ForwardModel` — `step(state, dt) → state`, `dt` property
-- `pipekit_cycle.AnalysisStep` — `__call__(forecast, obs, *, obs_op, obs_err_cov) → analysis`
+- `jax.grad` / `eqx.filter_value_and_grad` — differentiable w.r.t. array
+  params
+- `eqx.filter_vmap` — batches over leading dimensions
+- `pipekit_cycle.ObservationOperator` — `__call__(state) → obs`,
+  `linearize(state) → AbstractLinearOperator`
+- `pipekit_cycle.ForwardModel` — `step(state, dt) → state`, `dt`
+  property
+- `pipekit_cycle.AnalysisStep` — `__call__(forecast, obs, *, obs_op,
+  obs_err_cov) → analysis`
 
-## Version History & Milestones
-
-### Completed milestones
+## Version History
 
 | Version | Milestone |
 |---|---|
-| 0.0.1–0.1.0 | Initial VarDANet (Flax NNX) |
+| 0.0.1–0.1.0 | Initial VarDANet implementation (Flax NNX) |
 | 0.1.1–0.1.3 | 1D + 2D models, BilinAE / ConvAE / MLP priors |
-| 0.1.4 | Fixed-point solver + one-step differentiation (Bolte et al. 2023) |
+| 0.1.4 | Fixed-point solver + one-step differentiation (Bolte 2023) |
 | 0.1.5 | L63 / L96 dynamical system demos |
-| 0.1.6 | Multivariate 2D, 8 tutorial notebooks, 14 math docs |
+| 0.1.6 | Multivariate 2D, 8 tutorial notebooks, 11 math docs |
+| 0.3.0 | Design doc v0.3: pipekit-cycle integration, AK + multi-instrument as first-class, three learned model families, six-step cycle methodology. Math chapters 12–16 added. |
+| **0.4.0** | **Design doc v0.4: DA hierarchy as horizontal peer classes, optimistix/diffrax adjoint composition, BLUE/OI as first-class method, math reference fully rewritten to DA-textbook style (17 chapters).** |
 
-### Current: v0.1.6 (Flax NNX)
+### Current: v0.1.6 (Flax NNX implementation)
 
-- Full VarDANet framework (1D + 2D)
-- Three gradient modes (unrolled, implicit, one-step)
-- 6 prior architectures + IdentityPrior
-- ConvLSTM gradient modulators
-- Comprehensive test suite
+The package code is still v0.1.6 with Flax NNX. The v0.3 and v0.4 design
+doc revisions target the equinox migration roadmap (Epics 0–13). Math
+chapters describe the API documented in `docs/design/`, which is not yet
+implemented in `fourdvarjax/_src/`.
 
 ### Upcoming (v0.2.0+ — equinox-native, pipekit-aligned)
 
 | Priority | Epic | Key work |
 |---|---|---|
-| P0 | Epic 0 | Equinox migration (Flax NNX → equinox, optax, optimistix) |
+| P0 | Epic 0 | Equinox migration |
 | P0 | Epic 1 | Pipekit-cycle protocol alignment |
-| P0 | Epic 4 | Averaging kernel + multi-instrument obs operators |
-| P1 | Epic 3 | `IncrementalVarDA` + `AmortizedVarDA` model families |
-| P1 | Epic 5 | Incremental 4DVar solver (GN outer / CG inner / CVT) |
-| P1 | Epic 6 | Posterior adapters (Laplace, GN-Hessian, ensemble) |
+| P0 | Epic 2 | Averaging kernel + multi-instrument obs operators |
+| **P0** | **Epic 2.5** | **Classical DA: OptimalInterpolation, ThreeDVar, StrongFourDVar, WeakFourDVar** |
+| **P0** | **Epic 3** | **Adjoint composition via optimistix + diffrax** |
+| P1 | Epic 4 | Incremental 4DVar with CVT |
+| P1 | Epic 5 | Posterior adapters |
+| P1 | Epic 6 | FourDVarNet (learned variant of strong-4DVar) |
 | P2 | Epic 7 | pipekit-jax + pipekit-experiment + pipekit-train integration |
-| P2 | Epic 8 | Amortized inference (conditional flow head) |
-| P3 | Epic 9 | Hybrid ensemble-variational (via filterax) |
-| P3 | Epic 10 | Tutorials (methane, multi-instrument, incremental, amortized) |
+| P2 | Epic 8 | Amortized inference |
+| P3 | Epic 9 | Hybrid ensemble-variational |
+| P3 | Epic 10 | Math reference (17 chapters) — landed in v0.4 |
+| P3 | Epic 11 | Tutorials |
+| P3 | Epic 12 | Benchmarks |
+| P3 | Epic 13 | Operational deployment |
 
-### References
+## References
 
-- Fablet, R. et al. (2021). "Learning Variational Data Assimilation Models and Solvers." *JAMES*.
-- Fablet, R. et al. (2023). "Multimodal 4DVarNets for the reconstruction of sea surface dynamics." *IEEE TGRS*.
-- Bolte, J. et al. (2023). "One-step differentiation of iterative algorithms." *NeurIPS*.
-- Courtier, P. et al. (1994). "A strategy for operational implementation of 4D-Var, using an incremental approach." *QJRMS*.
-- Carrassi, A. et al. (2018). "Data assimilation in the geosciences: An overview of methods, issues, and perspectives." *WIRES Climate Change*.
-- Cohen, S. et al. (2023). "Score-based diffusion meets annealed importance sampling." *NeurIPS*.
-- Predecessor: [mvardax](https://github.com/jejjohnson/mvardax) (deprecated).
+- Talagrand, O., & Courtier, P. (1987). *Variational assimilation of
+  meteorological observations with the adjoint vorticity equation.*
+  QJRMS 113(478).
+- Lorenc, A. (1981). *A global three-dimensional multivariate
+  statistical interpolation scheme.* MWR 109(4).
+- Courtier, P., Thépaut, J.-N., & Hollingsworth, A. (1994). *A strategy
+  for operational implementation of 4D-Var, using an incremental
+  approach.* QJRMS 120(519).
+- Trémolet, Y. (2006). *Accounting for an imperfect model in 4D-Var.*
+  QJRMS 132(621).
+- Fablet, R., et al. (2021). *Learning Variational Data Assimilation
+  Models and Solvers.* JAMES 13(10).
+- Bolte, J., Pauwels, E., & Vaiter, S. (2023). *One-step differentiation
+  of iterative algorithms.* NeurIPS.
+- Carrassi, A., et al. (2018). *Data assimilation in the geosciences: An
+  overview of methods, issues, and perspectives.* WIREs CC 9(5).
+- Bannister, R. N. (2017). *A review of operational methods of
+  variational and ensemble-variational data assimilation.* QJRMS
+  143(703).
 - Reference: [CIA-Oceanix/4dvarnet-starter](https://github.com/CIA-Oceanix/4dvarnet-starter).
+- Predecessor: [mvardax](https://github.com/jejjohnson/mvardax) (deprecated).

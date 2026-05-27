@@ -1,6 +1,6 @@
 ---
 status: draft
-version: 0.3.0
+version: 0.4.0
 ---
 
 # Posterior Adapter
@@ -9,6 +9,18 @@ Per Decision D10, every vardax analysis emits a `Posterior` container —
 not just a point estimate. The posterior carries enough information to feed
 downstream population models (Tier V TMTPP, hierarchical Bayesian
 inversions) without re-running the inner inference.
+
+Two of the seven Layer 2 classes have closed-form fast paths that emit
+the posterior as part of the analysis call:
+
+- **`OptimalInterpolation`** — closed-form $P^* = (B^{-1} + H^\top R^{-1} H)^{-1}$
+  is returned directly by `.posterior(batch)`.
+- **`IncrementalFourDVar`** — the Gauss-Newton Hessian assembled during
+  the last outer iteration is reused for $P^*$.
+
+For the other five (`ThreeDVar`, `StrongFourDVar`, `WeakFourDVar`,
+`FourDVarNet`, `AmortizedPosterior`), pair the analysis with an
+explicit `PosteriorAdapter`.
 
 ## The `Posterior` container
 
@@ -44,7 +56,7 @@ where $H' = \partial H / \partial x$ at $x^*$. Returned as an
 materialisation only on request.
 
 **When to use.** Gaussian likelihood, single mode, MAP near posterior mean
-(confirmed by SBC). Default for `IncrementalVarDA*`.
+(confirmed by SBC). Default for `IncrementalFourDVar`.
 
 **Cost.** One Hessian-vector product family per query. Posterior samples by
 $x^* + (H'^\top R^{-1} H' + B^{-1})^{-1/2} \xi$ where $\xi \sim \mathcal{N}(0,I)$ —
@@ -61,7 +73,7 @@ Krylov / Lanczos inversion of $J''(x^*)$ via `lineax.CG`. For incremental
 4DVar this is the natural posterior — the inner Hessian is already assembled
 during the last outer iteration.
 
-**When to use.** Operational incremental 4DVar (`IncrementalVarDA*`). The
+**When to use.** Operational incremental 4DVar (`IncrementalFourDVar`). The
 Hessian operator from the last GN outer iteration is reused.
 
 **Cost.** `n_krylov` mat-vec products. Materialise only the diagonal /
@@ -97,9 +109,13 @@ class EnsembleCovariance(eqx.Module):
 
 | Inference family | Default posterior adapter |
 |---|---|
-| `VarDANet*` (learned) | `LaplaceCovariance` at converged solver state |
-| `IncrementalVarDA*` (operational) | `GaussNewtonHessian` (Hessian reused) |
-| `AmortizedVarDA*` (flow / score) | direct sampling (`Posterior.samples`, `cov=None`) |
+| `OptimalInterpolation` | closed-form via `.posterior(batch)` (no adapter) |
+| `ThreeDVar` | `LaplaceCovariance` at MAP |
+| `StrongFourDVar`, `WeakFourDVar` | `LaplaceCovariance` at MAP |
+| `IncrementalFourDVar` | `GaussNewtonHessian` via `.posterior(batch)` (Hessian reused) |
+| `FourDVarNet` | `LaplaceCovariance` at converged solver state |
+| `AmortizedPosterior` | direct sampling (`Posterior.samples`, `cov=None`) |
+| Hybrid `EnVarFourDVar` (Epic 9) | `EnsembleCovariance` |
 | Hybrid EnVar (`EnVarDA*`, Epic 9) | `EnsembleCovariance` |
 
 ## Export to population models — `GaussianMarkLikelihood`

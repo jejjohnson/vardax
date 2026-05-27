@@ -1,6 +1,6 @@
 ---
 status: draft
-version: 0.3.0
+version: 0.4.0
 ---
 
 # Ecosystem Integration
@@ -22,16 +22,16 @@ swm = somax.ShallowWaterModel(grid=grid, params=params)
 # Wrap as a Prior for the variational cost
 prior = DynamicalPrior(forward=swm, n_steps=10)
 
-# Plug into VarDANet
-model = VarDANet2D(
+# Plug into FourDVarNet
+model = FourDVarNet(
     prior=prior,
     obs_op=MaskedIdentity(),
     grad_mod=ConvLSTMGradMod2D(hidden_dim=64),
     config=SolverConfig(n_steps=15),
 )
 
-# Or into IncrementalVarDA (no prior wrap — forward is used directly)
-incremental = IncrementalVarDA2D(
+# Or into IncrementalFourDVar (no prior wrap — forward is used directly)
+incremental = IncrementalFourDVar(
     forward=swm,                  # used as the dynamics M_t
     obs_op=MaskedIdentity(),
     prior_mean=x_b, prior_cov_op=B_op, obs_cov_op=R_op,
@@ -51,7 +51,7 @@ the inversion.
 import plumax
 from vardax.priors import DynamicalPrior
 from vardax.obs_operators import AveragingKernel, MultiInstrumentFusion
-from vardax.models import IncrementalVarDA2D
+from vardax.models import IncrementalFourDVar
 
 # Forward: parameters Q, x_0, u, θ → predicted XCH4 enhancement
 plume_fwd = plumax.tier1.GaussianPlume(met=met_field, dispersion="MO")
@@ -69,7 +69,7 @@ fusion = MultiInstrumentFusion(
 )
 
 # Invert
-inversion = IncrementalVarDA2D(
+inversion = IncrementalFourDVar(
     forward=plume_fwd,
     obs_op=fusion,
     prior_mean=Q_prior_mean,
@@ -122,7 +122,7 @@ For non-separable, structured priors, build from `LowRankUpdate`,
 ```python
 import filterax as fx
 from vardax.posterior import EnsembleCovariance
-from vardax.models import IncrementalVarDA2D
+from vardax.models import IncrementalFourDVar
 
 # Ensemble forecast (filterax owns this)
 ensemble_forecast = fx.EnsembleForecast(
@@ -136,7 +136,7 @@ ensemble_states = ensemble_forecast(x_b)
 B_hybrid = 0.5 * B_climatological + 0.5 * fx.ensemble_covariance(ensemble_states)
 
 # Run vardax inversion with hybrid B
-model = IncrementalVarDA2D(
+model = IncrementalFourDVar(
     forward=somax_model,
     obs_op=fusion,
     prior_mean=ensemble_states.mean(0),
@@ -159,7 +159,7 @@ import pipekit_cycle as pc
 import vardax as vdx
 
 # Build the model once
-model = vdx.models.IncrementalVarDA2D(
+model = vdx.models.IncrementalFourDVar(
     forward=somax_model,
     obs_op=vdx.obs_operators.AveragingKernel(...),
     prior_mean=x_climatology,
@@ -186,7 +186,7 @@ result, final_state = da_cycle(initial_state, pc.DAState(t=0.0, cycle_count=0))
 from pipekit_jax import JaxModelOp
 from pipekit_experiment import LocalModelRegistry
 
-# Wrap trained VarDANet2D for serialisation
+# Wrap trained FourDVarNet for serialisation
 model_op = JaxModelOp(trained_vardanet)
 
 # Store with content-addressed hash
@@ -304,7 +304,7 @@ catalog.write_posterior(event.id, GaussianMarkLikelihood(posterior, event.metada
 |---|---|---|
 | **Learned 4DVarNet** | AE prior + masked obs + ConvLSTM | Standard 4DVarNet SSH mapping |
 | **Physics-informed** | somax `DynamicalPrior` + learned grad mod | Hybrid learned + physics DA |
-| **Operational SSH** | `IncrementalVarDA2D` + somax SWM + altimetry + gaussx B | Production ocean DA |
+| **Operational SSH** | `IncrementalFourDVar` + somax SWM + altimetry + gaussx B | Production ocean DA |
 | **Methane Tier I** | plumax Gaussian plume + AK + multi-instrument fusion + Incremental | Single-overpass facility attribution |
 | **Methane Tier II** | plumax Lagrangian footprint + linear inversion + gaussx Matérn $B$ | Basin-scale regional inversion |
 | **Methane Tier IV** | plumax Eulerian + neural RTM + multi-instrument + amortized | Operational alerts |
