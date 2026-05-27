@@ -82,11 +82,11 @@ Foundation (required dependencies):
 4. **Adjoints come from upstream.** Gradients through dynamics use
    `diffrax.AbstractAdjoint`; gradients through inner minimisation use
    `optimistix.AbstractAdjoint`. Vardax owns no `grad_mode` enum.
-   (Decision [D15](decisions.md#d15-lean-on-optimistixdiffrax-adjoints))
+   (Decision [D15](decisions.md#d15-lean-on-optimistix-diffrax-adjoints-not-in-house-grad-modes))
 
 5. **BLUE / OI is a first-class method.** The closed-form linear-Gaussian
    analysis is not folded into 3DVar — it's its own `AnalysisStep` with
-   its own fast path. (Decision [D16](decisions.md#d16-blue--oi-as-a-first-class-method))
+   its own fast path. (Decision [D16](decisions.md#d16-blue-oi-as-a-first-class-method))
 
 6. **Dimensional inheritance.** Each method's algorithm is
    dimension-agnostic; `*1D`, `*2D`, `*3D` subclasses set

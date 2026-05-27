@@ -224,7 +224,7 @@ downstream — but it produces the standardised input.
 - Chapter 13 — posterior covariance (GN-Hessian reuse)
 - Chapter 14 — six-step cycle (research-to-operations)
 - Design doc: [`design/examples/use_cases.md`](design/examples/use_cases.md)
-- Design doc: [`design/decisions.md#d9`](design/decisions.md#d9-averaging-kernel--multi-instrument-as-first-class)
+- Design doc: [`design/decisions.md#d9`](design/decisions.md#d9-averaging-kernel-multi-instrument-as-first-class)
 - Design doc: [`design/decisions.md#d10`](design/decisions.md#d10-posterior-export-adapter-pattern)
 
 ## References

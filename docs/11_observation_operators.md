@@ -256,4 +256,4 @@ is wrong; any 4DVar built on it will take wrong steps.
 - Chapter 8 — incremental 4DVar uses `linearize()` for tangent-linear obs
 - Chapter 17 — methane example exercises multi-instrument fusion
 - Design doc: [`design/api/observation_operators.md`](design/api/observation_operators.md)
-- Design doc: [`design/decisions.md#d9`](design/decisions.md#d9-averaging-kernel--multi-instrument-as-first-class)
+- Design doc: [`design/decisions.md#d9`](design/decisions.md#d9-averaging-kernel-multi-instrument-as-first-class)

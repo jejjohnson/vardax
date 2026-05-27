@@ -201,7 +201,7 @@ process prior on time-varying source (or analogous).
 ### Epic 10: Documentation & Math Reference
 
 The 17-chapter math reference (v0.4 rewrite — see
-[`../README.md`](../README.md) for TOC). Includes the seven Layer 2
+[`../index.md`](../index.md) for TOC). Includes the seven Layer 2
 methods as separate chapters (4–10), shared foundation chapters (1–3),
 and concrete example chapters (15–17).
 

@@ -169,5 +169,5 @@ research-to-operations methodology.
 
 Chapters 15–17 are end-to-end examples on Lorenz, SSH, and methane.
 
-The companion design docs in [`design/`](design/) document the API
+The companion design docs in [`design/`](design/README.md) document the API
 contracts and architectural decisions behind these methods.

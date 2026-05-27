@@ -92,3 +92,20 @@ nb-clean: ## Remove all .ipynb files from notebooks directory
 	@rm -f $(NOTEBOOKS_DIR)/*.ipynb
 	@rm -rf $(NOTEBOOKS_DIR)/.ipynb_checkpoints
 	@printf "$(GREEN)>>> Cleanup complete.$(RESET)\n"
+
+##@ Documentation
+.PHONY: docs
+docs: ## Build documentation with mkdocs
+	@printf "$(YELLOW)>>> Building docs...$(RESET)\n"
+	@uv run --extra docs mkdocs build
+	@printf "$(GREEN)>>> Docs built in site/$(RESET)\n"
+
+.PHONY: docs-serve
+docs-serve: ## Serve documentation locally at http://127.0.0.1:8000
+	@uv run --extra docs mkdocs serve
+
+.PHONY: docs-deploy
+docs-deploy: ## Deploy documentation to GitHub Pages
+	@printf "$(YELLOW)>>> Deploying docs to GitHub Pages...$(RESET)\n"
+	@uv run --extra docs mkdocs gh-deploy --force
+	@printf "$(GREEN)>>> Deployment complete.$(RESET)\n"

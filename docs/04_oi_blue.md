@@ -192,7 +192,7 @@ clear error pointing you to `ThreeDVar` instead.
 - Chapter 5 — `ThreeDVar` (nonlinear extension)
 - Chapter 13 — posterior covariance (the closed-form $P^*$ is the
   simplest case)
-- Design doc: [`design/decisions.md#d16`](design/decisions.md#d16-blue--oi-as-a-first-class-method)
+- Design doc: [`design/decisions.md#d16`](design/decisions.md#d16-blue-oi-as-a-first-class-method)
 
 ## References
 

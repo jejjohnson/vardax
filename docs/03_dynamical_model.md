@@ -177,4 +177,4 @@ chosen adjoint path.
 - Chapter 7 — `WeakFourDVar` (augmented control includes $\eta_t$)
 - Chapter 8 — `IncrementalFourDVar` (linearises once per outer iteration)
 - Chapter 12 — adjoint composition: `diffrax` + `optimistix` working together
-- Design doc: [`design/decisions.md#d15`](design/decisions.md#d15-lean-on-optimistixdiffrax-adjoints)
+- Design doc: [`design/decisions.md#d15`](design/decisions.md#d15-lean-on-optimistix-diffrax-adjoints-not-in-house-grad-modes)

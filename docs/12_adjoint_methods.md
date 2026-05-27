@@ -263,7 +263,7 @@ tolerance).
 - Chapter 8 — `IncrementalFourDVar` (uses `forward_adjoint` only;
   inner solver is hand-rolled GN+CG, not optimistix)
 - Chapter 9 — `FourDVarNet` (the `solver_adjoint` choice matters most here)
-- Design doc: [`design/decisions.md#d15`](design/decisions.md#d15-lean-on-optimistixdiffrax-adjoints)
+- Design doc: [`design/decisions.md#d15`](design/decisions.md#d15-lean-on-optimistix-diffrax-adjoints-not-in-house-grad-modes)
 
 ## References
 

@@ -62,8 +62,8 @@ design/
 5. **[pipekit_composition.md](pipekit_composition.md)** — protocol
    satisfaction patterns
 6. **[posterior.md](posterior.md)** — UQ + export contract
-7. **[api/](api/)** — surface inventory and contracts
-8. **[examples/](examples/)** — patterns and use case walkthroughs
+7. **[api/](api/README.md)** — surface inventory and contracts
+8. **[examples/](examples/README.md)** — patterns and use case walkthroughs
 
 ## What changed in v0.4.0
 
