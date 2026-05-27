@@ -40,6 +40,12 @@ from vardax._src.model import (
     FourDVarNet1D,
     FourDVarNet2D,
 )
+from vardax._src.models import (
+    OptimalInterpolation,
+    StrongFourDVar,
+    ThreeDVar,
+    WeakFourDVar,
+)
 from vardax._src.obs_operators import (
     AveragingKernel,
     InstrumentRegistry,
@@ -157,6 +163,11 @@ __all__ = [
     # Model
     "FourDVarNet1D",
     "FourDVarNet2D",
+    # Classical DA methods (Decision D14)
+    "OptimalInterpolation",
+    "StrongFourDVar",
+    "ThreeDVar",
+    "WeakFourDVar",
     # Training
     "eval_step",
     "reconstruction_loss",
