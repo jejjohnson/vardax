@@ -1,6 +1,6 @@
 [project]
 name = "vardax"
-version = "0.1.6"
+version = "0.1.7"
 description = "JAX-native data assimilation inference — seven peer analysis methods (BLUE/OI, 3DVar, 4DVar strong/weak/incremental, 4DVarNet, AmortizedPosterior)"
 authors = [
     { name = "Juan Emmanuel Johnson", email = "jemanjohnson34@gmail.com" },
