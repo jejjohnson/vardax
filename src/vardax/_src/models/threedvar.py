@@ -92,11 +92,16 @@ class ThreeDVar(eqx.Module):
                 ).value
                 j_bg = 0.5 * jnp.sum(dx * B_inv_dx)
                 # Observation term — apply R^{-1} via lineax solve.
-                residual = (
-                    (input_i * mask_i) - self.obs_op(x, mask=mask_i)
+                # Mask predictions AND observations symmetrically: for
+                # obs_ops that don't take a `mask` kwarg (e.g.
+                # LinearObs), unmasked predictions at missing entries
+                # would otherwise penalise the analysis there.
+                y_pred = (
+                    self.obs_op(x, mask=mask_i)
                     if _accepts_mask(self.obs_op)
-                    else (input_i * mask_i) - self.obs_op(x)
+                    else self.obs_op(x)
                 )
+                residual = mask_i * (input_i - y_pred)
                 R_inv_r = lx.linear_solve(
                     self.obs_cov_op,
                     residual,

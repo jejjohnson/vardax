@@ -48,6 +48,16 @@ uv-lint: ## Run ruff check and ty
 	@uv run ty check $(PKGROOT)
 	@printf "$(GREEN)>>> Linting checks passed.$(RESET)\n"
 
+.PHONY: uv-typecheck-ci
+uv-typecheck-ci: ## Reproduce the CI Type Check env (typecheck group only) — catches CI-only ty issues
+	@printf "$(YELLOW)>>> Reproducing CI Type Check env (typecheck group)...$(RESET)\n"
+	@rm -rf .venv-typecheck-ci
+	@uv venv .venv-typecheck-ci --python 3.13
+	@VIRTUAL_ENV=.venv-typecheck-ci uv sync --active --group typecheck
+	@VIRTUAL_ENV=.venv-typecheck-ci uv run --active ty check $(PKGROOT)
+	@rm -rf .venv-typecheck-ci
+	@printf "$(GREEN)>>> CI-env ty check passed.$(RESET)\n"
+
 .PHONY: uv-pre-commit
 uv-pre-commit: ## Run all pre-commit hooks
 	@printf "$(YELLOW)>>> Running pre-commit hooks on all files...$(RESET)\n"

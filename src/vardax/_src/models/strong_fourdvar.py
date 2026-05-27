@@ -127,7 +127,7 @@ class StrongFourDVar(eqx.Module):
                         if _accepts_mask(self.obs_op)
                         else self.obs_op(x_t)
                     )
-                    residual = (y_t * m_t) - y_pred
+                    residual = m_t * (y_t - y_pred)
                     R_inv_r = lx.linear_solve(
                         self.obs_cov_op,
                         residual,

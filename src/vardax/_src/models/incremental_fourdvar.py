@@ -93,8 +93,8 @@ class IncrementalFourDVar(eqx.Module):
 
     def _rollout(
         self,
-        x_0: Float[Array, N],
-        n_steps: int,  # ty:ignore[unresolved-reference]
+        x_0: Float[Array, N],  # ty:ignore[unresolved-reference]
+        n_steps: int,
     ) -> Float[Array, "T_plus_1 N"]:
         dt = self.forward.dt
 
@@ -131,7 +131,7 @@ class IncrementalFourDVar(eqx.Module):
                             if _accepts_mask(self.obs_op)
                             else self.obs_op(x_t)
                         )
-                        residual = (y_t * m_t) - y_pred
+                        residual = m_t * (y_t - y_pred)
                         R_inv_r = lx.linear_solve(
                             self.obs_cov_op,
                             residual,

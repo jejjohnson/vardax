@@ -63,18 +63,29 @@ class OptimalInterpolation(eqx.Module):
         def _one(
             input_i: Float[Array, "T N"], mask_i: Float[Array, "T N"]
         ) -> Float[Array, "T N"]:
-            # Observation vector: masked input projected through obs_op.
-            y_pred = (
-                self.obs_op(self.prior_mean, mask=mask_i)
-                if _accepts_mask(self.obs_op)
-                else self.obs_op(self.prior_mean)
-            )
+            # The effective observation operator is mask ⊙ H(·) — apply the
+            # mask both to the predicted obs (innovation) AND to the
+            # tangent-linear used to assemble (H B H^T + R). Without the
+            # mask in `linearize`, missing entries are treated as
+            # zero-innovation observations and bias the analysis whenever
+            # B couples observed and missing components.
+            def masked_obs(x: Float[Array, "T N"]) -> Float[Array, "T N"]:
+                raw = (
+                    self.obs_op(x, mask=mask_i)
+                    if _accepts_mask(self.obs_op)
+                    else self.obs_op(x)
+                )
+                return mask_i * raw
+
+            y_pred = masked_obs(self.prior_mean)
             innovation = (input_i * mask_i) - y_pred
 
             # Build (H B H^T + R) as a composed lineax operator. We
             # tag it positive-semidefinite so lineax.CG accepts it
             # (the composition itself doesn't carry the tag).
-            H = self.obs_op.linearize(self.prior_mean)
+            H = lx.JacobianLinearOperator(
+                lambda x, _args=None: masked_obs(x), self.prior_mean
+            )
             inner_raw = H @ self.prior_cov_op @ H.transpose() + self.obs_cov_op
             inner_op = lx.TaggedLinearOperator(inner_raw, lx.positive_semidefinite_tag)
 
