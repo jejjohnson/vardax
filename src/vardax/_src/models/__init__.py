@@ -20,12 +20,15 @@ by ``tests/test_linear_gaussian_agreement.py``.
 
 from __future__ import annotations
 
+from .incremental_fourdvar import IncrementalConfig, IncrementalFourDVar
 from .optimal_interpolation import OptimalInterpolation
 from .strong_fourdvar import StrongFourDVar
 from .threedvar import ThreeDVar
 from .weak_fourdvar import WeakFourDVar
 
 __all__ = [
+    "IncrementalConfig",
+    "IncrementalFourDVar",
     "OptimalInterpolation",
     "StrongFourDVar",
     "ThreeDVar",

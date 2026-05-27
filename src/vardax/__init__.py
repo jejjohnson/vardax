@@ -41,6 +41,8 @@ from vardax._src.model import (
     FourDVarNet2D,
 )
 from vardax._src.models import (
+    IncrementalConfig,
+    IncrementalFourDVar,
     OptimalInterpolation,
     StrongFourDVar,
     ThreeDVar,
@@ -53,6 +55,13 @@ from vardax._src.obs_operators import (
     LinearObs,
     MaskedIdentity,
     MultiInstrumentFusion,
+)
+from vardax._src.posterior import (
+    EnsembleCovariance,
+    GaussianMarkLikelihood,
+    GaussNewtonHessian,
+    LaplaceCovariance,
+    Posterior,
 )
 from vardax._src.priors import (
     BilinAEPrior1D,
@@ -124,6 +133,12 @@ __all__ = [
     "LinearObs",
     "MaskedIdentity",
     "MultiInstrumentFusion",
+    # Posterior adapters (Decision D10)
+    "EnsembleCovariance",
+    "GaussNewtonHessian",
+    "GaussianMarkLikelihood",
+    "LaplaceCovariance",
+    "Posterior",
     # Costs
     "decomposed_loss",
     "obs_cost_1d",
@@ -164,6 +179,8 @@ __all__ = [
     "FourDVarNet1D",
     "FourDVarNet2D",
     # Classical DA methods (Decision D14)
+    "IncrementalConfig",
+    "IncrementalFourDVar",
     "OptimalInterpolation",
     "StrongFourDVar",
     "ThreeDVar",

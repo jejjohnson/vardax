@@ -91,7 +91,8 @@ class WeakFourDVar(eqx.Module):
         dt = self.forward.dt
 
         def step_fn(
-            x: Float[Array, N], eta_t: Float[Array, N]  # ty:ignore[unresolved-reference]
+            x: Float[Array, N],  # ty:ignore[unresolved-reference]
+            eta_t: Float[Array, N],  # ty:ignore[unresolved-reference]
         ) -> tuple[Float[Array, N], Float[Array, N]]:  # ty:ignore[unresolved-reference]
             x_new = self.forward.step(x, dt) + eta_t
             return x_new, x_new

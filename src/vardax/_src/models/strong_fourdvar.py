@@ -89,7 +89,8 @@ class StrongFourDVar(eqx.Module):
         dt = self.forward.dt
 
         def step_fn(
-            x: Float[Array, N], _: None  # ty:ignore[unresolved-reference]
+            x: Float[Array, N],  # ty:ignore[unresolved-reference]
+            _: None,
         ) -> tuple[Float[Array, N], Float[Array, N]]:  # ty:ignore[unresolved-reference]
             x_new = self.forward.step(x, dt)
             return x_new, x_new

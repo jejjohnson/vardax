@@ -28,6 +28,8 @@ import pytest
 
 from vardax import (
     Batch1D,
+    IncrementalConfig,
+    IncrementalFourDVar,
     MaskedIdentity,
     OptimalInterpolation,
     StrongFourDVar,
@@ -145,6 +147,27 @@ class TestLinearGaussianAgreement:
         oi_out = oi(s["batch"])[:, 0, :]
         strong_out = strong(s["batch"])
         assert jnp.allclose(oi_out, strong_out, atol=1e-3)
+
+    def test_incremental_4dvar_agrees_with_oi_in_3d_limit(self, linear_gaussian_setup):
+        """T_plus_1 = 1 ⇒ IncrementalFourDVar with IdentityForward = 3DVar."""
+        s = linear_gaussian_setup
+        oi = OptimalInterpolation(
+            obs_op=MaskedIdentity(),
+            prior_mean=s["prior_mean_with_time"],
+            prior_cov_op=s["B_op_with_time"],
+            obs_cov_op=s["R_op_with_time"],
+        )
+        inc = IncrementalFourDVar(
+            forward=IdentityForward(),
+            obs_op=MaskedIdentity(),
+            prior_mean=s["prior_mean_state"],
+            prior_cov_op=s["B_op_state"],
+            obs_cov_op=s["R_op_state"],
+            config=IncrementalConfig(n_outer=3, n_inner=30),
+        )
+        oi_out = oi(s["batch"])[:, 0, :]
+        inc_out = inc(s["batch"])
+        assert jnp.allclose(oi_out, inc_out, atol=1e-2)
 
     def test_weak_4dvar_x0_agrees_with_oi_in_3d_limit(self, linear_gaussian_setup):
         """T_plus_1 = 1 ⇒ WeakFourDVar has no η; reduces to 3DVar on x_0."""
