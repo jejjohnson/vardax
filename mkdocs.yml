@@ -78,6 +78,7 @@ nav:
           - 15. Lorenz Examples: 15_lorenz_examples.md
           - 16. SSH Reconstruction: 16_ssh_example.md
           - 17. Methane Single-Overpass: 17_methane_example.md
+          - 18. Latent Variational DA: 18_latent_da.md
       - Reference:
           - Notation: notation.md
           - References: references.md
@@ -89,6 +90,7 @@ nav:
       - Decisions: design/decisions.md
       - pipekit Composition: design/pipekit_composition.md
       - Posterior Adapter: design/posterior.md
+      - Latent DA: design/latent_da.md
       - API:
           - Overview: design/api/README.md
           - Primitives (Layer 0): design/api/primitives.md

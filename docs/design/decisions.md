@@ -26,9 +26,10 @@ reference. New in v0.4.0: D14, D15, D16. Revised: D8 (seven peers), D11
 | D11 | `IncrementalFourDVar` as the operational fast path of `StrongFourDVar` | Layer 2 |
 | D12 | Six-step inference cycle as testing scaffold | Methodology |
 | D13 | `pipekit-jax` `JaxModelOp` + `ModelRegistry` for persistence | Layer 1 |
-| **D14** | **DA hierarchy as horizontal peer classes** | **Layer 2** |
-| **D15** | **Lean on `optimistix` / `diffrax` adjoints, not in-house grad modes** | **Layer 0** |
-| **D16** | **BLUE / OI as a first-class method** | **Layer 2** |
+| D14 | DA hierarchy as horizontal peer classes | Layer 2 |
+| D15 | Lean on `optimistix` / `diffrax` adjoints, not in-house grad modes | Layer 0 |
+| D16 | BLUE / OI as a first-class method | Layer 2 |
+| **D17** | **Latent DA as a first-class peer family** | **Layer 2** |
 
 ---
 
@@ -381,3 +382,80 @@ mat-vec operations.
 - Math chapter 4 covers BLUE / OI in detail, including the Sherman–
   Morrison–Woodbury identity used to pick between the $B$-space and
   the $R$-space form.
+
+---
+
+## D17: Latent DA as a first-class peer family
+
+**New in v0.5.0.**
+
+Latent data assimilation — performing the variational analysis in a
+learned low-dimensional latent space $\mathcal{Z}$ — is added as a
+*peer* family of three new Layer-2 classes alongside the seven
+established in D14:
+
+* `LatentThreeDVar` — single-time inversion in $\mathcal{Z}$.
+* `LatentStrongFourDVar` — multi-time, latent dynamics $M_z$.
+* `LatentHybridFourDVar` — multi-time, physics forecast in $\mathcal{X}$,
+  control and background in $\mathcal{Z}$.
+
+**Context.** Vardax already uses learned subspaces in three places —
+the AE priors inside `FourDVarNet*`, the observation encoder inside
+`AmortizedPosterior`, and the heads of the amortised family. None of
+these promote $z$ itself to the control variable; the variational
+problem still solves in $\mathcal{X}$. The benchmark literature
+(Peyron 2021, Cheng 2023, Fablet 2024) consistently shows that
+promoting $z$ to control gives an order-of-magnitude wall-clock win
+and a structurally smaller posterior covariance.
+
+**Options.**
+
+(A) Add `space: Literal["x", "z"]` to existing methods and dispatch
+    internally.
+(B) Add three new peer classes; reuse the AE priors as `LatentMap`s.
+(C) Treat latent DA as a configuration of `FourDVarNet`.
+
+**Decision.** Option B.
+
+**Rationale.**
+
+* The control vector ($z$ vs $x$), the cost dimensionality, the Hessian
+  object, and the posterior covariance all live in genuinely different
+  spaces. The D14 pattern argues we should not hide a structural
+  difference behind a flag.
+* The AE priors of `FourDVarNet` are *regularisers*, not
+  *parameterisations*. Conflating regularisation and parameterisation
+  (Option C) confuses the reader and forces users to thread the
+  `prior` slot to mean two different things.
+* Three peer classes mirror the three flavours formalised in the
+  `pipekit_cycle.LatentDACycle` orchestrator: strong (z forecast +
+  z update), prior-only (x forecast + x update, AE inside cost),
+  hybrid (x forecast + z update). The vardax peers map 1-to-1 to those
+  flavours.
+
+**Apply.**
+
+* New module `vardax/_src/models/latent.py` with the three classes.
+* New module `vardax/_src/latent.py` with `LatentPrior` and
+  `NeuralLatentForwardModel` adapter.
+* Existing `BilinAEPrior1D/2D`, `MLPAEPrior1D`, `ConvAEPrior1D` gain
+  `latent_dim` and `state_signature` properties so they satisfy
+  `pipekit_cycle.LatentMap` structurally. No behaviour change.
+* New Layer-0 primitives `variational_cost_latent`,
+  `latent_incremental_cost`, plus an `identity_latent_map(N)` helper
+  for the regression test in §18.6 of the math reference.
+* New posterior adapter `LatentLaplaceCovariance` in
+  `vardax/_src/posterior/latent.py`.
+* Math chapter 18 covers the formalism; design doc
+  `design/latent_da.md` covers the API.
+
+**Consequences.**
+
+* Three more peers in the Layer-2 family (now ten). D14's "no
+  parent–child" rule applies: latent peers do not inherit from
+  `StrongFourDVar` or each other.
+* `LatentMap` is a substrate-neutral pipekit-cycle protocol, not a
+  vardax-owned one. Cross-library compatibility with `filterax`
+  (`LatentETKF`, `LatentLETKF`) is automatic.
+* `WeakLatentFourDVar` and a VAE-aware `LatentMap` are explicitly
+  deferred to v0.6 (see design/latent_da.md §13).
