@@ -36,7 +36,7 @@ helps:
 What is **missing** is the natural variational counterpart of these:
 solving the variational problem *itself* in latent space. The
 benchmark literature (Peyron et al. 2021, Cheng et al. 2023, Fablet
-et al. 2024) consistently reports order-of-magnitude wall-clock wins on
+et al. 2021) consistently reports order-of-magnitude wall-clock wins on
 this exact reformulation. Vardax should offer it as a peer family of
 `AnalysisStep` classes, not as a per-method retrofit.
 
@@ -77,7 +77,8 @@ seven peer `AnalysisStep` classes from v0.4 (D14):
 ├─────────────────────────────────────────────────────────────────────────────┤
 │  Layer 1 — Components                                                       │
 │                                                                             │
-│  Priors:           BilinAE, ConvAE, MLPAE  (now satisfy LatentMap),         │
+│  Priors:           BilinAE, ConvAE, MLPAE  (gain encode/decode +            │
+│                    latent_dim/state_signature → satisfy LatentMap),         │
 │                    DynamicalPrior, Diffusion                                │
 │  LatentMap (NEW):  LatentPrior wraps (LatentMap, B_z_op) for background     │
 │                    error covariance in z                                    │
@@ -85,13 +86,13 @@ seven peer `AnalysisStep` classes from v0.4 (D14):
 │  ObservationOperator: MaskedIdentity, LinearObs, AveragingKernel,           │
 │                    MultiInstrumentFusion, + LiftedObservationOperator (pkc) │
 │  GradModulator:    (unchanged)                                              │
-│  CostFunction:     + latent_variational_cost, latent_incremental_cost       │
+│  CostFunction:     + variational_cost_latent, latent_incremental_cost       │
 │  Minimiser:        (unchanged — optimistix wrapper)                         │
 │  PosteriorAdapter: + LatentLaplaceCovariance (Laplace in z, decoded to x)   │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │  Layer 0 — Primitives  (pure JAX)                                           │
 │                                                                             │
-│  + obs_cost_latent, prior_cost_latent, variational_cost_latent              │
+│  + variational_cost_latent, latent_incremental_cost                         │
 │  + decode_jacobian helper for chain-rule linearisation                      │
 │  + identity_latent_map for testing (phi = psi = id)                         │
 └─────────────────────────────────────────────────────────────────────────────┘
@@ -121,8 +122,9 @@ J_{4D}(z_0) = \tfrac{1}{2}\|z_0 - z_b\|^2_{\mathbf{B}_z^{-1}}
             + \tfrac{1}{2}\sum_{k=0}^{K}\|y_k - H(\psi(z_k))\|^2_{\mathbf{R}^{-1}}.
 $$
 
-**Latent Hybrid 4DVar** — control $z_0$, rollout
-$x_{k+1} = M_x(\psi(z_k))$, observation residual evaluated on $x_k$:
+**Latent Hybrid 4DVar** — control $z_0$, decode once to seed the
+physical state, then roll out $x_{k+1} = M_x(x_k)$ entirely in
+$\mathcal{X}$; observation residual evaluated on $x_k$:
 
 $$
 J_{H}(z_0) = \tfrac{1}{2}\|z_0 - z_b\|^2_{\mathbf{B}_z^{-1}}
@@ -136,8 +138,8 @@ minimiser converges faster, and the Hessian / Laplace approximation
 lives in $\mathcal{Z}$. Gradients flow through $\psi$ via JAX autodiff
 for `eqx.Module` decoders — no hand-coded adjoint.
 
-Full derivations, tangent-linear forms, and the Sherman–Morrison
-identity used to switch between $\mathbf{B}_z$-space and
+Full derivations, tangent-linear forms, and the Sherman–Morrison–
+Woodbury identity used to switch between $\mathbf{B}_z$-space and
 $\mathbf{R}$-space gain formulas live in the math reference
 [Chapter 18](../18_latent_da.md).
 
@@ -172,9 +174,14 @@ class LatentPrior(eqx.Module):
 
     latent_map: LatentMap
     z_b: Float[Array, " Nz"]
-    B_z_op: lineax.AbstractLinearOperator    # B_z or its inv-action
+    B_z_op: lineax.AbstractLinearOperator    # B_z itself, NOT its inverse
 
     def cost(self, z):
+        # 1/2 (z - z_b)^T B_z^{-1} (z - z_b) — the linear_solve applies
+        # B_z^{-1} to the residual.  B_z_op is the covariance operator;
+        # a precision operator should be wrapped in
+        # `lineax.TaggedLinearOperator(B_z_inv, lx.tags.symmetric)` and
+        # adapted to a `lineax.matmul`-based cost instead.
         d = z - self.z_b
         return 0.5 * jnp.dot(d, lx.linear_solve(self.B_z_op, d).value)
 
@@ -182,27 +189,51 @@ class LatentPrior(eqx.Module):
     def decode(self, z): return self.latent_map.decode(z)
 ```
 
-### 4.2  `AsLatentMap` mixin for existing AE priors
+### 4.2  Making existing AE priors satisfy `LatentMap`
 
-The three AE priors (`BilinAEPrior1D/2D`, `MLPAEPrior1D`,
-`ConvAEPrior1D`) already expose `.encode` and `.decode`. They become
-`LatentMap`-compatible by adding the two missing properties
-(`latent_dim`, `state_signature`). No behaviour change.
+Of today's AE priors only `BilinAEPrior1D` exposes both `.encode` and
+`.decode`; `MLPAEPrior1D`, `BilinAEPrior2D`, `BilinAEPrior2DMultivar`,
+and `ConvAEPrior1D` currently only have `__call__` (the
+encode-then-decode round-trip used by the FourDVarNet prior cost).
+v0.5 extracts the two halves so each prior satisfies
+`pipekit_cycle.LatentMap`. The work is mechanical — the existing
+`__call__` is already implemented as encode-then-decode internally:
+
+| Prior | Today | v0.5 |
+|---|---|---|
+| `BilinAEPrior1D` | `__call__`, `encode`, `decode` | + `latent_dim`, `state_signature` properties |
+| `MLPAEPrior1D` | `__call__` only | split into `encode` + `decode`, add properties |
+| `BilinAEPrior2D` | `__call__` only | split, add properties |
+| `BilinAEPrior2DMultivar` | `__call__` only | split, add properties |
+| `ConvAEPrior1D` | `__call__` only | split, add properties |
+
+Pattern (illustrated on `MLPAEPrior1D`):
 
 ```python
-class BilinAEPrior1D(eqx.Module):
-    ...
-    # existing:
-    def encode(self, x): ...
-    def decode(self, z): ...
-    # new (no-op, just expose what the AE already knows):
+class MLPAEPrior1D(eqx.Module):
+    encoder: eqx.nn.MLP
+    decoder: eqx.nn.MLP
+    _latent_dim: int = eqx.field(static=True)
+    _state_signature: Any = eqx.field(static=True, default=None)
+
+    # NEW — extracted halves of the existing __call__.
+    def encode(self, x): return self.encoder(x)
+    def decode(self, z): return self.decoder(z)
+
+    # Existing — preserved bit-for-bit.
+    def __call__(self, x): return self.decode(self.encode(x))
+
+    # NEW — make the AE satisfy pipekit_cycle.LatentMap structurally.
     @property
     def latent_dim(self): return self._latent_dim
     @property
     def state_signature(self): return self._state_signature
 ```
 
-`isinstance(prior, pipekit_cycle.LatentMap)` then succeeds at runtime.
+After this change, `isinstance(prior, pipekit_cycle.LatentMap)` is
+true at runtime for all five AE priors. `FourDVarNet*` behaviour is
+unchanged (the existing `__call__` reconstruction path is preserved
+bit-for-bit).
 
 ### 4.3  `NeuralLatentForwardModel`
 
@@ -262,8 +293,10 @@ class LatentThreeDVar(eqx.Module):
         )
 
         def cost_fn(z, _):
-            return self.prior.cost(z) + obs_cost_1d(
-                lifted_H(z), y, mask, self.obs_cov_op,
+            obs_pred = lifted_H(z)
+            return variational_cost_latent(
+                z=z, z_b=self.prior.z_b, B_z_op=self.prior.B_z_op,
+                obs_pred=obs_pred, y=y, mask=mask, R_op=self.obs_cov_op,
             )
 
         sol = optimistix.minimise(
@@ -313,9 +346,12 @@ class LatentStrongFourDVar(eqx.Module):
 
         def cost_fn(z0, _):
             zs = rollout(z0)
-            obs_pred = jax.vmap(lifted_H)(zs)
+            obs_pred = jax.vmap(lifted_H)(zs)            # (K+1, ...)
             return (self.prior.cost(z0)
-                    + obs_cost_seq(obs_pred, ys, masks, self.obs_cov_op))
+                    + obs_misfit_latent_seq(
+                        obs_pred=obs_pred, y_seq=ys, mask_seq=masks,
+                        R_op=self.obs_cov_op,
+                    ))
 
         sol = optimistix.minimise(
             cost_fn, self.minimiser, self.prior.z_b,
@@ -353,8 +389,13 @@ class LatentHybridFourDVar(eqx.Module):
             x0 = self.latent_map.decode(z0)
             xs = rollout_x(x0)                       # x-space rollout
             obs_pred = jax.vmap(self.obs_op)(xs)
+            # Decoder Jacobian appears only at x0 = ψ(z_0); the rest
+            # of the chain is the x-space adjoint (see §18.4.3).
             return (self.prior.cost(z0)
-                    + obs_cost_seq(obs_pred, ys, masks, self.obs_cov_op))
+                    + obs_misfit_latent_seq(
+                        obs_pred=obs_pred, y_seq=ys, mask_seq=masks,
+                        R_op=self.obs_cov_op,
+                    ))
 
         sol = optimistix.minimise(
             cost_fn, self.minimiser, self.prior.z_b,
@@ -373,23 +414,47 @@ $z_0 \to x_0$) **and** $M_x$ (over the rollout). The
 
 ## 6  Layer-0 cost primitives
 
-Two new pure functions in `vardax/_src/costs.py`:
+Three new pure functions in `vardax/_src/costs.py`. Names match the
+public-API re-exports and the call sites in §5 exactly:
 
 ```python
 def variational_cost_latent(
-    z: Array, z_b: Array, B_z_op, obs_pred: Array, y: Array, mask: Array, R_op,
+    z: Array, z_b: Array, B_z_op,
+    obs_pred: Array, y: Array, mask: Array, R_op,
 ) -> Array:
-    """J(z) = 1/2 (z-z_b)^T B_z^-1 (z-z_b) + 1/2 (y-obs_pred)^T R^-1 (y-obs_pred)."""
+    """Single-time latent variational cost.
+
+        J(z) = 1/2 (z - z_b)^T B_z^{-1} (z - z_b)
+             + 1/2 (y - obs_pred)^T R^{-1} (y - obs_pred)
+
+    B_z^{-1} is applied via lineax.linear_solve(B_z_op, ·); R^{-1}
+    likewise.  obs_pred is whatever the lifted operator produces
+    (a y-space array).
+    """
+    ...
+
+def obs_misfit_latent_seq(
+    obs_pred: Array, y_seq: Array, mask_seq: Array, R_op,
+) -> Array:
+    """Time-summed, R-weighted, masked obs misfit.
+
+        sum_k 1/2 (y_k - obs_pred_k)^T R^{-1} (y_k - obs_pred_k)
+
+    Used by the 4DVar latent variants where the prior term is
+    accumulated separately via `LatentPrior.cost`.
+    """
     ...
 
 def latent_incremental_cost(
-    dz: Array, z_b: Array, B_z_op, innovation: Array, R_op, tangent_H: Array,
+    dz: Array, z_b: Array, B_z_op,
+    innovation: Array, R_op, tangent_H: Array,
 ) -> Array:
     """Incremental form for Gauss-Newton outer + CG inner."""
     ...
 ```
 
-Plus a helper that exists primarily for tests:
+Plus a test fixture that's exported from the top-level namespace
+(see §9):
 
 ```python
 def identity_latent_map(dim: int) -> LatentMap:
@@ -475,8 +540,12 @@ from vardax._src.posterior.latent import LatentLaplaceCovariance
 # Layer 0 — cost primitives
 from vardax._src.costs import (
     variational_cost_latent,
+    obs_misfit_latent_seq,
     latent_incremental_cost,
 )
+
+# Layer 0 — test fixture (also handy as a baseline check in user code)
+from vardax._src.latent import identity_latent_map
 ```
 
 Re-exports from pipekit-cycle (for the user's convenience):

@@ -77,8 +77,8 @@ $$
 
 When $\tilde{H}'$ is treated as constant near the linearisation point
 (the **incremental** form, cf. [chapter 8](08_incremental_4dvar.md)),
-the minimisation reduces to a linear solve and the Sherman–Morrison
-identity gives the closed form
+the minimisation reduces to a linear solve and the Sherman–Morrison–
+Woodbury identity gives the closed form
 
 $$
 z^* = z_b + \mathbf{B}_z \tilde{H}'^\top \bigl(\tilde{H}' \mathbf{B}_z \tilde{H}'^\top + \mathbf{R}\bigr)^{-1}(y - \tilde{H}(z_b)).

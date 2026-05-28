@@ -1,13 +1,14 @@
 ---
 status: draft
-version: 0.4.0
+version: 0.5.0
 ---
 
 # vardax — Design Decisions
 
 Each decision is referenced by ID throughout the design docs and math
-reference. New in v0.4.0: D14, D15, D16. Revised: D8 (seven peers), D11
-(rename), D6 (clarified upstream adjoint contribution).
+reference. New in v0.5.0: D17 (latent DA peer family). New in v0.4.0:
+D14, D15, D16. Revised: D8 (seven peers), D11 (rename), D6 (clarified
+upstream adjoint contribution).
 
 ## Index
 
@@ -404,7 +405,7 @@ the AE priors inside `FourDVarNet*`, the observation encoder inside
 `AmortizedPosterior`, and the heads of the amortised family. None of
 these promote $z$ itself to the control variable; the variational
 problem still solves in $\mathcal{X}$. The benchmark literature
-(Peyron 2021, Cheng 2023, Fablet 2024) consistently shows that
+(Peyron 2021, Cheng 2023, Fablet 2021) consistently shows that
 promoting $z$ to control gives an order-of-magnitude wall-clock win
 and a structurally smaller posterior covariance.
 
