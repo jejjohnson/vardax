@@ -1,6 +1,6 @@
 ---
 status: draft
-version: 0.4.0
+version: 0.5.0
 ---
 
 # vardax — Architecture
@@ -21,6 +21,11 @@ version: 0.4.0
 │  Learned:                                                                 │
 │    FourDVarNet            — learned φ_θ + learned Φ_φ                     │
 │    AmortizedPosterior     — direct q_φ(x | y) head                        │
+│                                                                           │
+│  Latent (v0.5+, D17):                                                     │
+│    LatentThreeDVar        — 3DVar in z                                    │
+│    LatentStrongFourDVar   — 4DVar with latent M_z                         │
+│    LatentHybridFourDVar   — physics in x, control + update in z           │
 │                                                                           │
 │  + train_step, eval_step (Layer 0 primitives used by all learned models)  │
 ├───────────────────────────────────────────────────────────────────────────┤
