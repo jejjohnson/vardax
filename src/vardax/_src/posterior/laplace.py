@@ -29,6 +29,7 @@ from __future__ import annotations
 from typing import Any
 
 import equinox as eqx
+import gaussx
 from jaxtyping import Array, Float
 import lineax as lx
 
@@ -82,9 +83,10 @@ class LaplaceCovariance(eqx.Module):
 
         H = obs_op.linearize(analysis)
         # P*^{-1} = H^T R^{-1} H + B^{-1}
-        # Build lazily — represent as the inverse of a composed
-        # AbstractLinearOperator. Concrete mat-vec evaluation is via
-        # lineax.CG on the precision operator.
+        # Build lazily via operator composition (gaussx.sandwich would
+        # materialise the Jacobian, breaking the matrix-free design);
+        # the inverses are gaussx.inv, which dispatches to closed forms
+        # for structured operators and falls back to lineax.CG mat-vecs.
         precision = H.transpose() @ _inverse_op(self.obs_cov_op) @ H + _inverse_op(
             self.prior_cov_op
         )
@@ -94,33 +96,28 @@ class LaplaceCovariance(eqx.Module):
 
         return Posterior(
             mean=analysis,
-            cov=_InverseLinearOperator(precision_tagged),
+            cov=gaussx.inv(precision_tagged, solver=_CG_SOLVER),
             samples=None,
             provenance={"adapter": "LaplaceCovariance"},
         )
 
 
+_CG_SOLVER = lx.CG(atol=1e-6, rtol=1e-6, max_steps=200)
+
+
 def _inverse_op(op: lx.AbstractLinearOperator) -> lx.AbstractLinearOperator:
-    """Lazy inverse: a wrapper that applies ``op^{-1}`` via lineax.CG."""
-    return _InverseLinearOperator(
-        lx.TaggedLinearOperator(op, lx.positive_semidefinite_tag)
-    )
+    """Lazy PSD inverse — delegates to :func:`gaussx.inv`.
 
-
-class _InverseLinearOperator(lx.FunctionLinearOperator):
-    """Inverse of a positive-semidefinite operator, applied via CG.
-
-    Wraps any ``AbstractLinearOperator`` ``A`` such that mat-vec
-    returns ``A^{-1} v`` (solved by ``lineax.CG``). The inverse is
-    never materialised.
+    Structured operators (diagonal, Kronecker, block-diagonal,
+    low-rank) invert in closed form; everything else solves via
+    ``lineax.CG`` mat-vecs, never materialising the inverse. The
+    gaussx operator is re-wrapped as a ``FunctionLinearOperator`` so
+    lineax can linearise it when it appears inside a composed
+    precision that is itself solved (gaussx's ``InverseOperator``
+    does not register ``lx.linearise``).
     """
-
-    def __init__(self, op: lx.AbstractLinearOperator) -> None:
-        def _solve(v: Float[Array, ...]) -> Float[Array, ...]:
-            return lx.linear_solve(
-                op, v, solver=lx.CG(atol=1e-6, rtol=1e-6, max_steps=200)
-            ).value
-
-        # FunctionLinearOperator needs an input_structure; reuse the
-        # underlying operator's.
-        super().__init__(_solve, op.in_structure())
+    inv_op = gaussx.inv(
+        lx.TaggedLinearOperator(op, lx.positive_semidefinite_tag),
+        solver=_CG_SOLVER,
+    )
+    return lx.FunctionLinearOperator(inv_op.mv, op.in_structure())

@@ -36,7 +36,6 @@ dependencies = [
     "jaxlib>=0.5",
     "optax>=0.2",
     "jaxtyping>=0.2.28",
-    "einops>=0.8",
     "diffrax>=0.5",
     "equinox>=0.11",
     "optimistix>=0.1",
@@ -221,7 +220,7 @@ source = ["src/vardax"]
 output = "reports/coverage.xml"
 
 [tool.uv.sources]
-gaussx = { git = "https://github.com/jejjohnson/gaussx" }
+gaussx = { git = "https://github.com/jejjohnson/gaussx", rev = "cd6264c" }
 pipekit = { git = "https://github.com/jejjohnson/pipekit", subdirectory = "packages/pipekit" }
 pipekit-cycle = { git = "https://github.com/jejjohnson/pipekit", subdirectory = "packages/pipekit-cycle" }
 pipekit-jax = { git = "https://github.com/jejjohnson/pipekit", subdirectory = "packages/pipekit-jax" }

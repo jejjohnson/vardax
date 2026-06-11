@@ -27,6 +27,7 @@ from __future__ import annotations
 from typing import Any
 
 import equinox as eqx
+import gaussx
 import jax
 import jax.numpy as jnp
 from jaxtyping import Array, Float
@@ -217,16 +218,16 @@ class IncrementalFourDVar(eqx.Module):
 
 
 def _inv(op: lx.AbstractLinearOperator) -> lx.AbstractLinearOperator:
-    """Lazy inverse of a positive-semidefinite operator via lineax.CG."""
+    """Lazy PSD inverse — gaussx.inv (structured closed forms, CG fallback).
 
-    def _solve(v):
-        return lx.linear_solve(
-            lx.TaggedLinearOperator(op, lx.positive_semidefinite_tag),
-            v,
-            solver=lx.CG(atol=1e-6, rtol=1e-6, max_steps=200),
-        ).value
-
-    return lx.FunctionLinearOperator(_solve, op.in_structure())
+    Re-wrapped as a ``FunctionLinearOperator`` so lineax can linearise
+    it inside composed operators that are themselves solved.
+    """
+    inv_op = gaussx.inv(
+        lx.TaggedLinearOperator(op, lx.positive_semidefinite_tag),
+        solver=lx.CG(atol=1e-6, rtol=1e-6, max_steps=200),
+    )
+    return lx.FunctionLinearOperator(inv_op.mv, op.in_structure())
 
 
 def _accepts_mask(obs_op: Any) -> bool:

@@ -25,6 +25,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
+import gaussx
 import jax
 import jax.numpy as jnp
 from jaxtyping import Array, Float, PRNGKeyArray
@@ -190,16 +191,12 @@ def simulation_based_calibration(
 
 
 def _marginal_std(cov_op: Any, ref: Float[Array, ...]) -> Float[Array, ...]:
-    """Extract :math:`\\sqrt{\\mathrm{diag}(\\Sigma)}` by probing ``Σ e_i``.
+    """Extract :math:`\\sqrt{\\mathrm{diag}(\\Sigma)}` from the operator.
 
-    Works for any operator exposing ``.mv``. Cost is ``N`` matvecs;
-    fine for the moderate-N regime where this gate is meaningful.
+    Delegates to :func:`gaussx.diag`, which uses closed forms for
+    structured operators (diagonal, Kronecker, block-diagonal) and
+    falls back to materialisation only for generic operators — fine
+    for the moderate-N regime where this gate is meaningful.
     """
-    flat = ref.ravel()
-    n = flat.size
-    diag = jnp.zeros(n)
-    for i in range(n):
-        e = jnp.zeros(n).at[i].set(1.0).reshape(ref.shape)
-        sigma_e = cov_op.mv(e).ravel()
-        diag = diag.at[i].set(sigma_e[i])
+    diag = gaussx.diag(cov_op)
     return jnp.sqrt(jnp.maximum(diag, 0.0)).reshape(ref.shape)

@@ -11,7 +11,7 @@ from __future__ import annotations
 from typing import Any
 
 import equinox as eqx
-import jax.numpy as jnp
+import gaussx
 import numpy as np
 
 from .container import Posterior
@@ -60,8 +60,10 @@ class GaussianMarkLikelihood(eqx.Module):
         else fall back to a single ``as_matrix()`` call.
         """
         cov = self.posterior.cov
+        if cov is None:
+            return None
         try:
-            return jnp.diag(cov.as_matrix())  # type: ignore[union-attr]  # ty:ignore[unresolved-attribute]
+            return gaussx.diag(cov)
         except (AttributeError, NotImplementedError):
             # Lazy operators don't always materialise; just emit a
             # null marker.
