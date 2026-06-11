@@ -18,11 +18,12 @@ from __future__ import annotations
 from typing import Any
 
 import equinox as eqx
+import gaussx
 from jaxtyping import Array, Float
 import lineax as lx
 
 from .container import Posterior
-from .laplace import _inverse_op
+from .laplace import _CG_SOLVER, _inverse_op
 
 
 class GaussNewtonHessian(eqx.Module):
@@ -68,7 +69,7 @@ class GaussNewtonHessian(eqx.Module):
 
         return Posterior(
             mean=analysis,
-            cov=_inverse_op(precision_tagged),
+            cov=gaussx.inv(precision_tagged, solver=_CG_SOLVER),
             samples=None,
             provenance={
                 "adapter": "GaussNewtonHessian",

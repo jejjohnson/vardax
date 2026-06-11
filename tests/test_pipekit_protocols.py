@@ -129,3 +129,54 @@ class TestCostFunctionProtocol:
             return jnp.sum(x**2)
 
         assert isinstance(cost, CostFunction)
+
+
+class TestObservationOperatorConformance:
+    """Obs operators satisfy ``pipekit_cycle.ObservationOperator`` (D8)."""
+
+    def test_linear_obs(self):
+        import lineax as lx
+
+        from vardax import LinearObs, ObservationOperator
+
+        op = LinearObs(H_mat=lx.MatrixLinearOperator(jnp.eye(3)))
+        assert isinstance(op, ObservationOperator)
+        assert isinstance(op.linearize(jnp.zeros(3)), lx.AbstractLinearOperator)
+
+    def test_masked_identity(self):
+        from vardax import MaskedIdentity, ObservationOperator
+
+        op = MaskedIdentity()
+        assert isinstance(op, ObservationOperator)
+
+    def test_averaging_kernel(self):
+        import lineax as lx
+
+        from vardax import AveragingKernel, ObservationOperator
+
+        op = AveragingKernel(
+            A=lx.MatrixLinearOperator(0.5 * jnp.eye(3)),
+            x_a=jnp.zeros(3),
+            h=jnp.ones(3),
+        )
+        assert isinstance(op, ObservationOperator)
+
+    def test_multi_instrument_flattened_wrapper(self):
+        import lineax as lx
+
+        from vardax import (
+            InstrumentRegistry,
+            InstrumentSpec,
+            LinearObs,
+            MultiInstrumentFusion,
+            ObservationOperator,
+        )
+
+        spec = InstrumentSpec(
+            obs_op=LinearObs(H_mat=lx.MatrixLinearOperator(jnp.eye(2))),
+            mask=jnp.ones(2),
+            R_op=lx.DiagonalLinearOperator(0.1 * jnp.ones(2)),
+            instrument_id="a",
+        )
+        fusion = MultiInstrumentFusion(registry=InstrumentRegistry(entries={"a": spec}))
+        assert isinstance(fusion.to_observation_operator(), ObservationOperator)
