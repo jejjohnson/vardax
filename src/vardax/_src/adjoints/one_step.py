@@ -42,23 +42,24 @@ class OneStepAdjoint(optx.AbstractAdjoint):
     O(1) memory and is exact at the fixed point of the inner
     iteration.
 
-    Use as the ``solver_adjoint`` argument to ``FourDVarNet1D`` /
-    ``FourDVarNet2D``:
+    Use as the ``solver_adjoint`` argument to
+    [`FourDVarNet1D`][vardax.FourDVarNet1D] /
+    [`FourDVarNet2D`][vardax.FourDVarNet2D]:
 
-    .. code-block:: python
+    ```python
+    from vardax.adjoints import OneStepAdjoint
 
-        from vardax.adjoints import OneStepAdjoint
-
-        model = FourDVarNet1D(
-            state_dim=N, n_time=T, ...,
-            solver_adjoint=OneStepAdjoint(),
-            key=key,
-        )
+    model = FourDVarNet1D(
+        state_dim=N, n_time=T, ...,
+        solver_adjoint=OneStepAdjoint(),
+        key=key,
+    )
+    ```
 
     References:
         Bolte, J., Pauwels, E. & Vaiter, S. (2023). One-step
         differentiation of iterative algorithms. NeurIPS 36.
-        `arXiv:2305.13768 <https://arxiv.org/abs/2305.13768>`_.
+        [arXiv:2305.13768](https://arxiv.org/abs/2305.13768).
     """
 
     def apply(

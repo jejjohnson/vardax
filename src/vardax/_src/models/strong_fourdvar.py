@@ -1,15 +1,15 @@
-"""Strong-constraint 4DVar.
+r"""Strong-constraint 4DVar.
 
 Multi-time analysis with the control variable being the initial state
-:math:`x_0`. The forward model :math:`M_t` is treated as exact (no
-model-error term). Cost:
+$x_0$. The forward model $M_t$ is treated as exact (no model-error
+term). Cost:
 
-.. math::
+$$
+J(x_0) = \tfrac{1}{2} \|x_0 - x_b\|^2_{B^{-1}}
+       + \tfrac{1}{2} \sum_{t=0}^{T} \|y_t - H_t(M_t(x_0))\|^2_{R_t^{-1}}.
+$$
 
-    J(x_0) = \\tfrac{1}{2} \\|x_0 - x_b\\|^2_{B^{-1}}
-           + \\tfrac{1}{2} \\sum_{t=0}^{T} \\|y_t - H_t(M_t(x_0))\\|^2_{R_t^{-1}}.
-
-Gradients of :math:`J` w.r.t. :math:`x_0` flow through the rollout
+Gradients of $J$ w.r.t. $x_0$ flow through the rollout
 ``trajectory = [forward.step(x, dt) for _ in range(T)]`` and back —
 the adjoint composition is whatever JAX gives by default. For long
 windows where the forward is a diffrax ODE solve, the
@@ -32,24 +32,47 @@ from vardax._src._types import Batch1D
 
 
 class StrongFourDVar(eqx.Module):
-    """Strong-constraint 4DVar.
+    r"""Strong-constraint 4DVar.
 
     Attributes:
         forward: ``pipekit_cycle.ForwardModel`` supplying
             ``step(state, dt) -> state``.
         obs_op: Observation operator.
-        prior_mean: Background :math:`x_b` — initial state of shape
-            ``(N,)`` (state vector at :math:`t=0`).
-        prior_cov_op: :math:`B`.
-        obs_cov_op: :math:`R`.
+        prior_mean: Background $x_b$ — initial state of shape
+            ``(N,)`` (state vector at $t=0$).
+        prior_cov_op: $B$.
+        obs_cov_op: $R$.
         minimiser: ``optimistix.AbstractMinimiser`` for the outer
-            optimisation over :math:`x_0`.
+            optimisation over $x_0$.
         minimiser_adjoint: ``optimistix.AbstractAdjoint`` for
             differentiating through the minimum.
         forward_adjoint: ``diffrax.AbstractAdjoint``-like — currently
             stored as a tag, threaded through if the forward delegates
             to ``diffrax``. Default ``None`` (use forward's own).
         max_steps: Iteration cap on the outer solver.
+
+    Examples:
+        Trivial dynamics ($M_t(x) = x$) and a single timestep reduce
+        strong 4DVar to 3DVar, so with $B = R = I$ the analysis is
+        $x_0^* = y / 2$.
+
+        >>> import jax, jax.numpy as jnp, lineax as lx, vardax
+        >>> class Identity:
+        ...     dt = 1.0
+        ...
+        ...     def step(self, x, dt):
+        ...         return x
+        >>> eye = lx.IdentityLinearOperator(jax.ShapeDtypeStruct((3,), jnp.float32))
+        >>> strong = vardax.StrongFourDVar(
+        ...     forward=Identity(),
+        ...     obs_op=vardax.MaskedIdentity(),
+        ...     prior_mean=jnp.zeros(3),
+        ...     prior_cov_op=eye,
+        ...     obs_cov_op=eye,
+        ... )
+        >>> batch = vardax.Batch1D(input=jnp.ones((1, 1, 3)), mask=jnp.ones((1, 1, 3)))
+        >>> strong(batch).shape
+        (1, 3)
     """
 
     forward: Any
@@ -100,7 +123,7 @@ class StrongFourDVar(eqx.Module):
         return jnp.concatenate([x_0[None, :], trajectory], axis=0)
 
     def __call__(self, batch: Batch1D) -> Float[Array, "B N"]:
-        """Strong-4DVar analysis: minimise over :math:`x_0`."""
+        """Strong-4DVar analysis: minimise over $x_0$."""
 
         T = batch.input.shape[1] - 1  # rollout steps (input has T+1 timesteps)
 

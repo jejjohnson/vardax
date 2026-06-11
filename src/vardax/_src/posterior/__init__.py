@@ -1,18 +1,21 @@
-"""Posterior adapters (Decision D10).
+r"""Posterior adapters (Decision D10).
 
-Every vardax analysis emits a ``Posterior`` container — not just a
-point estimate. Three adapter families compute the posterior covariance
-via different approximations:
+Every vardax analysis emits a [`Posterior`][vardax.Posterior]
+container — not just a point estimate. Three adapter families compute
+the posterior covariance via different approximations:
 
-- :class:`LaplaceCovariance`   — :math:`P^* = (B^{-1} + H^\\top R^{-1} H)^{-1}`
-  at MAP. Cheap, Gaussian-likelihood-only.
-- :class:`GaussNewtonHessian`  — Krylov / Lanczos inversion of the
-  Gauss-Newton Hessian. Exact at MAP, structured.
-- :class:`EnsembleCovariance`  — sample covariance from an ensemble of
-  analyses (delegates to ``filterax`` when supplied).
+- [`LaplaceCovariance`][vardax.LaplaceCovariance] —
+  $P^* = (B^{-1} + H^\top R^{-1} H)^{-1}$ at MAP. Cheap,
+  Gaussian-likelihood-only.
+- [`GaussNewtonHessian`][vardax.GaussNewtonHessian] — Krylov / Lanczos
+  inversion of the Gauss-Newton Hessian. Exact at MAP, structured.
+- [`EnsembleCovariance`][vardax.EnsembleCovariance] — sample covariance
+  from an ensemble of analyses (delegates to ``filterax`` when
+  supplied).
 
-Plus :class:`GaussianMarkLikelihood` — serialises a ``Posterior``
-to a JSON-friendly dict for downstream population models (Tier V).
+Plus [`GaussianMarkLikelihood`][vardax.GaussianMarkLikelihood] —
+serialises a [`Posterior`][vardax.Posterior] to a JSON-friendly dict
+for downstream population models (Tier V).
 """
 
 from __future__ import annotations

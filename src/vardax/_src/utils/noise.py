@@ -19,23 +19,16 @@ def add_gaussian_noise(
     Computes ``noisy = variable + σ * ε`` where ``ε ~ N(0, 1)`` and adds
     ``noisy`` as a new variable named ``name`` to the dataset.
 
-    Parameters
-    ----------
-    ds:
-        Dataset containing ``variable``.
-    variable:
-        Name of the source variable.
-    sigma:
-        Standard deviation of the additive Gaussian noise.
-    seed:
-        Random seed for reproducibility (via ``numpy.random.default_rng``).
-    name:
-        Name of the new noisy variable added to the dataset (default
-        ``"obs"``).
+    Args:
+        ds: Dataset containing ``variable``.
+        variable: Name of the source variable.
+        sigma: Standard deviation of the additive Gaussian noise.
+        seed: Random seed for reproducibility (via
+            ``numpy.random.default_rng``).
+        name: Name of the new noisy variable added to the dataset
+            (default ``"obs"``).
 
-    Returns
-    -------
-    xr.Dataset
+    Returns:
         Dataset with the new ``name`` variable added.
     """
     rng = np.random.default_rng(seed)

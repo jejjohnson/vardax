@@ -17,20 +17,13 @@ def random_mask(
 
     A value of ``1`` means *observed*; ``0`` means *missing*.
 
-    Parameters
-    ----------
-    ds:
-        Dataset containing ``variable``.
-    variable:
-        Name of the variable to mask.
-    missing_rate:
-        Fraction of values to mark as missing (in ``[0, 1)``).
-    seed:
-        Random seed for reproducibility.
+    Args:
+        ds: Dataset containing ``variable``.
+        variable: Name of the variable to mask.
+        missing_rate: Fraction of values to mark as missing (in ``[0, 1)``).
+        seed: Random seed for reproducibility.
 
-    Returns
-    -------
-    xr.Dataset
+    Returns:
         Dataset with an additional ``"mask"`` coordinate that shares the
         same dimensions as ``variable``.
     """
@@ -52,19 +45,13 @@ def regular_mask(
     Every ``obs_interval``-th timestep along the ``time`` dimension is
     marked as observed (``1``); all others are ``0``.
 
-    Parameters
-    ----------
-    ds:
-        Dataset containing ``variable``.
-    variable:
-        Name of the variable to mask.
-    obs_interval:
-        Spacing between observed timesteps (every ``obs_interval``-th step
-        is observed).
+    Args:
+        ds: Dataset containing ``variable``.
+        variable: Name of the variable to mask.
+        obs_interval: Spacing between observed timesteps (every
+            ``obs_interval``-th step is observed).
 
-    Returns
-    -------
-    xr.Dataset
+    Returns:
         Dataset with an additional ``"mask"`` coordinate.
     """
     da = ds[variable]
@@ -95,21 +82,14 @@ def feature_mask(
 ) -> xr.Dataset:
     """Add a feature-dimension mask to the dataset.
 
-    Parameters
-    ----------
-    ds:
-        Dataset containing ``variable``.
-    variable:
-        Name of the variable to mask.
-    coord:
-        Name of the coordinate that enumerates feature dimensions.
-    observed_dims:
-        Feature names that should be marked as *observed* (``1``); all
-        others are ``0``.
+    Args:
+        ds: Dataset containing ``variable``.
+        variable: Name of the variable to mask.
+        coord: Name of the coordinate that enumerates feature dimensions.
+        observed_dims: Feature names that should be marked as *observed*
+            (``1``); all others are ``0``.
 
-    Returns
-    -------
-    xr.Dataset
+    Returns:
         Dataset with an additional ``"mask_features"`` coordinate sharing
         the same dimensions as ``variable``.
     """

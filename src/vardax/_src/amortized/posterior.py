@@ -3,29 +3,29 @@
 Composes an encoder (``(input, mask) → context``) with a density head
 (``context → q_φ(x | y)``). Trained by simulation:
 
-.. code-block:: python
+```python
+def sample_train_pair(key):
+    x = prior_distribution.sample(key)
+    y = forward_model(x) + obs_noise.sample(key)
+    return Batch1D(input=y, mask=quality_mask, target=x)
 
-    def sample_train_pair(key):
-        x = prior_distribution.sample(key)
-        y = forward_model(x) + obs_noise.sample(key)
-        return Batch1D(input=y, mask=quality_mask, target=x)
 
-
-    for batch in simulation_loader:
-        model, opt_state, loss = amortized_train_step(
-            model,
-            batch,
-            optimizer,
-            opt_state,
-        )
+for batch in simulation_loader:
+    model, opt_state, loss = amortized_train_step(
+        model,
+        batch,
+        optimizer,
+        opt_state,
+    )
+```
 
 Inference (sub-second):
 
-.. code-block:: python
-
-    x_map = model(batch)  # MAP / mode
-    samples = model.sample(batch, key, n=200)  # posterior samples
-    log_p = model.log_prob(x, batch)  # exact for flow/regression
+```python
+x_map = model(batch)  # MAP / mode
+samples = model.sample(batch, key, n=200)  # posterior samples
+log_p = model.log_prob(x, batch)  # exact for flow/regression
+```
 """
 
 from __future__ import annotations
@@ -43,7 +43,7 @@ from .config import AmortizedConfig
 
 
 class AmortizedPosterior(eqx.Module):
-    """Amortized variational posterior :math:`q_\\phi(x \\mid y)`.
+    r"""Amortized variational posterior $q_\phi(x \mid y)$.
 
     Attributes:
         encoder: ``eqx.Module`` mapping ``(input, mask)`` to a context
@@ -60,7 +60,7 @@ class AmortizedPosterior(eqx.Module):
     config: AmortizedConfig
 
     def __call__(self, batch: Batch1D | Batch2D) -> Float[Array, ...]:
-        """Return the per-sample MAP / mode of :math:`q_\\phi(x \\mid y)`."""
+        r"""Return the per-sample MAP / mode of $q_\phi(x \mid y)$."""
 
         def _one(input_i, mask_i):
             ctx = self.encoder(input_i, mask_i)

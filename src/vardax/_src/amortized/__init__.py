@@ -1,9 +1,9 @@
-"""Amortized inference (Epic 8 / Decision D12).
+r"""Amortized inference (Epic 8 / Decision D12).
 
-Learns a conditional density :math:`q_\\phi(x \\mid y)` that maps
+Learns a conditional density $q_\phi(x \mid y)$ that maps
 observations directly to posteriors. Trained by simulation: sample
-:math:`x \\sim p(x)`, simulate :math:`y \\mid x`, train
-:math:`q_\\phi` to recover :math:`x` from :math:`y`. Per-event inference
+$x \sim p(x)$, simulate $y \mid x$, train
+$q_\phi$ to recover $x$ from $y$. Per-event inference
 is a single forward pass — the cost amortises over many events.
 
 Three head choices via ``AmortizedConfig.head_type``:

@@ -54,6 +54,15 @@ class BilinAEPrior1D(eqx.Module):
         state_dim: Spatial size of the input (``N``).
         latent_dim: Dimensionality of the latent code.
         n_time: Number of time steps (``T``).
+
+    Examples:
+        >>> import jax, jax.numpy as jnp
+        >>> from vardax import BilinAEPrior1D
+        >>> prior = BilinAEPrior1D(
+        ...     state_dim=4, latent_dim=2, n_time=3, key=jax.random.PRNGKey(0)
+        ... )
+        >>> prior(jnp.ones((2, 3, 4))).shape
+        (2, 3, 4)
     """
 
     state_dim: int = eqx.field(static=True)
@@ -232,11 +241,19 @@ class BilinAEPrior2DMultivar(eqx.Module):
 
 
 class IdentityPrior(eqx.Module):
-    """Trivial identity prior: :math:`\\varphi(x) = x`.
+    r"""Trivial identity prior: $\varphi(x) = x$.
 
     Zero parameters. Useful as a pure obs-driven baseline (the prior
     cost vanishes everywhere) and as a sanity-check building block in
     the linear-Gaussian agreement tests.
+
+    Examples:
+        >>> import jax.numpy as jnp
+        >>> from vardax import IdentityPrior
+        >>> prior = IdentityPrior()
+        >>> x = jnp.arange(6.0).reshape(1, 2, 3)
+        >>> bool(jnp.all(prior(x) == x))
+        True
     """
 
     def __call__(self, x: Float[Array, ...]) -> Float[Array, ...]:

@@ -15,19 +15,13 @@ def trajectory_to_xr_dataset(
 ) -> xr.Dataset:
     """Convert a state trajectory to an xarray Dataset.
 
-    Parameters
-    ----------
-    states:
-        State trajectory of shape ``(T, F)``.
-    time_coords:
-        Time coordinates of shape ``(T,)``.
-    feature_names:
-        Names for the feature dimensions.  Defaults to
-        ``["x0", "x1", ..., "x{F-1}"]``.
+    Args:
+        states: State trajectory of shape ``(T, F)``.
+        time_coords: Time coordinates of shape ``(T,)``.
+        feature_names: Names for the feature dimensions.  Defaults to
+            ``["x0", "x1", ..., "x{F-1}"]``.
 
-    Returns
-    -------
-    xr.Dataset
+    Returns:
         Dataset with a ``"state"`` DataArray of dims ``(time, feature)``.
     """
     states_np = np.asarray(states)
@@ -57,20 +51,14 @@ def extract_patches(
 ) -> xr.Dataset:
     """Extract random temporal patches from a trajectory dataset.
 
-    Parameters
-    ----------
-    ds:
-        Dataset with a ``"state"`` DataArray of dims ``(time, feature)``.
-    n_patches:
-        Number of patches to extract.
-    n_timesteps:
-        Length (in timesteps) of each patch.
-    seed:
-        Random seed for reproducibility.
+    Args:
+        ds: Dataset with a ``"state"`` DataArray of dims
+            ``(time, feature)``.
+        n_patches: Number of patches to extract.
+        n_timesteps: Length (in timesteps) of each patch.
+        seed: Random seed for reproducibility.
 
-    Returns
-    -------
-    xr.Dataset
+    Returns:
         Dataset with a ``"state"`` DataArray of dims
         ``(patch, time, feature)``.
     """

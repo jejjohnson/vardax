@@ -1,12 +1,12 @@
-"""Gauss-Newton Hessian posterior (Decision D10).
+r"""Gauss-Newton Hessian posterior (Decision D10).
 
 For ``IncrementalFourDVar`` the Gauss-Newton Hessian is assembled
 during the last outer iteration as part of the algorithm. Reuse it
 for posterior covariance:
 
-.. math::
-
-    P^* = \\big(B^{-1} + \\sum_t (H'_t M'_t)^\\top R_t^{-1} (H'_t M'_t)\\big)^{-1}.
+$$
+P^* = \big(B^{-1} + \sum_t (H'_t M'_t)^\top R_t^{-1} (H'_t M'_t)\big)^{-1}.
+$$
 
 For methods that don't assemble the GN Hessian as a side effect
 (``StrongFourDVar``, ``WeakFourDVar``), this adapter computes it
@@ -27,17 +27,18 @@ from .laplace import _CG_SOLVER, _inverse_op
 
 
 class GaussNewtonHessian(eqx.Module):
-    """Gauss-Newton Hessian inversion at MAP.
+    r"""Gauss-Newton Hessian inversion at MAP.
 
-    Functionally similar to ``LaplaceCovariance`` — both compute
-    :math:`(B^{-1} + H^\\top R^{-1} H)^{-1}` (or its 4D extension)
+    Functionally similar to
+    [`LaplaceCovariance`][vardax.LaplaceCovariance] — both compute
+    $(B^{-1} + H^\top R^{-1} H)^{-1}$ (or its 4D extension)
     — but the GN-Hessian adapter is the recommended path for
     ``IncrementalFourDVar`` where the Hessian is already
     materialised by the inner CG solver.
 
     Attributes:
-        prior_cov_op: :math:`B`.
-        obs_cov_op: :math:`R`.
+        prior_cov_op: $B$.
+        obs_cov_op: $R$.
         n_krylov: Maximum Krylov iterations for mat-vec evaluations.
     """
 

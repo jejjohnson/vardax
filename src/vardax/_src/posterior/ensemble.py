@@ -1,11 +1,11 @@
-"""Ensemble-covariance posterior adapter.
+r"""Ensemble-covariance posterior adapter.
 
 Builds the posterior covariance from an ensemble of analyses
 (per perturbed initial condition or observation realisation):
 
-.. math::
-
-    P^* \\approx \\frac{1}{M-1} \\sum_m (x^{(m)} - \\bar x)(x^{(m)} - \\bar x)^\\top.
+$$
+P^* \approx \frac{1}{M-1} \sum_m (x^{(m)} - \bar x)(x^{(m)} - \bar x)^\top.
+$$
 
 When ``filterax`` is installed and used for the propagation, this
 adapter just packages the sample covariance into a ``Posterior``.
@@ -29,11 +29,11 @@ from .container import Posterior
 
 
 class EnsembleCovariance(eqx.Module):
-    """Sample-covariance posterior from an ensemble of analyses.
+    r"""Sample-covariance posterior from an ensemble of analyses.
 
     Attributes:
         n_members: Expected ensemble size (used for diagnostics).
-        inflation: Multiplicative inflation factor :math:`\\lambda` applied
+        inflation: Multiplicative inflation factor $\lambda$ applied
             to the sample covariance. Default 1.0 (no inflation).
     """
 
@@ -56,9 +56,10 @@ class EnsembleCovariance(eqx.Module):
                 compatibility).
 
         Returns:
-            ``Posterior`` with mean = ensemble mean, ``cov`` = sample
-            covariance as a dense ``MatrixLinearOperator`` (only
-            assembled if you ask for it; safe for moderate M).
+            [`Posterior`][vardax.Posterior] with mean = ensemble mean,
+            ``cov`` = sample covariance as a dense
+            ``MatrixLinearOperator`` (only assembled if you ask for
+            it; safe for moderate M).
         """
         m = analyses.shape[0]
         if m != self.n_members:

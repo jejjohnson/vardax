@@ -4,26 +4,25 @@ Provides minimal glue so a vardax model + a ``pipekit_train.Loss``
 implementation compose into a ``pipekit_train.TrainingLoop`` without
 the user reimplementing the inner training step.
 
-Usage
------
+Typical usage:
 
-.. code-block:: python
+```python
+from pipekit_jax import JaxModelOp
+from pipekit_train import MSE, EarlyStopping, Checkpoint, TrainingLoop
+from vardax import FourDVarNet1D
+from vardax.adapters.pipekit_train import VardaxReconLoss
 
-    from pipekit_jax import JaxModelOp
-    from pipekit_train import MSE, EarlyStopping, Checkpoint, TrainingLoop
-    from vardax import FourDVarNet1D
-    from vardax.adapters.pipekit_train import VardaxReconLoss
+model = FourDVarNet1D(state_dim=N, n_time=T, ..., key=key)
+model_op = JaxModelOp(model)
 
-    model = FourDVarNet1D(state_dim=N, n_time=T, ..., key=key)
-    model_op = JaxModelOp(model)
-
-    loop = TrainingLoop(
-        dataset=my_dataset,
-        model_op=model_op,
-        loss=VardaxReconLoss(),     # equiv to pipekit_train.MSE on (model(batch), batch.target)
-        callbacks=[EarlyStopping(patience=10), Checkpoint(registry, every_n=100)],
-    )
-    trained_op, state = loop(model_op, TrainerCarryState(...))
+loop = TrainingLoop(
+    dataset=my_dataset,
+    model_op=model_op,
+    loss=VardaxReconLoss(),  # pipekit_train.MSE on (model(batch), batch.target)
+    callbacks=[EarlyStopping(patience=10), Checkpoint(registry, every_n=100)],
+)
+trained_op, state = loop(model_op, TrainerCarryState(...))
+```
 
 The adapter is intentionally thin — ``pipekit_train.MSE()`` already
 works for the standard reconstruction-loss case. ``VardaxReconLoss``

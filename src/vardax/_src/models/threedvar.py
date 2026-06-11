@@ -1,16 +1,16 @@
-"""3D Variational analysis.
+r"""3D Variational analysis.
 
 Minimises
 
-.. math::
+$$
+J(x) = \tfrac{1}{2} \|x - x_b\|^2_{B^{-1}}
+     + \tfrac{1}{2} \|y - H(x)\|^2_{R^{-1}}
+$$
 
-    J(x) = \\tfrac{1}{2} \\|x - x_b\\|^2_{B^{-1}}
-         + \\tfrac{1}{2} \\|y - H(x)\\|^2_{R^{-1}}
-
-over a single timestep. When :math:`H` is linear and :math:`B`, :math:`R`
-Gaussian, ``ThreeDVar`` reduces to ``OptimalInterpolation`` — the
-canonical correctness gate enforced by the linear-Gaussian agreement
-test.
+over a single timestep. When $H$ is linear and $B$, $R$ Gaussian,
+``ThreeDVar`` reduces to [`OptimalInterpolation`][vardax.OptimalInterpolation]
+— the canonical correctness gate enforced by the linear-Gaussian
+agreement test.
 
 The inner minimisation is delegated to an
 ``optimistix.AbstractMinimiser`` (``GaussNewton``, ``BFGS``,
@@ -33,13 +33,13 @@ from vardax._src._types import Batch1D
 
 
 class ThreeDVar(eqx.Module):
-    """3D variational analysis.
+    r"""3D variational analysis.
 
     Attributes:
         obs_op: Observation operator (linear or nonlinear).
-        prior_mean: Background :math:`x_b` of shape ``(T, N)``.
-        prior_cov_op: :math:`B`. ``lineax.AbstractLinearOperator``.
-        obs_cov_op: :math:`R`. ``lineax.AbstractLinearOperator``.
+        prior_mean: Background $x_b$ of shape ``(T, N)``.
+        prior_cov_op: $B$. ``lineax.AbstractLinearOperator``.
+        obs_cov_op: $R$. ``lineax.AbstractLinearOperator``.
         minimiser: ``optimistix.AbstractMinimiser`` for the inner
             iteration. Default ``optimistix.BFGS(rtol=1e-6, atol=1e-6)``.
         minimiser_adjoint: ``optimistix.AbstractAdjoint`` for
@@ -48,6 +48,25 @@ class ThreeDVar(eqx.Module):
             training loop). Default ``ImplicitAdjoint`` — exact at the
             optimum.
         max_steps: Iteration cap on the inner solver.
+
+    Examples:
+        With $B = R = I$, identity $H$ and everything observed, the
+        analysis agrees with the closed-form BLUE, $x^* = y / 2$.
+
+        >>> import jax, jax.numpy as jnp, lineax as lx, vardax
+        >>> eye = lx.IdentityLinearOperator(jax.ShapeDtypeStruct((1, 3), jnp.float32))
+        >>> three = vardax.ThreeDVar(
+        ...     obs_op=vardax.MaskedIdentity(),
+        ...     prior_mean=jnp.zeros((1, 3)),
+        ...     prior_cov_op=eye,
+        ...     obs_cov_op=eye,
+        ... )
+        >>> batch = vardax.Batch1D(input=jnp.ones((1, 1, 3)), mask=jnp.ones((1, 1, 3)))
+        >>> xa = three(batch)
+        >>> xa.shape
+        (1, 1, 3)
+        >>> bool(jnp.allclose(xa, 0.5, atol=1e-3))
+        True
     """
 
     obs_op: Any

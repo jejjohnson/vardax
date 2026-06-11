@@ -70,7 +70,7 @@ def init_solver_state_1d(
         hidden_dim: Hidden dimension of the ConvLSTM gradient modulator.
 
     Returns:
-        Zero-initialised :class:`SolverState1D`.
+        Zero-initialised [`SolverState1D`][vardax.SolverState1D].
     """
     b, _, n = batch.input.shape
     x0 = batch.input * batch.mask
@@ -89,7 +89,7 @@ def init_solver_state_2d(
         hidden_dim: Hidden dimension of the ConvLSTM gradient modulator.
 
     Returns:
-        Zero-initialised :class:`SolverState2D`.
+        Zero-initialised [`SolverState2D`][vardax.SolverState2D].
     """
     b, _, h, w = batch.input.shape
     x0 = batch.input * batch.mask
@@ -110,7 +110,7 @@ def solver_step_1d(
     alpha: float = 1.0,
     prior_weight: float = 1.0,
 ) -> SolverState1D:
-    """Perform a single 1-D solver iteration.
+    r"""Perform a single 1-D solver iteration.
 
     Computes the gradient of the variational cost, then passes it through
     the learned gradient modulator to obtain a state update.
@@ -121,10 +121,10 @@ def solver_step_1d(
         prior_fn: Callable ``x -> x_prior`` (prior autoencoder forward pass).
         grad_mod_fn: Callable ``(grad, x, lstm) -> (update, new_lstm)``.
         alpha: Step-size scaling factor.
-        prior_weight: Weighting factor :math:`\\lambda` for the prior cost term.
+        prior_weight: Weighting factor $\lambda$ for the prior cost term.
 
     Returns:
-        Updated :class:`SolverState1D`.
+        Updated [`SolverState1D`][vardax.SolverState1D].
     """
     x = solver_state.x
 
@@ -150,7 +150,7 @@ def solver_step_2d(
     alpha: float = 1.0,
     prior_weight: float = 1.0,
 ) -> SolverState2D:
-    """Perform a single 2-D solver iteration.
+    r"""Perform a single 2-D solver iteration.
 
     Args:
         solver_state: Current solver state.
@@ -158,10 +158,10 @@ def solver_step_2d(
         prior_fn: Callable ``x -> x_prior``.
         grad_mod_fn: Callable ``(grad, x, lstm) -> (update, new_lstm)``.
         alpha: Step-size scaling factor.
-        prior_weight: Weighting factor :math:`\\lambda` for the prior cost term.
+        prior_weight: Weighting factor $\lambda$ for the prior cost term.
 
     Returns:
-        Updated :class:`SolverState2D`.
+        Updated [`SolverState2D`][vardax.SolverState2D].
     """
     x = solver_state.x
 
@@ -248,15 +248,15 @@ def fp_solver_step_1d(
     batch: Batch1D,
     prior_fn: Any,
 ) -> Float[Array, "B T N"]:
-    """Perform a single 1-D fixed-point projection step.
+    r"""Perform a single 1-D fixed-point projection step.
 
     Applies the prior projection then re-inserts observations at observed
     locations:
 
-    .. math::
-
-        x \\leftarrow \\varphi(x), \\quad
-        x \\leftarrow m \\odot y + (1 - m) \\odot x
+    $$
+    x \leftarrow \varphi(x), \quad
+    x \leftarrow m \odot y + (1 - m) \odot x
+    $$
 
     Args:
         x: Current state estimate of shape ``(B, T, N)``.
@@ -276,10 +276,11 @@ def solve_4dvarnet_1d_fixedpoint(
     prior_fn: Any,
     n_fp_steps: int,
 ) -> Float[Array, "B T N"]:
-    """Run ``n_fp_steps`` fixed-point projection steps using :func:`jax.lax.scan`.
+    """Run ``n_fp_steps`` fixed-point projection steps using ``jax.lax.scan``.
 
     Initialises the state from the masked observations, then iterates the
-    fixed-point update :func:`fp_solver_step_1d` for ``n_fp_steps`` steps.
+    fixed-point update [`fp_solver_step_1d`][vardax.fp_solver_step_1d] for
+    ``n_fp_steps`` steps.
 
     Args:
         batch: Observed data batch.
@@ -313,7 +314,7 @@ def one_step_solve_4dvarnet_1d(
     alpha: float = 1.0,
     prior_weight: float = 1.0,
 ) -> Float[Array, "B T N"]:
-    """Solve 4DVarNet-1D using one-step differentiation (Bolte et al., 2023).
+    r"""Solve 4DVarNet-1D using one-step differentiation (Bolte et al., 2023).
 
     Runs ``n_steps - 1`` solver iterations with ``jax.lax.stop_gradient``
     applied to the iterate, then performs a single final step through which
@@ -332,7 +333,7 @@ def one_step_solve_4dvarnet_1d(
             then 1 differentiable step).
         hidden_dim: Hidden dimension of the ConvLSTM gradient modulator.
         alpha: Step-size scaling factor.
-        prior_weight: Weighting factor :math:`\\lambda` for the prior cost term.
+        prior_weight: Weighting factor $\lambda$ for the prior cost term.
 
     Returns:
         Final state estimate of shape ``(B, T, N)``.
@@ -366,7 +367,7 @@ def one_step_solve_4dvarnet_2d(
     alpha: float = 1.0,
     prior_weight: float = 1.0,
 ) -> Float[Array, "B T H W"]:
-    """Solve 4DVarNet-2D using one-step differentiation (Bolte et al., 2023).
+    r"""Solve 4DVarNet-2D using one-step differentiation (Bolte et al., 2023).
 
     Runs ``n_steps - 1`` solver iterations with ``jax.lax.stop_gradient``
     applied to the iterate, then performs a single final step through which
@@ -385,7 +386,7 @@ def one_step_solve_4dvarnet_2d(
             then 1 differentiable step).
         hidden_dim: Hidden dimension of the ConvLSTM gradient modulator.
         alpha: Step-size scaling factor.
-        prior_weight: Weighting factor :math:`\\lambda` for the prior cost term.
+        prior_weight: Weighting factor $\lambda$ for the prior cost term.
 
     Returns:
         Final state estimate of shape ``(B, T, H, W)``.
