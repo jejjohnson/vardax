@@ -74,6 +74,23 @@ class TestKStepAdjoint:
             _grad_norm(m_full, batch_1d), _grad_norm(m_k3, batch_1d), rtol=1e-5
         )
 
+    def test_k_covering_solve_keeps_input_gradients(self, rng, batch_1d):
+        """k >= n_steps must not detach the initial state from the batch."""
+
+        def input_grad(adjoint):
+            model = _model(rng, batch_1d, adjoint, n_steps=3)
+
+            def loss(x):
+                batch = Batch1D(input=x, mask=batch_1d.mask, target=None)
+                return jnp.sum(model(batch) ** 2)
+
+            return jax.grad(loss)(batch_1d.input)
+
+        g_full = input_grad(optx.RecursiveCheckpointAdjoint())
+        g_k3 = input_grad(KStepAdjoint(k=3))
+        assert jnp.allclose(g_full, g_k3, rtol=1e-5)
+        assert not jnp.allclose(g_k3, 0.0)
+
     def test_intermediate_k_differs_from_both_ends(self, rng, batch_1d):
         g1 = _grad_norm(_model(rng, batch_1d, KStepAdjoint(k=1)), batch_1d)
         g2 = _grad_norm(_model(rng, batch_1d, KStepAdjoint(k=2)), batch_1d)

@@ -347,12 +347,16 @@ def one_step_solve_4dvarnet_1d(
     for _ in range(warmup_steps):
         state = solver_step_1d(state, batch, prior_fn, grad_mod_fn, alpha, prior_weight)
 
-    # detach the iterate so earlier steps don't contribute to the gradient
-    state = SolverState1D(
-        x=jax.lax.stop_gradient(state.x),
-        lstm=jax.lax.stop_gradient(state.lstm),
-        step=state.step,
-    )
+    # detach the iterate so earlier steps don't contribute to the
+    # gradient — but only when there was a warmup to detach: with
+    # k >= n_steps the solve is fully differentiable, including
+    # gradients with respect to the batch through the initial state.
+    if warmup_steps > 0:
+        state = SolverState1D(
+            x=jax.lax.stop_gradient(state.x),
+            lstm=jax.lax.stop_gradient(state.lstm),
+            step=state.step,
+        )
 
     # --- k differentiable steps ---
     for _ in range(live_steps):
@@ -403,12 +407,16 @@ def one_step_solve_4dvarnet_2d(
     for _ in range(warmup_steps):
         state = solver_step_2d(state, batch, prior_fn, grad_mod_fn, alpha, prior_weight)
 
-    # detach the iterate so earlier steps don't contribute to the gradient
-    state = SolverState2D(
-        x=jax.lax.stop_gradient(state.x),
-        lstm=jax.lax.stop_gradient(state.lstm),
-        step=state.step,
-    )
+    # detach the iterate so earlier steps don't contribute to the
+    # gradient — but only when there was a warmup to detach: with
+    # k >= n_steps the solve is fully differentiable, including
+    # gradients with respect to the batch through the initial state.
+    if warmup_steps > 0:
+        state = SolverState2D(
+            x=jax.lax.stop_gradient(state.x),
+            lstm=jax.lax.stop_gradient(state.lstm),
+            step=state.step,
+        )
 
     # --- k differentiable steps ---
     for _ in range(live_steps):
