@@ -1,16 +1,16 @@
-"""Averaging-kernel observation operator (Decision D9).
+r"""Averaging-kernel observation operator (Decision D9).
 
 For RTM-derived L2 satellite products (TROPOMI CH₄, EMIT CH₄,
 OCO CO₂, MOPITT CO, …), the L2 retrieval is not a direct sample of
-the mixing-ratio profile :math:`x` — it smooths through a kernel
-matrix :math:`A` and falls back to a retrieval prior :math:`x_a`
+the mixing-ratio profile $x$ — it smooths through a kernel
+matrix $A$ and falls back to a retrieval prior $x_a$
 where the signal is weak:
 
-.. math::
+$$
+\hat y = A \, (h \odot x + (1 - h) \odot x_a).
+$$
 
-    \\hat y = A \\, (h \\odot x + (1 - h) \\odot x_a).
-
-Tangent-linear: :math:`H'(x) = A \\cdot \\mathrm{diag}(h)`.
+Tangent-linear: $H'(x) = A \cdot \mathrm{diag}(h)$.
 
 Skipping the averaging kernel is the most common cause of bias in
 operational satellite inversions; vardax exposes it as a first-class
@@ -48,7 +48,7 @@ class AveragingKernel(eqx.Module):
         return self.A.mv(inner)
 
     def linearize(self, x: Float[Array, N]) -> lx.AbstractLinearOperator:  # ty:ignore[unresolved-reference]
-        """Tangent-linear operator at ``x``: :math:`A \\cdot \\mathrm{diag}(h)`."""
+        r"""Tangent-linear operator at ``x``: $A \cdot \mathrm{diag}(h)$."""
         diag_h = lx.DiagonalLinearOperator(self.h)
         return self.A @ diag_h
 

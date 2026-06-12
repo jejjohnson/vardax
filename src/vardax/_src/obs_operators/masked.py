@@ -14,10 +14,20 @@ import lineax as lx
 
 
 class MaskedIdentity(eqx.Module):
-    """:math:`H(x) = m \\odot x` with optional element-wise mask.
+    r"""$H(x) = m \odot x$ with optional element-wise mask.
 
     Stateless: no parameters. The mask can be supplied at call time
     (per-batch) rather than baked in.
+
+    Examples:
+        >>> import jax.numpy as jnp
+        >>> import vardax as vdx
+        >>> op = vdx.MaskedIdentity()
+        >>> x = jnp.array([1.0, 2.0, 3.0])
+        >>> op(x, mask=jnp.array([1.0, 0.0, 1.0]))
+        Array([1., 0., 3.], dtype=float32)
+        >>> type(op.linearize(x)).__name__
+        'JacobianLinearOperator'
     """
 
     def __call__(
@@ -30,5 +40,5 @@ class MaskedIdentity(eqx.Module):
         return x * mask
 
     def linearize(self, x: Float[Array, ...]) -> lx.AbstractLinearOperator:
-        """Tangent-linear operator at ``x``: identity (since :math:`H` is linear)."""
+        """Tangent-linear operator at ``x``: identity (since $H$ is linear)."""
         return lx.JacobianLinearOperator(lambda y, _args=None: y, x)

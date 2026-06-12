@@ -25,19 +25,13 @@ def plot_3d_attractor(
 ) -> tuple[Figure, Axes]:
     """Plot a 3-D attractor trajectory.
 
-    Parameters
-    ----------
-    states:
-        State array of shape ``(T, D)`` with ``D >= 3``.
-    dim_indices:
-        Indices of the three dimensions to plot.
-    ax:
-        Optional existing 3-D ``Axes`` to draw on.
+    Args:
+        states: State array of shape ``(T, D)`` with ``D >= 3``.
+        dim_indices: Indices of the three dimensions to plot.
+        ax: Optional existing 3-D ``Axes`` to draw on.
 
-    Returns
-    -------
-    fig, ax : Figure, Axes
-        Matplotlib figure and 3-D axes.
+    Returns:
+        ``(fig, ax)`` — Matplotlib figure and 3-D axes.
     """
     import matplotlib.pyplot as plt
 
@@ -64,18 +58,13 @@ def plot_state_grid(
 ) -> tuple[Figure, Axes]:
     """Hovmöller-style image of states over time.
 
-    Parameters
-    ----------
-    states:
-        State array of shape ``(T, N)``.
-    time:
-        Time coordinate array of shape ``(T,)``.
-    ax:
-        Optional existing ``Axes`` to draw on.
+    Args:
+        states: State array of shape ``(T, N)``.
+        time: Time coordinate array of shape ``(T,)``.
+        ax: Optional existing ``Axes`` to draw on.
 
-    Returns
-    -------
-    fig, ax : Figure, Axes
+    Returns:
+        ``(fig, ax)`` — Matplotlib figure and axes.
     """
     import matplotlib.pyplot as plt
 
@@ -105,21 +94,15 @@ def plot_trajectories(
 ) -> tuple[Figure, Axes]:
     """Overlay time-series of all state variables.
 
-    Parameters
-    ----------
-    states:
-        State array of shape ``(T, N)``.
-    time:
-        Time coordinate array of shape ``(T,)``.
-    ax:
-        Optional existing ``Axes`` to draw on.
-    orientation:
-        ``"horizontal"`` plots time on the x-axis; ``"vertical"`` rotates
-        so that time is on the y-axis.
+    Args:
+        states: State array of shape ``(T, N)``.
+        time: Time coordinate array of shape ``(T,)``.
+        ax: Optional existing ``Axes`` to draw on.
+        orientation: ``"horizontal"`` plots time on the x-axis;
+            ``"vertical"`` rotates so that time is on the y-axis.
 
-    Returns
-    -------
-    fig, ax : Figure, Axes
+    Returns:
+        ``(fig, ax)`` — Matplotlib figure and axes.
     """
     import matplotlib.pyplot as plt
 
@@ -153,20 +136,14 @@ def plot_reconstruction_comparison(
 ) -> tuple[Figure, np.ndarray]:
     """Side-by-side comparison of target, masked input, and reconstruction.
 
-    Parameters
-    ----------
-    target:
-        Ground-truth states of shape ``(B, T, N)``.
-    masked_input:
-        Masked / noisy observations of shape ``(B, T, N)``.
-    reconstruction:
-        Model reconstruction of shape ``(B, T, N)``.
-    sample_idx:
-        Which batch element to visualize.
+    Args:
+        target: Ground-truth states of shape ``(B, T, N)``.
+        masked_input: Masked / noisy observations of shape ``(B, T, N)``.
+        reconstruction: Model reconstruction of shape ``(B, T, N)``.
+        sample_idx: Which batch element to visualize.
 
-    Returns
-    -------
-    fig, axes : Figure, array of Axes
+    Returns:
+        ``(fig, axes)`` — Matplotlib figure and array of axes.
     """
     import matplotlib.pyplot as plt
 
@@ -193,18 +170,13 @@ def plot_l96_grid(
 ) -> tuple[Figure, Axes]:
     """Hovmöller-style image of Lorenz-96 states over time.
 
-    Parameters
-    ----------
-    states:
-        State array of shape ``(T, N)``.
-    time_coords:
-        Time coordinate array of shape ``(T,)``.
-    ax:
-        Optional existing ``Axes`` to draw on.
+    Args:
+        states: State array of shape ``(T, N)``.
+        time_coords: Time coordinate array of shape ``(T,)``.
+        ax: Optional existing ``Axes`` to draw on.
 
-    Returns
-    -------
-    fig, ax : Figure, Axes
+    Returns:
+        ``(fig, ax)`` — Matplotlib figure and axes.
     """
     import matplotlib.pyplot as plt
 
@@ -239,20 +211,14 @@ def plot_l96_trajectories(
 ) -> tuple[Figure, Axes]:
     """Line plot of selected Lorenz-96 variables over time.
 
-    Parameters
-    ----------
-    states:
-        State array of shape ``(T, N)``.
-    time_coords:
-        Time coordinate array of shape ``(T,)``.
-    n_vars:
-        Number of evenly-spaced variables to plot.
-    ax:
-        Optional existing ``Axes`` to draw on.
+    Args:
+        states: State array of shape ``(T, N)``.
+        time_coords: Time coordinate array of shape ``(T,)``.
+        n_vars: Number of evenly-spaced variables to plot.
+        ax: Optional existing ``Axes`` to draw on.
 
-    Returns
-    -------
-    fig, ax : Figure, Axes
+    Returns:
+        ``(fig, ax)`` — Matplotlib figure and axes.
     """
     import matplotlib.pyplot as plt
 

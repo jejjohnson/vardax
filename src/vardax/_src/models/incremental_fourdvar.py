@@ -1,21 +1,22 @@
-"""Incremental 4DVar with control-variable transform (Decision D11).
+r"""Incremental 4DVar with control-variable transform (Decision D11).
 
-The operational fast path of ``StrongFourDVar``: Gauss-Newton outer
-iterations on the full nonlinear cost, CG inner iterations on the
-linearised quadratic subproblem, with a control-variable transform
-:math:`\\chi = B^{-1/2}(\\delta x)` for preconditioning.
+The operational fast path of [`StrongFourDVar`][vardax.StrongFourDVar]:
+Gauss-Newton outer iterations on the full nonlinear cost, CG inner
+iterations on the linearised quadratic subproblem, with a
+control-variable transform $\chi = B^{-1/2}(\delta x)$ for
+preconditioning.
 
-At each outer iteration around :math:`x_b^{(k)}`:
+At each outer iteration around $x_b^{(k)}$:
 
-1. Linearise :math:`M_t` and :math:`H_t` (via ``jax.linearize``).
+1. Linearise $M_t$ and $H_t$ (via ``jax.linearize``).
 2. Form the Gauss-Newton Hessian
-   :math:`J''_{GN} = B^{-1} + \\sum_t (H'_t M'_t)^\\top R_t^{-1} (H'_t M'_t)`.
-3. Solve :math:`J''_{GN}\\,\\delta x^* = \\text{rhs}` via lineax CG
-   (in :math:`\\chi`-space if CVT enabled).
-4. Update :math:`x_b^{(k+1)} = x_b^{(k)} + \\delta x^*`.
+   $J''_{GN} = B^{-1} + \sum_t (H'_t M'_t)^\top R_t^{-1} (H'_t M'_t)$.
+3. Solve $J''_{GN}\,\delta x^* = \text{rhs}$ via lineax CG
+   (in $\chi$-space if CVT enabled).
+4. Update $x_b^{(k+1)} = x_b^{(k)} + \delta x^*$.
 
 This implementation uses ``lineax.JacobianLinearOperator`` for
-:math:`M'_t`, :math:`H'_t` (autodiff-derived) and ``lineax.CG``
+$M'_t$, $H'_t$ (autodiff-derived) and ``lineax.CG``
 with positive-semidefinite tagging for the inner solve. The CVT is
 applied via ``gaussx.sqrt`` when ``cvt=True`` — gaussx returns the
 square-root operator for any positive-definite operator (Cholesky
@@ -53,20 +54,47 @@ class IncrementalConfig(eqx.Module):
 
 
 class IncrementalFourDVar(eqx.Module):
-    """Operational incremental 4DVar (Decision D11).
+    r"""Operational incremental 4DVar (Decision D11).
 
-    Functionally equivalent to ``StrongFourDVar`` (same problem, same
-    answer in the converged limit) but with a specialised inner
-    solver: Gauss-Newton outer iterations and CG inner iterations on
-    the linearised cost. Use this for production / long-window 4DVar.
+    Functionally equivalent to [`StrongFourDVar`][vardax.StrongFourDVar]
+    (same problem, same answer in the converged limit) but with a
+    specialised inner solver: Gauss-Newton outer iterations and CG
+    inner iterations on the linearised cost. Use this for production /
+    long-window 4DVar.
 
     Attributes:
         forward: ``pipekit_cycle.ForwardModel``.
         obs_op: Observation operator.
-        prior_mean: Background :math:`x_b` — initial state ``(N,)``.
-        prior_cov_op: :math:`B`.
-        obs_cov_op: :math:`R`.
-        config: ``IncrementalConfig``.
+        prior_mean: Background $x_b$ — initial state ``(N,)``.
+        prior_cov_op: $B$.
+        obs_cov_op: $R$.
+        config: [`IncrementalConfig`][vardax.IncrementalConfig].
+
+    Examples:
+        Trivial dynamics ($M_t(x) = x$) and a single timestep reduce
+        the problem to 3DVar, so with $B = R = I$ the converged
+        analysis is $x_0^* = y / 2$.
+
+        >>> import jax, jax.numpy as jnp, lineax as lx, vardax
+        >>> class Identity:
+        ...     dt = 1.0
+        ...
+        ...     def step(self, x, dt):
+        ...         return x
+        >>> eye = lx.IdentityLinearOperator(jax.ShapeDtypeStruct((3,), jnp.float32))
+        >>> inc = vardax.IncrementalFourDVar(
+        ...     forward=Identity(),
+        ...     obs_op=vardax.MaskedIdentity(),
+        ...     prior_mean=jnp.zeros(3),
+        ...     prior_cov_op=eye,
+        ...     obs_cov_op=eye,
+        ... )
+        >>> batch = vardax.Batch1D(input=jnp.ones((1, 1, 3)), mask=jnp.ones((1, 1, 3)))
+        >>> xa = inc(batch)
+        >>> xa.shape
+        (1, 3)
+        >>> bool(jnp.allclose(xa, 0.5, atol=1e-2))
+        True
     """
 
     forward: Any

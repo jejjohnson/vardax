@@ -39,13 +39,13 @@ def _default_adjoint() -> optx.AbstractAdjoint:
 
 
 class FourDVarNet1D(eqx.Module):
-    """End-to-end 4DVarNet model for 1-D spatiotemporal reconstruction.
+    r"""End-to-end 4DVarNet model for 1-D spatiotemporal reconstruction.
 
     Minimises the variational cost
 
-    .. math::
-
-        J(x) = \\|\\mathbf{m} \\odot (x - y)\\|^2 + \\lambda \\|x - \\varphi(x)\\|^2
+    $$
+    J(x) = \|\mathbf{m} \odot (x - y)\|^2 + \lambda \|x - \varphi(x)\|^2
+    $$
 
     using ``n_solver_steps`` learned gradient steps modulated by a ConvLSTM,
     with the differentiation strategy selected by ``solver_adjoint``.
@@ -53,7 +53,7 @@ class FourDVarNet1D(eqx.Module):
     Attributes:
         n_solver_steps: Number of solver iterations to unroll.
         alpha: Gradient step-size.
-        prior_weight: Weight :math:`\\lambda` for the prior cost term.
+        prior_weight: Weight $\lambda$ for the prior cost term.
         solver_adjoint: ``optimistix.AbstractAdjoint`` selecting the
             differentiation strategy. Defaults to
             ``RecursiveCheckpointAdjoint`` (standard backprop). Use

@@ -1,4 +1,4 @@
-"""Observation operator family.
+r"""Observation operator family.
 
 All operators satisfy ``pipekit_cycle.ObservationOperator`` directly
 (Decision D8): they implement ``__call__(state) -> obs`` and
@@ -12,13 +12,16 @@ they're required for any RTM-derived L2 satellite product.
 
 Public surface:
 
-- :class:`MaskedIdentity`     — :math:`H(x) = m \\odot x`
-- :class:`LinearObs`          — :math:`H(x) = H_\\text{mat} \\cdot x`
-- :class:`AveragingKernel`    — :math:`H(x) = A(h \\cdot x + (1-h) x_a)`
-- :class:`MultiInstrumentFusion` — per-instrument composition at the
-  likelihood level
-- :class:`InstrumentRegistry` — :math:`\\{instrument\\_id : InstrumentSpec\\}`
-- :class:`InstrumentSpec`     — :math:`(obs\\_op, mask, R\\_op, id)` tuple
+- [`MaskedIdentity`][vardax.MaskedIdentity] — $H(x) = m \odot x$
+- [`LinearObs`][vardax.LinearObs] — $H(x) = H_\text{mat} \cdot x$
+- [`AveragingKernel`][vardax.AveragingKernel] —
+  $H(x) = A(h \cdot x + (1-h) x_a)$
+- [`MultiInstrumentFusion`][vardax.MultiInstrumentFusion] —
+  per-instrument composition at the likelihood level
+- [`InstrumentRegistry`][vardax.InstrumentRegistry] —
+  ``{instrument_id: InstrumentSpec}``
+- [`InstrumentSpec`][vardax.InstrumentSpec] —
+  ``(obs_op, mask, R_op, id)`` tuple
 """
 
 from __future__ import annotations

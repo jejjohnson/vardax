@@ -29,6 +29,16 @@ class GaussianMarkLikelihood(eqx.Module):
     Use ``.to_dict()`` to get a JSON-friendly representation that
     downstream consumers (GeoCatalog, hierarchical Bayesian models,
     DuckDB ingest) can store as-is.
+
+    Examples:
+        >>> import jax.numpy as jnp
+        >>> import vardax as vdx
+        >>> post = vdx.Posterior(mean=jnp.zeros(3))
+        >>> mark = vdx.GaussianMarkLikelihood(
+        ...     posterior=post, event_metadata={"event_id": "e1"}
+        ... )
+        >>> sorted(mark.to_dict())
+        ['cov_diag', 'event_metadata', 'mean', 'provenance', 'samples']
     """
 
     posterior: Posterior

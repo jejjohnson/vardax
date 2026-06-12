@@ -1,21 +1,21 @@
-"""Optimal Interpolation / BLUE (Decision D16).
+r"""Optimal Interpolation / BLUE (Decision D16).
 
 Closed-form linear-Gaussian analysis: the Best Linear Unbiased
-Estimator. When :math:`H` is linear and :math:`B`, :math:`R` are
-Gaussian, the posterior is exact in one matrix expression — no
-iteration, no convergence criterion.
+Estimator. When $H$ is linear and $B$, $R$ are Gaussian, the
+posterior is exact in one matrix expression — no iteration, no
+convergence criterion.
 
-.. math::
-
-    x^* = x_b + K (y - H x_b), \\quad K = B H^\\top (H B H^\\top + R)^{-1}.
+$$
+x^* = x_b + K (y - H x_b), \quad K = B H^\top (H B H^\top + R)^{-1}.
+$$
 
 Implementation notes:
 
 - The inversion is solved by ``lineax.CG`` against an
-  ``AbstractLinearOperator``; we never materialise :math:`HBH^\\top + R`.
+  ``AbstractLinearOperator``; we never materialise $HBH^\top + R$.
 - ``B_op`` and ``R_op`` are supplied as ``lineax.AbstractLinearOperator``
   (typically ``gaussx`` structured operators for Matérn priors and
-  diagonal :math:`R`).
+  diagonal $R$).
 - The class refuses non-linear observation operators on construction.
 """
 
@@ -33,20 +33,40 @@ from vardax._src._types import Batch1D
 
 
 class OptimalInterpolation(eqx.Module):
-    """BLUE / OI — closed-form linear-Gaussian analysis.
+    r"""BLUE / OI — closed-form linear-Gaussian analysis.
 
     Attributes:
         obs_op: Observation operator. Must be linear (its
             ``linearize(x)`` must return an operator independent of
-            ``x``). Use ``ThreeDVar`` for non-linear ``H``.
-        prior_mean: Background :math:`x_b` of shape ``(T, N)``.
-        prior_cov_op: Background-error covariance :math:`B` as a
+            ``x``). Use [`ThreeDVar`][vardax.ThreeDVar] for non-linear
+            ``H``.
+        prior_mean: Background $x_b$ of shape ``(T, N)``.
+        prior_cov_op: Background-error covariance $B$ as a
             ``lineax.AbstractLinearOperator``.
-        obs_cov_op: Observation-error covariance :math:`R` as a
+        obs_cov_op: Observation-error covariance $R$ as a
             ``lineax.AbstractLinearOperator``.
         cg_atol: CG absolute tolerance for the inner solve.
         cg_rtol: CG relative tolerance for the inner solve.
         cg_max_steps: CG iteration cap.
+
+    Examples:
+        With $B = R = I$, identity $H$ and everything observed, the
+        analysis splits the innovation in half: $x^* = y / 2$.
+
+        >>> import jax, jax.numpy as jnp, lineax as lx, vardax
+        >>> eye = lx.IdentityLinearOperator(jax.ShapeDtypeStruct((1, 3), jnp.float32))
+        >>> oi = vardax.OptimalInterpolation(
+        ...     obs_op=vardax.MaskedIdentity(),
+        ...     prior_mean=jnp.zeros((1, 3)),
+        ...     prior_cov_op=eye,
+        ...     obs_cov_op=eye,
+        ... )
+        >>> batch = vardax.Batch1D(input=jnp.ones((1, 1, 3)), mask=jnp.ones((1, 1, 3)))
+        >>> xa = oi(batch)
+        >>> xa.shape
+        (1, 1, 3)
+        >>> bool(jnp.allclose(xa, 0.5, atol=1e-4))
+        True
     """
 
     obs_op: Any  # ObservationOperator (linear)

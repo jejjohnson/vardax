@@ -28,8 +28,20 @@ class Posterior(eqx.Module):
             for analytical adapters.
         provenance: Free-form dict carrying audit info — at minimum
             ``{forward_model_id, n_iter, J_star, converged,
-            vardax_version}``. Consumed by ``GaussianMarkLikelihood``
+            vardax_version}``. Consumed by
+            [`GaussianMarkLikelihood`][vardax.GaussianMarkLikelihood]
             when serialising for downstream population models.
+
+    Examples:
+        >>> import jax.numpy as jnp
+        >>> import vardax as vdx
+        >>> post = vdx.Posterior(mean=jnp.zeros(4))
+        >>> post.mean.shape
+        (4,)
+        >>> post.cov is None
+        True
+        >>> post.provenance
+        {}
     """
 
     mean: Float[Array, ...]

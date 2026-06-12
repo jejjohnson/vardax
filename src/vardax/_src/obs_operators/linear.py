@@ -16,7 +16,18 @@ import lineax as lx
 
 
 class LinearObs(eqx.Module):
-    """``H(x) = H_mat @ x``."""
+    """``H(x) = H_mat @ x``.
+
+    Examples:
+        >>> import jax.numpy as jnp, lineax as lx
+        >>> import vardax as vdx
+        >>> H = lx.MatrixLinearOperator(jnp.eye(3)[:2])
+        >>> obs = vdx.LinearObs(H_mat=H)
+        >>> obs(jnp.array([1.0, 2.0, 3.0]))
+        Array([1., 2.], dtype=float32)
+        >>> obs.linearize(jnp.zeros(3)) is H
+        True
+    """
 
     H_mat: lx.AbstractLinearOperator
 

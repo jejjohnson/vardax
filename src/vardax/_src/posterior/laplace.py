@@ -1,15 +1,14 @@
-"""Laplace approximation at MAP.
+r"""Laplace approximation at MAP.
 
-For Gaussian-likelihood / Gaussian-prior problems at the MAP
-:math:`x^*`:
+For Gaussian-likelihood / Gaussian-prior problems at the MAP $x^*$:
 
-.. math::
-
-    P^* \\approx \\big((H')^\\top R^{-1} H' + B^{-1}\\big)^{-1}.
+$$
+P^* \approx \big((H')^\top R^{-1} H' + B^{-1}\big)^{-1}.
+$$
 
 The result is returned as an ``AbstractLinearOperator`` so mat-vec
 (samples, marginals) compose lazily via ``lineax.CG`` without
-materialising :math:`P^*`.
+materialising $P^*$.
 
 Use when:
 
@@ -37,15 +36,29 @@ from .container import Posterior
 
 
 class LaplaceCovariance(eqx.Module):
-    """Laplace approximation at MAP.
+    r"""Laplace approximation at MAP.
 
     Attributes:
-        prior_cov_op: Background-error covariance :math:`B`.
-        obs_cov_op: Observation-error covariance :math:`R`.
+        prior_cov_op: Background-error covariance $B$.
+        obs_cov_op: Observation-error covariance $R$.
 
-    Both required so the adapter can build :math:`P^*` lazily. They
+    Both required so the adapter can build $P^*$ lazily. They
     should match the operators used by the analysis method that
     produced ``analysis``.
+
+    Examples:
+        >>> import jax, jax.numpy as jnp, lineax as lx
+        >>> import vardax as vdx
+        >>> from types import SimpleNamespace
+        >>> eye = lx.IdentityLinearOperator(jax.ShapeDtypeStruct((4,), jnp.float32))
+        >>> laplace = vdx.LaplaceCovariance(prior_cov_op=eye, obs_cov_op=eye)
+        >>> model = SimpleNamespace(obs_op=vdx.LinearObs(H_mat=eye))
+        >>> post = laplace(jnp.zeros(4), model, batch=None)
+        >>> post.mean.shape
+        (4,)
+        >>> # B = R = H = I, so P* = (I + I)^{-1} = I / 2
+        >>> bool(jnp.allclose(post.cov.mv(jnp.ones(4)), 0.5, atol=1e-2))
+        True
     """
 
     prior_cov_op: lx.AbstractLinearOperator
@@ -68,8 +81,9 @@ class LaplaceCovariance(eqx.Module):
                 to recover the mask, instrument bookkeeping, etc.).
 
         Returns:
-            ``Posterior`` with ``mean = analysis`` and ``cov`` as a
-            lazy ``AbstractLinearOperator`` representing :math:`P^*`.
+            [`Posterior`][vardax.Posterior] with ``mean = analysis``
+            and ``cov`` as a lazy ``AbstractLinearOperator``
+            representing $P^*$.
         """
         # Pull the obs operator off either an .as_analysis_step()
         # wrapper or the raw model. Both expose ``obs_op``.
@@ -106,7 +120,7 @@ _CG_SOLVER = lx.CG(atol=1e-6, rtol=1e-6, max_steps=200)
 
 
 def _inverse_op(op: lx.AbstractLinearOperator) -> lx.AbstractLinearOperator:
-    """Lazy PSD inverse — delegates to :func:`gaussx.inv`.
+    """Lazy PSD inverse — delegates to ``gaussx.inv``.
 
     Structured operators (diagonal, Kronecker, block-diagonal,
     low-rank) invert in closed form; everything else solves via

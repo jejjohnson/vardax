@@ -1,12 +1,12 @@
-"""Six-step cycle validation gates (Decision D12 / Epic 8).
+r"""Six-step cycle validation gates (Decision D12 / Epic 8).
 
 Amortized inference is dangerous when miscalibrated — a tight
-:math:`q_\\phi` centred wrong gives confident wrong answers. Decision
+$q_\phi$ centred wrong gives confident wrong answers. Decision
 D12 (chapter 14 of the math reference) requires three gates before any
 amortized head is promoted to operational use:
 
 1. **Posterior agreement** — the fast model's MAP lies within
-   :math:`\\sigma_\\text{post}` of an oracle MAP from a slower method.
+   $\sigma_\text{post}$ of an oracle MAP from a slower method.
 2. **Adjoint calibration** — the fast model's sensitivity to
    observations matches the physics-based sensitivity, measured by
    random-vector probing of the Jacobian.
@@ -39,18 +39,18 @@ def assert_posterior_agreement(
     *,
     tolerance_sigma: float = 1.0,
 ) -> None:
-    """Check that ``p_fast.mean`` lies within ``tolerance_sigma`` standard
+    r"""Check that ``p_fast.mean`` lies within ``tolerance_sigma`` standard
     deviations of ``p_oracle.mean``.
 
     Marginal-only test: each component of the mean must satisfy
 
-    .. math::
+    $$
+    \frac{|x^*_\text{fast} - x^*_\text{oracle}|}{\sigma_\text{post, oracle}}
+    \le \text{tolerance\_sigma}.
+    $$
 
-        \\frac{|x^*_\\text{fast} - x^*_\\text{oracle}|}{\\sigma_\\text{post, oracle}}
-        \\le \\text{tolerance\\_sigma}.
-
-    The oracle marginal :math:`\\sigma_i` is extracted from
-    ``p_oracle.cov`` by probing ``e_i^T \\Sigma e_i`` via one matvec per
+    The oracle marginal $\sigma_i$ is extracted from
+    ``p_oracle.cov`` by probing $e_i^T \Sigma e_i$ via one matvec per
     component. Cheap for moderate state size; for very large state
     sizes use Hutchinson estimation upstream and supply the diagonal
     directly via ``Posterior.cov`` materialised as a diagonal operator.
@@ -58,8 +58,8 @@ def assert_posterior_agreement(
     Args:
         p_fast: Posterior produced by the amortized / fast model.
         p_oracle: Posterior produced by the oracle (e.g. ``StrongFourDVar``
-            + ``LaplaceCovariance``).
-        tolerance_sigma: Allowed deviation in units of :math:`\\sigma`.
+            + [`LaplaceCovariance`][vardax.LaplaceCovariance]).
+        tolerance_sigma: Allowed deviation in units of $\sigma$.
 
     Raises:
         AssertionError: If any component exceeds the tolerance.
@@ -92,16 +92,16 @@ def assert_adjoint_calibrated(
     threshold: float = 0.05,
     n_probes: int = 10,
 ) -> None:
-    """Random-vector probe of the Jacobian agreement at ``y``.
+    r"""Random-vector probe of the Jacobian agreement at ``y``.
 
     Tests
 
-    .. math::
+    $$
+    \frac{\|J_\text{fast} v - J_\text{oracle} v\|}
+         {\|J_\text{oracle} v\|} < \text{threshold}
+    $$
 
-        \\frac{\\|J_\\text{fast} v - J_\\text{oracle} v\\|}
-             {\\|J_\\text{oracle} v\\|} < \\text{threshold}
-
-    for ``n_probes`` random unit vectors :math:`v`. Avoids
+    for ``n_probes`` random unit vectors $v$. Avoids
     materialising either Jacobian — uses ``jax.jvp`` to apply each as
     needed. Cheaper than dense Jacobian comparison and is the
     operational test used by the six-step cycle.
@@ -144,17 +144,17 @@ def simulation_based_calibration(
     n_runs: int = 200,
     n_samples: int = 200,
 ) -> Float[Array, " n_runs"]:
-    """Per Talts et al. 2018: rank histogram of true draws within
+    r"""Per Talts et al. 2018: rank histogram of true draws within
     posterior samples.
 
     Procedure for each of ``n_runs`` independent draws:
 
-    1. Sample :math:`x^{(j)} \\sim p(x)` from the prior.
-    2. Simulate :math:`y^{(j)} = \\mathrm{simulate\\_obs}(x^{(j)})`.
+    1. Sample $x^{(j)} \sim p(x)$ from the prior.
+    2. Simulate $y^{(j)} = \mathrm{simulate\_obs}(x^{(j)})$.
     3. Draw ``n_samples`` posterior samples from
-       :math:`q_\\phi(\\cdot \\mid y^{(j)})`.
+       $q_\phi(\cdot \mid y^{(j)})$.
     4. Compute the rank of (a flattened scalar reduction of)
-       :math:`x^{(j)}` in the sample set.
+       $x^{(j)}$ in the sample set.
 
     A well-calibrated posterior produces uniformly distributed ranks
     over ``[0, n_samples]``. Bumps near the edges → over-confident;
@@ -191,9 +191,9 @@ def simulation_based_calibration(
 
 
 def _marginal_std(cov_op: Any, ref: Float[Array, ...]) -> Float[Array, ...]:
-    """Extract :math:`\\sqrt{\\mathrm{diag}(\\Sigma)}` from the operator.
+    r"""Extract $\sqrt{\mathrm{diag}(\Sigma)}$ from the operator.
 
-    Delegates to :func:`gaussx.diag`, which uses closed forms for
+    Delegates to ``gaussx.diag``, which uses closed forms for
     structured operators (diagonal, Kronecker, block-diagonal) and
     falls back to materialisation only for generic operators — fine
     for the moderate-N regime where this gate is meaningful.

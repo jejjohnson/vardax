@@ -15,22 +15,17 @@ def compute_scaler_params(
 ) -> tuple[float, float]:
     """Compute mean and standard deviation from (optionally masked) data.
 
-    Parameters
-    ----------
-    ds:
-        Dataset containing ``variable`` and optionally ``mask_variable``.
-    variable:
-        Name of the data variable.
-    mask_variable:
-        Name of the binary mask variable (``1`` = observed).  When
-        ``None`` or absent from the dataset, all values are used.
+    Args:
+        ds: Dataset containing ``variable`` and optionally
+            ``mask_variable``.
+        variable: Name of the data variable.
+        mask_variable: Name of the binary mask variable (``1`` =
+            observed).  When ``None`` or absent from the dataset, all
+            values are used.
 
-    Returns
-    -------
-    mean : float
-        Mean of the observed values.
-    std : float
-        Standard deviation of the observed values.
+    Returns:
+        ``(mean, std)`` — mean and standard deviation of the observed
+        values.
     """
     values = np.asarray(ds[variable])
 
@@ -69,20 +64,13 @@ def apply_standardization(
     Applies ``(x − mean) / std`` to each listed variable in-place (returns
     a new dataset).
 
-    Parameters
-    ----------
-    ds:
-        Source dataset.
-    variables:
-        List of variable names to standardize.
-    mean:
-        Mean value to subtract.
-    std:
-        Standard deviation to divide by.
+    Args:
+        ds: Source dataset.
+        variables: List of variable names to standardize.
+        mean: Mean value to subtract.
+        std: Standard deviation to divide by.
 
-    Returns
-    -------
-    xr.Dataset
+    Returns:
         Dataset with the listed variables replaced by their standardized
         versions.
     """
@@ -104,18 +92,12 @@ def inverse_standardization(
 ) -> Float[Array, ...]:
     """Reverse a standardization transform on a JAX array.
 
-    Parameters
-    ----------
-    data:
-        Standardized data.
-    mean:
-        Mean that was subtracted during standardization.
-    std:
-        Standard deviation that was divided during standardization.
+    Args:
+        data: Standardized data.
+        mean: Mean that was subtracted during standardization.
+        std: Standard deviation that was divided during standardization.
 
-    Returns
-    -------
-    Float[Array, "..."]
+    Returns:
         Array in the original scale.
     """
     return data * std + mean

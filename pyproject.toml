@@ -101,6 +101,8 @@ packages = ["src/vardax"]
 [dependency-groups]
 test = [
     "pytest>=8.0.0",
+    # tests/test_docstrings.py parses docstrings the way mkdocstrings does.
+    "griffe>=1.0",
     "pytest-cov>=5.0.0",
     "pytest-pretty>=1.2.0",
     "pytest-xdist>=3.5.0",

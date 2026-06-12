@@ -54,33 +54,22 @@ def simulate_lorenz63(
 ) -> tuple[Float[Array, T], Float[Array, "T 3"]]:  # type: ignore[unresolved-reference]  # ty:ignore[unresolved-reference]
     """Simulate the Lorenz-63 system and return state trajectory.
 
-    Parameters
-    ----------
-    key:
-        JAX PRNG key used to perturb the initial condition when ``x0`` is
-        ``None``.
-    sigma:
-        Prandtl number.
-    rho:
-        Rayleigh number.
-    beta:
-        Geometric factor.
-    dt:
-        Integration time step.
-    n_steps:
-        Total number of integration steps *after* burn-in.
-    n_burn_in:
-        Number of initial steps to discard (burn-in).
-    x0:
-        Optional explicit initial condition of shape ``(3,)``.  When
-        ``None``, the classic fixed-point perturbation is used.
+    Args:
+        key: JAX PRNG key used to perturb the initial condition when
+            ``x0`` is ``None``.
+        sigma: Prandtl number.
+        rho: Rayleigh number.
+        beta: Geometric factor.
+        dt: Integration time step.
+        n_steps: Total number of integration steps *after* burn-in.
+        n_burn_in: Number of initial steps to discard (burn-in).
+        x0: Optional explicit initial condition of shape ``(3,)``.  When
+            ``None``, the classic fixed-point perturbation is used.
 
-    Returns
-    -------
-    time_coords : Float[Array, "T"]
-        Time coordinates for the returned trajectory (starting at 0).
-    states : Float[Array, "T 3"]
-        State trajectory of the Lorenz-63 system.
+    Returns:
+        ``(time_coords, states)`` — time coordinates of shape ``(T,)``
+        (starting at 0) and the Lorenz-63 state trajectory of shape
+        ``(T, 3)``.
     """
     model = Lorenz63(sigma=sigma, rho=rho, beta=beta)
 
@@ -154,27 +143,18 @@ def simulate_lorenz96(
 ) -> tuple[Float[Array, T], Float[Array, "T N"]]:  # type: ignore[unresolved-reference]  # ty:ignore[unresolved-reference]
     """Simulate the Lorenz-96 system and return state trajectory.
 
-    Parameters
-    ----------
-    key:
-        JAX PRNG key used to perturb the initial condition.
-    N:
-        Number of variables (spatial dimension).
-    F:
-        Forcing constant.
-    dt:
-        Integration time step.
-    n_steps:
-        Total number of integration steps *after* burn-in.
-    n_burn_in:
-        Number of initial steps to discard (burn-in).
+    Args:
+        key: JAX PRNG key used to perturb the initial condition.
+        N: Number of variables (spatial dimension).
+        F: Forcing constant.
+        dt: Integration time step.
+        n_steps: Total number of integration steps *after* burn-in.
+        n_burn_in: Number of initial steps to discard (burn-in).
 
-    Returns
-    -------
-    time_coords : Float[Array, "T"]
-        Time coordinates for the returned trajectory (starting at 0).
-    states : Float[Array, "T N"]
-        State trajectory of shape ``(n_steps + 1, N)``.
+    Returns:
+        ``(time_coords, states)`` — time coordinates of shape ``(T,)``
+        (starting at 0) and the state trajectory of shape
+        ``(n_steps + 1, N)``.
     """
     model = Lorenz96(F=F)
 

@@ -118,14 +118,14 @@ def amortized_nll_loss_fn(
     model: Any,
     batch: Batch1D | Batch2D,
 ) -> Float[Array, ""]:
-    """Negative log-likelihood for amortized inference (Epic 8).
+    r"""Negative log-likelihood for amortized inference (Epic 8).
 
     For ``AmortizedPosterior`` with flow / regression heads the maximum-
     likelihood objective on simulated pairs is
 
-    .. math::
-
-        \\mathcal{L}_\\text{MLE}(\\phi) = -\\mathbb{E}_{(x, y)} \\log q_\\phi(x \\mid y).
+    $$
+    \mathcal{L}_\text{MLE}(\phi) = -\mathbb{E}_{(x, y)} \log q_\phi(x \mid y).
+    $$
 
     Args:
         model: ``AmortizedPosterior`` (any head with a ``.log_prob``

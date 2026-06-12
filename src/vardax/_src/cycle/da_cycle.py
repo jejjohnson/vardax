@@ -5,16 +5,19 @@ Per Decision D8, vardax models satisfy ``pipekit_cycle.AnalysisStep`` via
 vardax model (any of the seven Layer 2 classes) plus a forward and obs
 operator, and return a configured pipekit-cycle object ready to call.
 
-Examples:
+Typical operational wiring:
 
-    >>> import vardax as vdx
-    >>> cycle = vdx.cycle.VarDACycle(
-    ...     forward=somax_model,
-    ...     obs_op=vdx.obs_operators.MaskedIdentity(),
-    ...     model=vdx.IncrementalFourDVar(...),
-    ...     n_steps=24,
-    ... )
-    >>> analysis, state = cycle(initial_state, vdx.cycle.DAState())
+```python
+import vardax as vdx
+
+cycle = vdx.cycle.VarDACycle(
+    forward=somax_model,
+    obs_op=vdx.MaskedIdentity(),
+    model=vdx.IncrementalFourDVar(...),
+    n_steps=24,
+)
+analysis, state = cycle(initial_state, da_state)
+```
 """
 
 from __future__ import annotations
@@ -69,6 +72,32 @@ def VarDACycle(
     Raises:
         AttributeError: If ``model`` does not expose
             ``.as_analysis_step()``.
+
+    Examples:
+        >>> import equinox as eqx
+        >>> import jax, jax.numpy as jnp, lineax as lx
+        >>> import vardax as vdx
+        >>> class IdentityForward(eqx.Module):
+        ...     dt: float = 1.0
+        ...     state_signature: None = None
+        ...
+        ...     def step(self, state, dt):
+        ...         return state
+        >>> eye = lx.IdentityLinearOperator(jax.ShapeDtypeStruct((1, 4), jnp.float32))
+        >>> oi = vdx.OptimalInterpolation(
+        ...     obs_op=vdx.LinearObs(H_mat=eye),
+        ...     prior_mean=jnp.zeros((1, 4)),
+        ...     prior_cov_op=eye,
+        ...     obs_cov_op=eye,
+        ... )
+        >>> cycle = vdx.VarDACycle(
+        ...     forward=IdentityForward(),
+        ...     obs_op=vdx.MaskedIdentity(),
+        ...     model=oi,
+        ...     n_steps=1,
+        ... )
+        >>> type(cycle).__name__
+        'DACycle'
     """
     if not hasattr(model, "as_analysis_step"):
         raise AttributeError(

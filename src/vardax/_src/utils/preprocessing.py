@@ -20,23 +20,14 @@ def train_test_split(
 ) -> tuple[xr.Dataset, xr.Dataset]:
     """Randomly split a patched dataset along the ``patch`` dimension.
 
-    Parameters
-    ----------
-    ds:
-        Dataset with a ``patch`` dimension.
-    n_train:
-        Number of patches for the training set.
-    n_test:
-        Number of patches for the test set.
-    seed:
-        Random seed for reproducibility.
+    Args:
+        ds: Dataset with a ``patch`` dimension.
+        n_train: Number of patches for the training set.
+        n_test: Number of patches for the test set.
+        seed: Random seed for reproducibility.
 
-    Returns
-    -------
-    ds_train : xr.Dataset
-        Training subset.
-    ds_test : xr.Dataset
-        Test subset.
+    Returns:
+        ``(ds_train, ds_test)`` — the training and test subsets.
     """
     rng = np.random.default_rng(seed)
     n_patches = ds.sizes["patch"]
@@ -64,30 +55,23 @@ def xr_to_batch1d(
     obs_var: str = "obs",
     mask_var: str = "mask",
 ) -> Batch1D:
-    """Convert an xarray Dataset to a :class:`~vardax.Batch1D`.
+    """Convert an xarray Dataset to a [`Batch1D`][vardax.Batch1D].
 
     The dataset is expected to have dims ``(patch, time, feature)``; the
     feature dimension is treated as the spatial ``N`` axis of
-    :class:`~vardax.Batch1D`.
+    [`Batch1D`][vardax.Batch1D].
 
-    Parameters
-    ----------
-    ds:
-        Dataset with variables ``state_var``, ``obs_var``, and
-        ``mask_var``, each of shape ``(patch, time, feature)``.
-    state_var:
-        Name of the ground-truth state variable (→ ``target``).
-    obs_var:
-        Name of the observed / noisy variable (→ ``input``).
-    mask_var:
-        Name of the binary mask variable (→ ``mask``).
+    Args:
+        ds: Dataset with variables ``state_var``, ``obs_var``, and
+            ``mask_var``, each of shape ``(patch, time, feature)``.
+        state_var: Name of the ground-truth state variable (→ ``target``).
+        obs_var: Name of the observed / noisy variable (→ ``input``).
+        mask_var: Name of the binary mask variable (→ ``mask``).
 
-    Returns
-    -------
-    Batch1D
-        Named tuple with ``input``, ``mask``, and ``target`` as JAX
-        arrays of shape ``(B, T, N)`` where ``B = patch``, ``T = time``,
-        and ``N = feature``.
+    Returns:
+        [`Batch1D`][vardax.Batch1D] with ``input``, ``mask``, and
+        ``target`` as JAX arrays of shape ``(B, T, N)`` where
+        ``B = patch``, ``T = time``, and ``N = feature``.
     """
     target = jnp.array(ds[state_var].values)
     inp = jnp.array(ds[obs_var].values)
@@ -108,24 +92,17 @@ def interpolate_initial_condition(
     For each patch, linearly interpolates the observed values across the
     time axis to produce a dense initial-condition estimate.
 
-    Parameters
-    ----------
-    ds:
-        Dataset with ``obs_var`` and ``mask_var``, dims
-        ``(patch, time, feature)``.
-    obs_var:
-        Name of the (noisy) observation variable.
-    mask_var:
-        Name of the binary observation mask.
-    method:
-        Interpolation method passed to
-        :func:`numpy.interp` along the time axis (``"linear"`` only).
-    fillna:
-        Fill value for leading/trailing gaps that cannot be interpolated.
+    Args:
+        ds: Dataset with ``obs_var`` and ``mask_var``, dims
+            ``(patch, time, feature)``.
+        obs_var: Name of the (noisy) observation variable.
+        mask_var: Name of the binary observation mask.
+        method: Interpolation method passed to ``numpy.interp`` along
+            the time axis (``"linear"`` only).
+        fillna: Fill value for leading/trailing gaps that cannot be
+            interpolated.
 
-    Returns
-    -------
-    xr.Dataset
+    Returns:
         Dataset with an additional ``"x_init"`` variable of shape
         ``(patch, time, feature)``.
     """
@@ -168,40 +145,32 @@ def obs_interpolation_init(
 ) -> xr.Dataset:
     """Interpolate observations along time and add as ``"state_init"``.
 
-    Uses :meth:`xr.DataArray.interpolate_na` to fill NaN gaps along the
+    Uses ``xr.DataArray.interpolate_na`` to fill NaN gaps along the
     time dimension, then fills any remaining NaNs (e.g. leading/trailing
     edges) with ``fillna``.  The result is stored as a new ``"state_init"``
     variable — a warm-start initial condition for the 4DVar solver.
 
-    Parameters
-    ----------
-    ds:
-        Dataset containing at least ``obs_variable``, which should have NaN
-        at unobserved locations.
-    variable:
-        Name of the ground-truth state variable (unused for interpolation,
-        kept for API symmetry).
-    obs_variable:
-        Name of the observation variable (NaN where unobserved).
-    method:
-        Interpolation method passed to
-        :meth:`xr.DataArray.interpolate_na` (default ``"linear"``).
-    fillna:
-        Fill value for any remaining NaN after interpolation (default
-        ``0.0``).
+    Args:
+        ds: Dataset containing at least ``obs_variable``, which should
+            have NaN at unobserved locations.
+        variable: Name of the ground-truth state variable (unused for
+            interpolation, kept for API symmetry).
+        obs_variable: Name of the observation variable (NaN where
+            unobserved).
+        method: Interpolation method passed to
+            ``xr.DataArray.interpolate_na`` (default ``"linear"``).
+        fillna: Fill value for any remaining NaN after interpolation
+            (default ``0.0``).
 
-    Returns
-    -------
-    xr.Dataset
+    Returns:
         Dataset with an additional ``"state_init"`` variable of the same
         shape as ``obs_variable``.
 
-    Notes
-    -----
-    The time dimension is assumed to be the *second* dimension of
-    ``obs_variable`` (i.e. ``dims[1]`` for shape
-    ``(patch, time, feature)``), which matches the standard vardax
-    dataset layout produced by :func:`extract_patches`.
+    Note:
+        The time dimension is assumed to be the *second* dimension of
+        ``obs_variable`` (i.e. ``dims[1]`` for shape
+        ``(patch, time, feature)``), which matches the standard vardax
+        dataset layout produced by ``extract_patches``.
     """
     obs_da = ds[obs_variable]
     if "time" in obs_da.dims:

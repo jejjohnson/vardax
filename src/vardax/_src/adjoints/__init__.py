@@ -4,31 +4,31 @@ vardax does not own adjoint code. Gradients through the inner learned
 solver are composed by selecting an ``optimistix.AbstractAdjoint`` on
 the model:
 
-.. code-block:: python
+```python
+import optimistix as optx
+from vardax.adjoints import OneStepAdjoint
 
-    import optimistix as optx
-    from vardax.adjoints import OneStepAdjoint
-
-    model = FourDVarNet1D(
-        ...,
-        solver_adjoint=OneStepAdjoint(),  # O(1) memory, Bolte 2023
-    )
-    model = FourDVarNet1D(
-        ...,
-        solver_adjoint=optx.RecursiveCheckpointAdjoint(),  # default
-    )
-    model = FourDVarNet1D(
-        ...,
-        solver_adjoint=optx.ImplicitAdjoint(),  # IFT at fixed point
-    )
+model = FourDVarNet1D(
+    ...,
+    solver_adjoint=OneStepAdjoint(),  # O(1) memory, Bolte 2023
+)
+model = FourDVarNet1D(
+    ...,
+    solver_adjoint=optx.RecursiveCheckpointAdjoint(),  # default
+)
+model = FourDVarNet1D(
+    ...,
+    solver_adjoint=optx.ImplicitAdjoint(),  # IFT at fixed point
+)
+```
 
 The choice replaces the v0.3 ``grad_mode: Literal["unrolled",
 "one_step", "implicit"]`` enum (dropped in this epic, Decision D15).
 
 This module ships:
 
-- :class:`OneStepAdjoint` — Bolte, Pauwels & Vaiter (NeurIPS 2023);
-  the only vardax-owned adjoint. Subclasses
+- [`OneStepAdjoint`][vardax.OneStepAdjoint] — Bolte, Pauwels & Vaiter
+  (NeurIPS 2023); the only vardax-owned adjoint. Subclasses
   ``optimistix.AbstractAdjoint`` and targets upstream contribution.
 - Re-exports ``optimistix.RecursiveCheckpointAdjoint`` and
   ``optimistix.ImplicitAdjoint`` for one-stop import.

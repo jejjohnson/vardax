@@ -1,22 +1,23 @@
-"""Weak-constraint 4DVar.
+r"""Weak-constraint 4DVar.
 
 Multi-time analysis with control variable
-:math:`(x_0, \\eta_1, \\ldots, \\eta_T)` — initial state plus per-step
+$(x_0, \eta_1, \ldots, \eta_T)$ — initial state plus per-step
 model-error increments. Cost:
 
-.. math::
+$$
+J(x_0, \boldsymbol{\eta}) =
+    \tfrac{1}{2} \|x_0 - x_b\|^2_{B^{-1}}
+  + \tfrac{1}{2} \sum_t \|y_t - H_t(x_t)\|^2_{R_t^{-1}}
+  + \tfrac{1}{2} \sum_t \|\eta_t\|^2_{Q_t^{-1}}
+$$
 
-    J(x_0, \\boldsymbol{\\eta}) =
-        \\tfrac{1}{2} \\|x_0 - x_b\\|^2_{B^{-1}}
-      + \\tfrac{1}{2} \\sum_t \\|y_t - H_t(x_t)\\|^2_{R_t^{-1}}
-      + \\tfrac{1}{2} \\sum_t \\|\\eta_t\\|^2_{Q_t^{-1}}
+where $x_t = M_t(x_{t-1}) + \eta_t$.
 
-where :math:`x_t = M_t(x_{t-1}) + \\eta_t`.
-
-The control vector has dimension :math:`(T + 1) \\cdot N` (initial
+The control vector has dimension $(T + 1) \cdot N$ (initial
 state + T model-error increments). For long windows this is
-computationally heavier than ``StrongFourDVar`` — use only when the
-free model :math:`M_t^\\text{free}` is known to have biases.
+computationally heavier than [`StrongFourDVar`][vardax.StrongFourDVar]
+— use only when the free model $M_t^\text{free}$ is known to have
+biases.
 """
 
 from __future__ import annotations
@@ -34,20 +35,47 @@ from vardax._src._types import Batch1D
 
 
 class WeakFourDVar(eqx.Module):
-    """Weak-constraint 4DVar with augmented control vector.
+    r"""Weak-constraint 4DVar with augmented control vector.
 
     Attributes:
-        forward: ``pipekit_cycle.ForwardModel`` (the free model :math:`M_t^\\text{free}`).
+        forward: ``pipekit_cycle.ForwardModel`` (the free model
+            $M_t^\text{free}$).
         obs_op: Observation operator.
-        prior_mean: Background :math:`x_b` — initial state ``(N,)``.
-        prior_cov_op: :math:`B`.
-        obs_cov_op: :math:`R`.
-        model_err_cov_op: :math:`Q` — covariance of the per-step model
-            error :math:`\\eta_t`. Defaults to identity scaled by a
+        prior_mean: Background $x_b$ — initial state ``(N,)``.
+        prior_cov_op: $B$.
+        obs_cov_op: $R$.
+        model_err_cov_op: $Q$ — covariance of the per-step model
+            error $\eta_t$. Defaults to identity scaled by a
             small variance if not supplied (effectively
             strong-constraint with a tiny relaxation).
-        minimiser, minimiser_adjoint, max_steps: as in
-            ``StrongFourDVar``.
+        minimiser: As in [`StrongFourDVar`][vardax.StrongFourDVar].
+        minimiser_adjoint: As in [`StrongFourDVar`][vardax.StrongFourDVar].
+        max_steps: As in [`StrongFourDVar`][vardax.StrongFourDVar].
+
+    Examples:
+        Trivial dynamics and a single timestep: no model-error steps
+        remain ($T = 0$) and the analysis initial state reduces to the
+        3DVar / BLUE answer $x_0^* = y / 2$ for $B = R = I$.
+
+        >>> import jax, jax.numpy as jnp, lineax as lx, vardax
+        >>> class Identity:
+        ...     dt = 1.0
+        ...
+        ...     def step(self, x, dt):
+        ...         return x
+        >>> eye = lx.IdentityLinearOperator(jax.ShapeDtypeStruct((3,), jnp.float32))
+        >>> weak = vardax.WeakFourDVar(
+        ...     forward=Identity(),
+        ...     obs_op=vardax.MaskedIdentity(),
+        ...     prior_mean=jnp.zeros(3),
+        ...     prior_cov_op=eye,
+        ...     obs_cov_op=eye,
+        ...     model_err_cov_op=eye,
+        ... )
+        >>> batch = vardax.Batch1D(input=jnp.ones((1, 1, 3)), mask=jnp.ones((1, 1, 3)))
+        >>> x0_star, eta_star = weak(batch)
+        >>> x0_star.shape, eta_star.shape
+        ((1, 3), (1, 0, 3))
     """
 
     forward: Any
@@ -87,7 +115,10 @@ class WeakFourDVar(eqx.Module):
         x_0: Float[Array, N],  # ty:ignore[unresolved-reference]
         etas: Float[Array, "T N"],
     ) -> Float[Array, "T_plus_1 N"]:
-        """Roll out with per-step model error: :math:`x_t = M_t^\\text{free}(x_{t-1}) + \\eta_t`."""
+        r"""Roll out with per-step model error.
+
+        Each step applies $x_t = M_t^\text{free}(x_{t-1}) + \eta_t$.
+        """
         dt = self.forward.dt
 
         def step_fn(

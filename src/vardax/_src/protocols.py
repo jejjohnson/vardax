@@ -1,15 +1,19 @@
-"""Runtime-checkable protocols used across vardax.
+r"""Runtime-checkable protocols used across vardax.
 
 vardax re-exports the three core ``pipekit_cycle`` protocols
 (`ForwardModel`, `ObservationOperator`, `AnalysisStep`) and adds five
 vardax-specific protocols that ``pipekit-cycle`` doesn't name:
 
-- `Prior`            — :math:`\\varphi: x \\mapsto x_\\text{prior}`
-- `GradModulator`    — :math:`\\Phi: (\\nabla J, h) \\mapsto (\\Delta x, h')`
-- `CostFunction`     — :math:`J: (x, \\text{batch}) \\mapsto \\text{scalar}`
-- `PosteriorAdapter` — analysis output → ``Posterior``
-- `Minimiser`        — wraps `optimistix.AbstractMinimiser` over vardax's
-  cost-function interface
+- [`Prior`][vardax.Prior] — $\varphi: x \mapsto x_\text{prior}$
+- [`GradModulator`][vardax.GradModulator] —
+  $\Phi: (\nabla J, h) \mapsto (\Delta x, h')$
+- [`CostFunction`][vardax.CostFunction] —
+  $J: (x, \text{batch}) \mapsto \text{scalar}$
+- [`PosteriorAdapter`][vardax.PosteriorAdapter] — analysis output →
+  [`Posterior`][vardax.Posterior]
+- [`Minimiser`][vardax.Minimiser] — wraps
+  ``optimistix.AbstractMinimiser`` over vardax's cost-function
+  interface
 
 All protocols are ``@runtime_checkable`` so ``isinstance(obj, Protocol)``
 works for structural conformance checking — used by
@@ -37,9 +41,9 @@ from pipekit_cycle import (
 
 @runtime_checkable
 class Prior(Protocol):
-    """Prior model: maps state to its regularised reconstruction.
+    r"""Prior model: maps state to its regularised reconstruction.
 
-    For an autoencoder prior :math:`\\varphi_\\theta`, the variational
+    For an autoencoder prior $\varphi_\theta$, the variational
     cost includes ``||x - φ(x)||^2``. For a dynamical prior wrapping a
     `ForwardModel`, ``φ(x)`` is the forward integration. For the
     identity prior, ``φ(x) = x``.

@@ -1,7 +1,7 @@
-"""Multi-instrument observation-operator fusion (Decision D9).
+r"""Multi-instrument observation-operator fusion (Decision D9).
 
 Operational satellite work combines multiple instruments. Each has
-its own :math:`H_i`, mask :math:`m_i`, error covariance :math:`R_i`,
+its own $H_i$, mask $m_i$, error covariance $R_i$,
 and possibly its own averaging kernel. ``MultiInstrumentFusion``
 composes per-instrument operators at the **likelihood level** — no
 pre-regridding to a common grid, no assumption of shared coordinate
@@ -9,18 +9,21 @@ systems.
 
 The fused observation cost:
 
-.. math::
-
-    J_\\text{obs}(x) = \\sum_{i \\in \\mathcal{I}} \\alpha_i \\cdot
-                       \\tfrac{1}{2} \\|m_i \\odot (y_i - H_i(x))\\|^2_{R_i^{-1}}.
+$$
+J_\text{obs}(x) = \sum_{i \in \mathcal{I}} \alpha_i \cdot
+                  \tfrac{1}{2} \|m_i \odot (y_i - H_i(x))\|^2_{R_i^{-1}}.
+$$
 
 This module ships:
 
-- :class:`InstrumentSpec`     — :math:`(obs\\_op, mask, R\\_op, id)` tuple
-- :class:`InstrumentRegistry` — :math:`\\{instrument\\_id : InstrumentSpec\\}`
-- :class:`MultiInstrumentFusion` — composes the registry; returns
-  per-instrument ``dict[str, Array]`` of predicted observations. For
-  strict-protocol contexts (``pipekit_cycle.ObservationOperator``), the
+- [`InstrumentSpec`][vardax.InstrumentSpec] — ``(obs_op, mask, R_op, id)``
+  tuple
+- [`InstrumentRegistry`][vardax.InstrumentRegistry] —
+  ``{instrument_id: InstrumentSpec}``
+- [`MultiInstrumentFusion`][vardax.MultiInstrumentFusion] — composes the
+  registry; returns per-instrument ``dict[str, Array]`` of predicted
+  observations. For strict-protocol contexts
+  (``pipekit_cycle.ObservationOperator``), the
   ``.to_observation_operator()`` adapter flattens to a single output
   with a block-diagonal linear operator.
 """
@@ -40,7 +43,7 @@ class InstrumentSpec(eqx.Module):
 
     Attributes:
         obs_op: ``ObservationOperator``-conforming operator (typically
-            :class:`AveragingKernel`).
+            [`AveragingKernel`][vardax.AveragingKernel]).
         mask: Quality mask of shape compatible with the instrument's
             observation space. ``1`` for valid pixels, ``0`` for
             flagged/dropped.
@@ -69,11 +72,11 @@ class InstrumentRegistry(eqx.Module):
 
 
 class MultiInstrumentFusion(eqx.Module):
-    """Compose per-instrument operators at the likelihood level.
+    r"""Compose per-instrument operators at the likelihood level.
 
     ``__call__`` returns ``dict[instrument_id, predicted_obs]`` — one
     array per instrument. The cost function consumes the dict and
-    sums per-instrument terms with their respective :math:`R_i^{-1}`.
+    sums per-instrument terms with their respective $R_i^{-1}$.
     There is no shared coordinate system; each instrument keeps its
     native footprint and resolution.
 
@@ -82,9 +85,10 @@ class MultiInstrumentFusion(eqx.Module):
     call ``.to_observation_operator()`` for a flattened wrapper.
 
     Attributes:
-        registry: Per-instrument :class:`InstrumentRegistry`.
+        registry: Per-instrument
+            [`InstrumentRegistry`][vardax.InstrumentRegistry].
         weights: Optional ``{instrument_id: alpha}`` mapping. ``None``
-            ⇒ uniform :math:`\\alpha_i = 1`.
+            ⇒ uniform $\alpha_i = 1$.
     """
 
     registry: InstrumentRegistry

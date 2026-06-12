@@ -17,15 +17,15 @@ def obs_cost_1d(
     obs: Float[Array, "B T N"],
     mask: Float[Array, "B T N"],
 ) -> Float[Array, ""]:
-    """Observation cost for 1-D data.
+    r"""Observation cost for 1-D data.
 
     Computes the masked mean-squared error between the state and observations:
 
-    .. math::
+    $$
+    J_{obs} = \frac{1}{|\Omega|} \sum_{i \in \Omega} (x_i - y_i)^2
+    $$
 
-        J_{obs} = \\frac{1}{|\\Omega|} \\sum_{i \\in \\Omega} (x_i - y_i)^2
-
-    where :math:`\\Omega` is the set of observed locations (``mask == 1``).
+    where $\Omega$ is the set of observed locations (``mask == 1``).
 
     Args:
         state: Current state estimate of shape ``(B, T, N)``.
@@ -35,6 +35,15 @@ def obs_cost_1d(
 
     Returns:
         Scalar observation cost.
+
+    Examples:
+        >>> import jax.numpy as jnp
+        >>> from vardax import obs_cost_1d
+        >>> state = jnp.ones((1, 1, 4))
+        >>> obs = jnp.zeros((1, 1, 4))
+        >>> mask = jnp.ones((1, 1, 4))
+        >>> float(obs_cost_1d(state, obs, mask))
+        1.0
     """
     diff = mask * (state - obs)
     return jnp.mean(diff**2)
@@ -45,15 +54,15 @@ def obs_cost_2d(
     obs: Float[Array, "B T H W"],
     mask: Float[Array, "B T H W"],
 ) -> Float[Array, ""]:
-    """Observation cost for 2-D data.
+    r"""Observation cost for 2-D data.
 
     Computes the masked mean-squared error between the state and observations:
 
-    .. math::
+    $$
+    J_{obs} = \frac{1}{|\Omega|} \sum_{i \in \Omega} (x_i - y_i)^2
+    $$
 
-        J_{obs} = \\frac{1}{|\\Omega|} \\sum_{i \\in \\Omega} (x_i - y_i)^2
-
-    where :math:`\\Omega` is the set of observed locations (``mask == 1``).
+    where $\Omega$ is the set of observed locations (``mask == 1``).
 
     Args:
         state: Current state estimate of shape ``(B, T, H, W)``.
@@ -71,14 +80,14 @@ def prior_cost(
     state: Float[Array, ...],
     prior_reconstruction: Float[Array, ...],
 ) -> Float[Array, ""]:
-    """Prior cost based on learned autoencoder reconstruction.
+    r"""Prior cost based on learned autoencoder reconstruction.
 
     Computes the mean-squared error between the state and its reconstruction
     through the learned prior (autoencoder):
 
-    .. math::
-
-        J_{prior} = \\|x - \\varphi(x)\\|^2
+    $$
+    J_{prior} = \|x - \varphi(x)\|^2
+    $$
 
     Args:
         state: Current state estimate of arbitrary shape.
@@ -103,12 +112,12 @@ def variational_cost(
     alpha_obs: float = 0.5,
     alpha_prior: float = 0.5,
 ) -> Float[Array, ""]:
-    """Compute the variational cost :math:`U(x)`.
+    r"""Compute the variational cost $U(x)$.
 
-    .. math::
-
-        U(x) = \\alpha_{obs} \\|m \\odot (x - y)\\|^2
-              + \\alpha_{prior} \\|x - \\varphi(x)\\|^2
+    $$
+    U(x) = \alpha_{obs} \|m \odot (x - y)\|^2
+          + \alpha_{prior} \|x - \varphi(x)\|^2
+    $$
 
     Args:
         x: Current state estimate.
@@ -120,6 +129,16 @@ def variational_cost(
 
     Returns:
         Scalar cost value.
+
+    Examples:
+        With the trivial [`IdentityPrior`][vardax.IdentityPrior] the
+        prior term vanishes, leaving the weighted observation MSE.
+
+        >>> import jax.numpy as jnp, vardax
+        >>> batch = vardax.Batch1D(input=jnp.zeros((1, 2, 4)), mask=jnp.ones((1, 2, 4)))
+        >>> x = jnp.ones((1, 2, 4))
+        >>> float(vardax.variational_cost(x, batch, vardax.IdentityPrior()))
+        0.5
     """
     obs_diff = batch.mask * (x - batch.input)
     j_obs = jnp.mean(obs_diff**2)
@@ -134,7 +153,7 @@ def variational_cost_grad(
     alpha_obs: float = 0.5,
     alpha_prior: float = 0.5,
 ) -> Float[Array, ...]:
-    """Return the gradient of :func:`variational_cost` with respect to ``x``.
+    """Gradient of [`variational_cost`][vardax.variational_cost] w.r.t. ``x``.
 
     Args:
         x: Current state estimate.

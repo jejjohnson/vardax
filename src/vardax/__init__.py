@@ -1,15 +1,13 @@
 """vardax — Modular variational data assimilation with learned components.
 
-Public API
-----------
 All public symbols are re-exported from the private ``_src`` subpackage so
 that user code imports from the top-level namespace:
 
-.. code-block:: python
+```python
+import vardax
 
-    import vardax
-
-    model = vardax.FourDVarNet1D(...)
+model = vardax.FourDVarNet1D(...)
+```
 """
 
 # Bind public submodules into the ``vardax`` namespace so the
