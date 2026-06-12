@@ -243,6 +243,44 @@ in `BacksolveAdjoint` (switch to an implicit integrator), or
 under-converged optimisation in `ImplicitAdjoint` (tighten the
 tolerance).
 
+## The shared strategy vocabulary
+
+The same concepts recur at every layer, so the stack shares one
+declarative vocabulary: the frozen-dataclass specs in
+`pipekit_cycle.adjoints` (named after their diffrax counterparts).
+Each layer interprets a spec into its native mechanism —
+`pipekit_jax.to_diffrax_adjoint` at the dynamics layer,
+[`to_optimistix_adjoint`][vardax.adjoints.to_optimistix_adjoint] at the
+inner-solve layer (this chapter), and filterax's scan strategies at the
+cycle layer:
+
+| Spec | dynamics (diffrax) | inner solve (optimistix / vardax) | cycle (filterax scan) |
+|---|---|---|---|
+| `DirectAdjoint` | `diffrax.DirectAdjoint` | unrolled (the default) | plain scan |
+| `RecursiveCheckpointAdjoint` | `diffrax.RecursiveCheckpointAdjoint` | `optx.RecursiveCheckpointAdjoint` | checkpointed scan |
+| `TruncatedAdjoint(k)` | — | [`KStepAdjoint(k)`][vardax.adjoints.KStepAdjoint]; `k=1` ≡ `OneStepAdjoint` | truncated scan |
+| `ImplicitAdjoint` | steady-state only | `optx.ImplicitAdjoint` | — |
+| `BacksolveAdjoint` | `diffrax.BacksolveAdjoint` ⚠ unstable for chaotic/stiff dynamics | — | — |
+
+```python
+from pipekit_cycle.adjoints import TruncatedAdjoint
+from vardax.adjoints import to_optimistix_adjoint
+
+model = FourDVarNet1D(
+    ...,
+    solver_adjoint=to_optimistix_adjoint(TruncatedAdjoint(k=3)),
+)
+```
+
+`KStepAdjoint` generalises the one-step strategy: at a converged fixed
+point any $k$ is exact (the warmup contributes nothing); for the
+truncated, unconverged solvers of 4DVarNet, larger $k$ trades memory
+for a less biased gradient. The dynamics layer composes independently:
+a `pipekit_jax.DiffraxForwardModel` slots into
+[`StrongFourDVar`][vardax.StrongFourDVar] as a plain
+`pipekit_cycle.ForwardModel`, bringing diffrax's solvers and adjoints
+to the forecast step with no vardax code changes.
+
 ## Adjoint selection heuristics
 
 | Scenario | Pick |
