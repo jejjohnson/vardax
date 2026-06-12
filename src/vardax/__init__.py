@@ -23,8 +23,10 @@ from vardax._src._types import (
 )
 from vardax._src.adjoints import (
     ImplicitAdjoint,
+    KStepAdjoint,
     OneStepAdjoint,
     RecursiveCheckpointAdjoint,
+    to_optimistix_adjoint,
 )
 from vardax._src.amortized import (
     AmortizedConfig,
@@ -179,7 +181,9 @@ __all__ = [
     "ConvLSTMGradMod2D",
     # Adjoints (Decision D15 — replaces v0.1 grad_mode enum)
     "ImplicitAdjoint",
+    "KStepAdjoint",
     "OneStepAdjoint",
+    "to_optimistix_adjoint",
     "RecursiveCheckpointAdjoint",
     # Solver
     "SolverState1D",

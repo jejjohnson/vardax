@@ -27,9 +27,15 @@ The choice replaces the v0.3 ``grad_mode: Literal["unrolled",
 
 This module ships:
 
-- [`OneStepAdjoint`][vardax.OneStepAdjoint] — Bolte, Pauwels & Vaiter
-  (NeurIPS 2023); the only vardax-owned adjoint. Subclasses
-  ``optimistix.AbstractAdjoint`` and targets upstream contribution.
+- [`KStepAdjoint`][vardax.adjoints.KStepAdjoint] — warmup under
+  ``stop_gradient``, then ``k`` differentiable steps (Bolte, Pauwels &
+  Vaiter, NeurIPS 2023, generalised). The vardax-owned adjoint;
+  targets upstream contribution.
+- [`OneStepAdjoint`][vardax.OneStepAdjoint] — the ``k=1`` alias.
+- [`to_optimistix_adjoint`][vardax.adjoints.to_optimistix_adjoint] —
+  interpreter for the shared ``pipekit_cycle.adjoints`` spec
+  vocabulary (``TruncatedAdjoint(k)`` maps here; the dynamics-layer
+  counterpart is ``pipekit_jax.to_diffrax_adjoint``).
 - Re-exports ``optimistix.RecursiveCheckpointAdjoint`` and
   ``optimistix.ImplicitAdjoint`` for one-stop import.
 """
@@ -42,11 +48,15 @@ from optimistix import (
     RecursiveCheckpointAdjoint,
 )
 
+from .k_step import KStepAdjoint
+from .mapping import to_optimistix_adjoint
 from .one_step import OneStepAdjoint
 
 __all__ = [
     "AbstractAdjoint",
     "ImplicitAdjoint",
+    "KStepAdjoint",
     "OneStepAdjoint",
     "RecursiveCheckpointAdjoint",
+    "to_optimistix_adjoint",
 ]

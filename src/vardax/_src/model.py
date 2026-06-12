@@ -28,7 +28,7 @@ from jaxtyping import Array, Float, PRNGKeyArray
 import optimistix as optx
 
 from ._types import Batch1D, Batch2D, LSTMState1D, LSTMState2D
-from .adjoints import OneStepAdjoint
+from .adjoints import KStepAdjoint
 from .grad_mod import ConvLSTMGradMod1D, ConvLSTMGradMod2D
 from .priors import BilinAEPrior1D, BilinAEPrior2D
 
@@ -106,7 +106,7 @@ class FourDVarNet1D(eqx.Module):
         Dispatches on ``solver_adjoint`` to pick the differentiation
         path.
         """
-        if isinstance(self.solver_adjoint, OneStepAdjoint):
+        if isinstance(self.solver_adjoint, KStepAdjoint):
             return self._call_one_step(batch)
         if isinstance(self.solver_adjoint, optx.ImplicitAdjoint):
             return self._call_implicit(batch)
@@ -144,6 +144,7 @@ class FourDVarNet1D(eqx.Module):
             hidden_dim=self.grad_mod.hidden_dim,
             alpha=self.alpha,
             prior_weight=self.prior_weight,
+            k=getattr(self.solver_adjoint, "k", 1),
         )
 
     def _call_implicit(self, batch: Batch1D) -> Float[Array, "B T N"]:
@@ -239,7 +240,7 @@ class FourDVarNet2D(eqx.Module):
         Dispatches on ``solver_adjoint`` to pick the differentiation
         path.
         """
-        if isinstance(self.solver_adjoint, OneStepAdjoint):
+        if isinstance(self.solver_adjoint, KStepAdjoint):
             return self._call_one_step(batch)
         if isinstance(self.solver_adjoint, optx.ImplicitAdjoint):
             return self._call_implicit(batch)
@@ -275,6 +276,7 @@ class FourDVarNet2D(eqx.Module):
             hidden_dim=self.grad_mod.hidden_dim,
             alpha=self.alpha,
             prior_weight=self.prior_weight,
+            k=getattr(self.solver_adjoint, "k", 1),
         )
 
     def _call_implicit(self, batch: Batch2D) -> Float[Array, "B T H W"]:

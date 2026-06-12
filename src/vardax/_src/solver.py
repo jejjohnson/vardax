@@ -313,12 +313,13 @@ def one_step_solve_4dvarnet_1d(
     hidden_dim: int,
     alpha: float = 1.0,
     prior_weight: float = 1.0,
+    k: int = 1,
 ) -> Float[Array, "B T N"]:
-    r"""Solve 4DVarNet-1D using one-step differentiation (Bolte et al., 2023).
+    r"""Solve 4DVarNet-1D using k-step differentiation (Bolte et al., 2023).
 
-    Runs ``n_steps - 1`` solver iterations with ``jax.lax.stop_gradient``
-    applied to the iterate, then performs a single final step through which
-    gradients flow.  This gives O(1) memory cost (matching implicit
+    Runs ``n_steps - k`` solver iterations with ``jax.lax.stop_gradient``
+    applied to the iterate, then performs ``k`` final steps through which
+    gradients flow.  This gives O(k) memory cost (k=1 matches implicit
     differentiation) while being as simple to implement as unrolled backprop.
 
     Reference:
@@ -329,30 +330,36 @@ def one_step_solve_4dvarnet_1d(
         batch: Observed data batch.
         prior_fn: Callable ``x -> x_prior``.
         grad_mod_fn: Callable ``(grad, x, lstm) -> (update, new_lstm)``.
-        n_steps: Total number of solver iterations (warmup = n_steps - 1,
-            then 1 differentiable step).
+        n_steps: Total number of solver iterations (warmup = n_steps - k,
+            then k differentiable steps).
         hidden_dim: Hidden dimension of the ConvLSTM gradient modulator.
         alpha: Step-size scaling factor.
         prior_weight: Weighting factor $\lambda$ for the prior cost term.
+        k: Number of trailing differentiable steps (clipped to n_steps).
 
     Returns:
         Final state estimate of shape ``(B, T, N)``.
     """
-    # --- warmup: run n_steps-1 steps without tracking gradients ---
+    # --- warmup: run n_steps-k steps without tracking gradients ---
     state = init_solver_state_1d(batch, hidden_dim)
-    warmup_steps = max(n_steps - 1, 0)
+    live_steps = min(max(k, 1), n_steps) if n_steps >= 1 else 0
+    warmup_steps = max(n_steps - live_steps, 0)
     for _ in range(warmup_steps):
         state = solver_step_1d(state, batch, prior_fn, grad_mod_fn, alpha, prior_weight)
 
-    # detach the iterate so earlier steps don't contribute to the gradient
-    state = SolverState1D(
-        x=jax.lax.stop_gradient(state.x),
-        lstm=jax.lax.stop_gradient(state.lstm),
-        step=state.step,
-    )
+    # detach the iterate so earlier steps don't contribute to the
+    # gradient — but only when there was a warmup to detach: with
+    # k >= n_steps the solve is fully differentiable, including
+    # gradients with respect to the batch through the initial state.
+    if warmup_steps > 0:
+        state = SolverState1D(
+            x=jax.lax.stop_gradient(state.x),
+            lstm=jax.lax.stop_gradient(state.lstm),
+            step=state.step,
+        )
 
-    # --- one differentiable step ---
-    if n_steps >= 1:
+    # --- k differentiable steps ---
+    for _ in range(live_steps):
         state = solver_step_1d(state, batch, prior_fn, grad_mod_fn, alpha, prior_weight)
 
     return state.x
@@ -366,12 +373,13 @@ def one_step_solve_4dvarnet_2d(
     hidden_dim: int,
     alpha: float = 1.0,
     prior_weight: float = 1.0,
+    k: int = 1,
 ) -> Float[Array, "B T H W"]:
-    r"""Solve 4DVarNet-2D using one-step differentiation (Bolte et al., 2023).
+    r"""Solve 4DVarNet-2D using k-step differentiation (Bolte et al., 2023).
 
-    Runs ``n_steps - 1`` solver iterations with ``jax.lax.stop_gradient``
-    applied to the iterate, then performs a single final step through which
-    gradients flow.  This gives O(1) memory cost (matching implicit
+    Runs ``n_steps - k`` solver iterations with ``jax.lax.stop_gradient``
+    applied to the iterate, then performs ``k`` final steps through which
+    gradients flow.  This gives O(k) memory cost (k=1 matches implicit
     differentiation) while being as simple to implement as unrolled backprop.
 
     Reference:
@@ -382,30 +390,36 @@ def one_step_solve_4dvarnet_2d(
         batch: Observed data batch.
         prior_fn: Callable ``x -> x_prior``.
         grad_mod_fn: Callable ``(grad, x, lstm) -> (update, new_lstm)``.
-        n_steps: Total number of solver iterations (warmup = n_steps - 1,
-            then 1 differentiable step).
+        n_steps: Total number of solver iterations (warmup = n_steps - k,
+            then k differentiable steps).
         hidden_dim: Hidden dimension of the ConvLSTM gradient modulator.
         alpha: Step-size scaling factor.
         prior_weight: Weighting factor $\lambda$ for the prior cost term.
+        k: Number of trailing differentiable steps (clipped to n_steps).
 
     Returns:
         Final state estimate of shape ``(B, T, H, W)``.
     """
-    # --- warmup: run n_steps-1 steps without tracking gradients ---
+    # --- warmup: run n_steps-k steps without tracking gradients ---
     state = init_solver_state_2d(batch, hidden_dim)
-    warmup_steps = max(n_steps - 1, 0)
+    live_steps = min(max(k, 1), n_steps) if n_steps >= 1 else 0
+    warmup_steps = max(n_steps - live_steps, 0)
     for _ in range(warmup_steps):
         state = solver_step_2d(state, batch, prior_fn, grad_mod_fn, alpha, prior_weight)
 
-    # detach the iterate so earlier steps don't contribute to the gradient
-    state = SolverState2D(
-        x=jax.lax.stop_gradient(state.x),
-        lstm=jax.lax.stop_gradient(state.lstm),
-        step=state.step,
-    )
+    # detach the iterate so earlier steps don't contribute to the
+    # gradient — but only when there was a warmup to detach: with
+    # k >= n_steps the solve is fully differentiable, including
+    # gradients with respect to the batch through the initial state.
+    if warmup_steps > 0:
+        state = SolverState2D(
+            x=jax.lax.stop_gradient(state.x),
+            lstm=jax.lax.stop_gradient(state.lstm),
+            step=state.step,
+        )
 
-    # --- one differentiable step ---
-    if n_steps >= 1:
+    # --- k differentiable steps ---
+    for _ in range(live_steps):
         state = solver_step_2d(state, batch, prior_fn, grad_mod_fn, alpha, prior_weight)
 
     return state.x

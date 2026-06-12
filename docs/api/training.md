@@ -34,14 +34,16 @@ see the optimistix documentation for their full signatures:
   implicit-function-theorem differentiation at a fixed point; pair with
   `solve_4dvarnet_1d_fixedpoint`.
 
-`OneStepAdjoint` is vardax's own truncated adjoint (Bolte, Pauwels &
+`KStepAdjoint(k)` is vardax's own truncated adjoint — warmup under
+`stop_gradient`, then `k` differentiable steps; `OneStepAdjoint` is the
+`k=1` alias (Bolte, Pauwels &
 Vaiter, NeurIPS 2023):
 
 ::: vardax
     options:
       show_root_heading: false
       show_root_toc_entry: false
-      members: [OneStepAdjoint]
+      members: [KStepAdjoint, OneStepAdjoint, to_optimistix_adjoint]
 
 ## Gradient modulators
 

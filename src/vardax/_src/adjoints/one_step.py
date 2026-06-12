@@ -27,14 +27,12 @@ adjoint is generalised for upstream contribution.
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from typing import Any
 
-from jaxtyping import Array, PyTree
-import optimistix as optx
+from .k_step import KStepAdjoint
 
 
-class OneStepAdjoint(optx.AbstractAdjoint):
+class OneStepAdjoint(KStepAdjoint):
     """One-step differentiation (Bolte et al., 2023).
 
     Run ``K - 1`` warmup iterations of the inner solver with
@@ -62,26 +60,7 @@ class OneStepAdjoint(optx.AbstractAdjoint):
         [arXiv:2305.13768](https://arxiv.org/abs/2305.13768).
     """
 
-    def apply(
-        self,
-        primal_fn: Callable,
-        rewrite_fn: Callable,
-        inputs: PyTree,
-        tags: frozenset[object],
-    ) -> PyTree[Array]:
-        """Not used by vardax's custom learned solver — dispatch happens
-        in ``vardax._src.solver`` via ``isinstance`` on the adjoint type.
-
-        Implementing this method for upstream ``optimistix.minimise``
-        compatibility is tracked under the planned upstream
-        contribution (Decision D6).
-        """
-        raise NotImplementedError(
-            "OneStepAdjoint is currently a marker / strategy selector for the "
-            "FourDVarNet inner solver. Generic apply() support for "
-            "optimistix.minimise is planned as part of the upstream "
-            "contribution. Use it via FourDVarNet*(solver_adjoint=OneStepAdjoint())."
-        )
+    k: int = 1
 
     def __repr__(self) -> str:  # pragma: no cover - cosmetic
         return "OneStepAdjoint()"
