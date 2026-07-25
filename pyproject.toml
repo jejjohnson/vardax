@@ -41,6 +41,7 @@ dependencies = [
     "optimistix>=0.1",
     "lineax>=0.1",
     "gaussx",
+    "geonnax",
     "pipekit",
     "pipekit-cycle",
 ]
@@ -188,6 +189,7 @@ ignore = [
     "F821",     # undefined name (jaxtyping dimension annotations)
     "PLR2004",  # magic value comparison
     "PLR0913",  # too many arguments
+    "PLR0917",  # too many positional arguments (same intent as PLR0913)
     "ISC001",   # conflicts with formatter
     "RUF002",   # ambiguous unicode characters in docstrings (math notation)
     "RUF022",   # __all__ not sorted (we use logical grouping)
@@ -223,6 +225,7 @@ output = "reports/coverage.xml"
 
 [tool.uv.sources]
 gaussx = { git = "https://github.com/jejjohnson/gaussx", rev = "cd6264c" }
+geonnax = { git = "https://github.com/jejjohnson/geonnax", rev = "5318173" }
 pipekit = { git = "https://github.com/jejjohnson/pipekit", subdirectory = "packages/pipekit" }
 pipekit-cycle = { git = "https://github.com/jejjohnson/pipekit", subdirectory = "packages/pipekit-cycle" }
 pipekit-jax = { git = "https://github.com/jejjohnson/pipekit", subdirectory = "packages/pipekit-jax" }
