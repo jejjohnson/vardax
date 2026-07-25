@@ -180,3 +180,45 @@ class TestObservationOperatorConformance:
         )
         fusion = MultiInstrumentFusion(registry=InstrumentRegistry(entries={"a": spec}))
         assert isinstance(fusion.to_observation_operator(), ObservationOperator)
+
+
+class TestTemporalPriorProtocol:
+    """Decision D18: temporal prior seam + adapters."""
+
+    def _decay(self):
+        def decay(t, y, args):
+            return -y
+
+        return decay
+
+    def test_dyn_increments_satisfies_temporal_prior(self):
+        from vardax import DynIncrements, TemporalPrior
+
+        assert isinstance(DynIncrements(model=self._decay()), TemporalPrior)
+
+    def test_dyn_trajectory_satisfies_temporal_prior(self):
+        from vardax import DynTrajectory, TemporalPrior
+
+        assert isinstance(DynTrajectory(model=self._decay()), TemporalPrior)
+
+    def test_static_prior_does_not_satisfy_temporal_prior(self, rng):
+        from vardax import TemporalPrior
+
+        prior = BilinAEPrior1D(state_dim=4, latent_dim=2, n_time=3, key=rng)
+        # Static priors have no ``loss`` member — the seams stay distinct.
+        assert not isinstance(prior, TemporalPrior)
+
+    def test_bound_prior_satisfies_prior(self):
+        from vardax import DynTrajectory
+
+        ts = jnp.linspace(0.0, 0.5, 6)
+        bound = DynTrajectory(model=self._decay()).bind(ts)
+        assert isinstance(bound, Prior)
+
+    def test_as_forward_model_satisfies_forward_model(self):
+        from pipekit_cycle import ForwardModel
+
+        from vardax import DynTrajectory
+
+        fwd = DynTrajectory(model=self._decay()).as_forward_model(dt=0.1)
+        assert isinstance(fwd, ForwardModel)

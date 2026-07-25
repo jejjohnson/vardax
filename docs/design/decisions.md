@@ -1,14 +1,16 @@
 ---
 status: draft
-version: 0.5.0
+version: 0.6.0
 ---
 
 # vardax — Design Decisions
 
 Each decision is referenced by ID throughout the design docs and math
-reference. New in v0.5.0: D17 (latent DA peer family). New in v0.4.0:
-D14, D15, D16. Revised: D8 (seven peers), D11 (rename), D6 (clarified
-upstream adjoint contribution).
+reference. New in v0.6.0: D18 (temporal prior seam), D19
+(variational-cost API per constraint mode) — the mfourdvar-migration
+Phase 2 decisions (#17, #18). New in v0.5.0: D17 (latent DA peer
+family). New in v0.4.0: D14, D15, D16. Revised: D8 (seven peers), D11
+(rename), D6 (clarified upstream adjoint contribution).
 
 ## Index
 
@@ -30,7 +32,9 @@ upstream adjoint contribution).
 | D14 | DA hierarchy as horizontal peer classes | Layer 2 |
 | D15 | Lean on `optimistix` / `diffrax` adjoints, not in-house grad modes | Layer 0 |
 | D16 | BLUE / OI as a first-class method | Layer 2 |
-| **D17** | **Latent DA as a first-class peer family** | **Layer 2** |
+| D17 | Latent DA as a first-class peer family | Layer 2 |
+| **D18** | **Temporal prior seam (`TemporalPrior` + `bind`)** | **Layer 1** |
+| **D19** | **Variational-cost API — separate functions per constraint mode** | **Layer 1** |
 
 ---
 
@@ -460,3 +464,103 @@ and a structurally smaller posterior covariance.
   (`LatentETKF`, `LatentLETKF`) is automatic.
 * `WeakLatentFourDVar` and a VAE-aware `LatentMap` are explicitly
   deferred to v0.6 (see design/latent_da.md §13).
+
+---
+
+## D18: Temporal prior seam (`TemporalPrior` + `bind`)
+
+**New in v0.6.0.** Resolves #17 (mfourdvar migration, Phase 2).
+
+Dynamics-aware priors ported from `mfourdvar` (`DynIncrements`,
+`DynTrajectory`) need the window's time coordinates; the static
+[`Prior`](../api/protocols.md) seam ($\varphi: x \mapsto x$) cannot
+express them.
+
+**Options.**
+
+(A) Widen `Prior` to `__call__(x, ts=None)` — one protocol, optional
+    time.
+(B) A separate runtime-checkable `TemporalPrior` protocol
+    (`__call__(x, ts)`, `loss(x, ts, x_gt=None, params=None)`), plus a
+    `bind(ts)` bridge returning a `Prior`-conforming closure.
+(C) Batch-carrier signature `prior(batch)` for all priors.
+
+**Decision.** Option B.
+
+**Rationale.**
+
+* Time-dependence is a structural difference, not a default-able
+  argument (same argument as D14/D17: don't hide structure behind
+  flags). Widening `Prior` (A) would make every static-prior call site
+  carry a vestigial `ts`.
+* `bind(ts)` gives one-way adaptation at zero cost: a bound temporal
+  prior *is* a `Prior`, so `variational_cost(x, batch, prior.bind(ts))`
+  turns the prior term into a weak-constraint dynamical residual with
+  no API change. The reverse direction (a static prior where time is
+  required) is meaningless, so no two-way adapter exists.
+* The concrete classes stay `eqx.Module` (D1); the ODE RHS stays a
+  plain diffrax-compatible callable — the `flax.linen` note in the
+  original issue predates the vardax rewrite.
+* `reconstruct(x, ts)` is the shape-preserving map that makes
+  `‖x − reconstruct(x, ts)‖²` equal the prior's own `loss`, mirroring
+  the autoencoder-reconstruction semantics of the static seam.
+
+**Apply.**
+
+* `TemporalPrior` protocol in `vardax/_src/protocols.py`; satisfied
+  structurally by `DynIncrements` / `DynTrajectory`.
+* `DynamicalPrior.reconstruct` / `.bind(ts)` in
+  `vardax/_src/priors_dynamical.py`; `bind` returns the private
+  `_BoundTemporalPrior` (same pattern as `.as_analysis_step()`).
+* `DynamicalPrior.as_forward_model(dt)` adapts the wrapped ODE to
+  `pipekit_cycle.ForwardModel` (`step` / `dt` / `state_signature`),
+  so a dynamical prior can drive `StrongFourDVar` or a
+  `pipekit_cycle.DACycle` directly (D8). `step` integrates over
+  `[0, dt]` — autonomous dynamics assumed.
+
+---
+
+## D19: Variational-cost API — separate functions per constraint mode
+
+**New in v0.6.0.** Resolves #18 (mfourdvar migration, Phase 2);
+ratifies the API shipped with the Phase-1 port (#60).
+
+The mfourdvar migration introduced a 3-term cost (obs + prior +
+background) and a strong-constraint mode where the model propagates
+`x₀` before the obs term.
+
+**Options.**
+
+(A) Separate functions: `variational_cost` (weak, unchanged) +
+    `strong_variational_cost` + `background_cost` helper.
+(B) One function with `mode="weak" | "strong"`.
+(C) A `VarCostConfig` dataclass mirroring mfourdvar's class-based
+    `VariationalCost`.
+
+**Decision.** Option A.
+
+**Rationale.**
+
+* Weak and strong costs have different control variables (full field
+  `x` vs initial state `x₀`) and different required inputs (`ts`,
+  `forward_fn`). A `mode` flag (B) would bolt two signatures onto one
+  function and put a Python branch inside jitted code.
+* The class-based form (C) already exists at Layer 2:
+  `StrongFourDVar` / `WeakFourDVar` are the stateful counterparts.
+  The functional layer stays flat and composable (matches the
+  existing `obs_cost_*` / `prior_cost` family).
+* Backward compatible: `variational_cost` is untouched; NaN handling
+  is an additive `nan_to_num: bool = False` kwarg on `obs_cost_1d/2d`
+  (chosen over separate `*_nan` variants to avoid a parallel family —
+  supersedes the naming sketched in #16), and
+  `strong_variational_cost` defaults `xb = x0` (no background term)
+  and weights `alpha_obs = alpha_bg = 0.5` to mirror
+  `variational_cost`'s convention.
+
+**Apply.**
+
+* All functions live in `vardax/_src/costs.py`; exported flat from the
+  package root (D14-style flat namespace — no `vardax.dynamical`
+  submodule).
+* Docstrings carry the constraint-mode math; weak-vs-strong contrast
+  documented in `docs/06_strong_4dvar.md` terms.

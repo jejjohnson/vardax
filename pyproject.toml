@@ -189,7 +189,7 @@ ignore = [
     "F821",     # undefined name (jaxtyping dimension annotations)
     "PLR2004",  # magic value comparison
     "PLR0913",  # too many arguments
-    "PLR0917",  # too many positional arguments (same intent as PLR0913)
+    "PLR0917",  # too many positional arguments (sibling of PLR0913)
     "ISC001",   # conflicts with formatter
     "RUF002",   # ambiguous unicode characters in docstrings (math notation)
     "RUF022",   # __all__ not sorted (we use logical grouping)

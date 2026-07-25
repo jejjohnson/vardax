@@ -1,10 +1,12 @@
 r"""Runtime-checkable protocols used across vardax.
 
 vardax re-exports the three core ``pipekit_cycle`` protocols
-(`ForwardModel`, `ObservationOperator`, `AnalysisStep`) and adds six
+(`ForwardModel`, `ObservationOperator`, `AnalysisStep`) and adds seven
 vardax-specific protocols that ``pipekit-cycle`` doesn't name:
 
 - [`Prior`][vardax.Prior] — $\varphi: x \mapsto x_\text{prior}$
+- [`TemporalPrior`][vardax.TemporalPrior] —
+  $\varphi: (x, t_s) \mapsto x_\text{pred}$ (Decision D18)
 - [`GradModulator`][vardax.GradModulator] —
   $\Phi: (\nabla J, h) \mapsto (\Delta x, h')$
 - [`CostFunction`][vardax.CostFunction] —
@@ -55,6 +57,42 @@ class Prior(Protocol):
     """
 
     def __call__(self, x: Float[Array, ...]) -> Float[Array, ...]: ...
+
+
+@runtime_checkable
+class TemporalPrior(Protocol):
+    r"""Time-dependent prior: dynamics-aware regularisation over a window.
+
+    Unlike the static [`Prior`][vardax.Prior] seam ($\varphi: x \mapsto
+    x_\text{prior}$), a temporal prior needs the time coordinates of the
+    assimilation window: $\varphi: (x, t_s) \mapsto x_\text{pred}$, with a
+    ``loss`` scoring dynamical consistency of a state sequence (Decision
+    D18). Implementations: [`DynIncrements`][vardax.DynIncrements],
+    [`DynTrajectory`][vardax.DynTrajectory].
+
+    A temporal prior is adapted to contexts expecting the one-argument
+    `Prior` seam by binding the time grid:
+    ``prior.bind(ts)`` returns a `Prior`-conforming callable.
+
+    Members:
+        ``__call__(x, ts) -> x_pred`` — propagate through the dynamics.
+        ``loss(x, ts, x_gt=None, params=None) -> scalar`` — dynamical
+        residual of the sequence ``x`` against ``x_gt``.
+    """
+
+    def __call__(
+        self,
+        x: Float[Array, ...],
+        ts: Float[Array, ...],
+    ) -> Float[Array, ...]: ...
+
+    def loss(
+        self,
+        x: Float[Array, ...],
+        ts: Float[Array, ...],
+        x_gt: Float[Array, ...] | None = None,
+        params: Any = None,
+    ) -> Float[Array, ""]: ...
 
 
 @runtime_checkable
@@ -183,4 +221,5 @@ __all__ = [
     "PosteriorAdapter",
     "Prior",
     "ReducedBasis",
+    "TemporalPrior",
 ]
