@@ -35,7 +35,7 @@ touching the model classes.
     options:
       show_root_heading: false
       show_root_toc_entry: false
-      members: [Prior, CostFunction, GradModulator, PosteriorAdapter, Minimiser]
+      members: [Prior, TemporalPrior, CostFunction, GradModulator, PosteriorAdapter, Minimiser]
 
 ## Batch & state types
 

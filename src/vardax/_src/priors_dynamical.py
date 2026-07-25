@@ -156,6 +156,77 @@ class DynamicalPrior(eqx.Module):
     ) -> Array:
         raise NotImplementedError
 
+    def reconstruct(
+        self,
+        x: Array,
+        ts: Array,
+        params: PyTree | None = None,
+    ) -> Array:
+        r"""Dynamics-consistent reconstruction of a state sequence.
+
+        Returns an array of the *same shape* as ``x`` such that
+        ``||x - reconstruct(x, ts)||²`` is the prior's dynamical residual —
+        the temporal analogue of the autoencoder reconstruction used by the
+        static [`Prior`][vardax.Prior] seam (Decision D18).
+        """
+        raise NotImplementedError
+
+    def bind(
+        self,
+        ts: Array,
+        params: PyTree | None = None,
+    ) -> _BoundTemporalPrior:
+        r"""Bind a time grid, yielding a one-argument `Prior` adapter.
+
+        The returned callable satisfies the static
+        [`Prior`][vardax.Prior] protocol (``__call__(x) -> x_prior``) by
+        closing over ``ts``, so a dynamical prior can be used anywhere a
+        static prior is expected — e.g. as the ``prior_fn`` of
+        [`variational_cost`][vardax.variational_cost], turning the prior
+        term into a weak-constraint dynamical residual.
+
+        Args:
+            ts: Time coordinates of shape ``(T,)`` to close over.
+            params: ODE ``args`` override to close over.
+
+        Returns:
+            A `Prior`-conforming module wrapping this temporal prior.
+
+        Examples:
+            >>> import jax.numpy as jnp
+            >>> from vardax import DynTrajectory, IdentityPrior, Prior
+            >>> def decay(t, y, args):
+            ...     return -y
+            >>> ts = jnp.linspace(0.0, 0.5, 6)
+            >>> bound = DynTrajectory(model=decay).bind(ts)
+            >>> isinstance(bound, Prior)
+            True
+            >>> traj = DynTrajectory(model=decay)(jnp.ones(3), ts)
+            >>> bool(jnp.allclose(bound(traj), traj, atol=1e-4))
+            True
+        """
+        return _BoundTemporalPrior(prior=self, ts=ts, params=params)
+
+    def as_forward_model(self, dt: float) -> _DynamicalForwardModel:
+        r"""Adapt this prior's dynamics to ``pipekit_cycle.ForwardModel``.
+
+        The returned adapter exposes ``step(state, dt)``, ``dt``, and
+        ``state_signature``, so the wrapped ODE can drive anything that
+        consumes the pipekit forward-model seam —
+        [`StrongFourDVar`][vardax.StrongFourDVar], ``pipekit_cycle.DACycle``,
+        etc. (Decisions D8/D18). ``step`` integrates the ODE over
+        ``[0, dt]``; the dynamics are therefore treated as autonomous
+        (time-shift invariant), which holds for the standard testbeds
+        (Lorenz-63/96) and any RHS that ignores ``t``.
+
+        Args:
+            dt: Default integration step advertised as the adapter's ``dt``.
+
+        Returns:
+            A ``ForwardModel``-conforming adapter around this prior.
+        """
+        return _DynamicalForwardModel(prior=self, dt=dt)
+
 
 class DynIncrements(DynamicalPrior):
     r"""One-step-increment dynamical prior.
@@ -239,6 +310,24 @@ class DynIncrements(DynamicalPrior):
         x_pred = jax.vmap(fn, in_axes=(0, 0))(x[:-1], ts_pairs)
         return jnp.sum((x_pred - x_gt[1:]) ** 2)
 
+    def reconstruct(
+        self,
+        x: Array,
+        ts: Array,
+        params: PyTree | None = None,
+    ) -> Array:
+        r"""One-step-increment reconstruction.
+
+        ``reconstruct(x, ts)[t+1]`` is the one-step propagation
+        $\varphi_{\Delta t}(x_t)$ and ``reconstruct(x, ts)[0] = x[0]``, so
+        $\|x - \text{reconstruct}(x, t_s)\|^2$ equals the increment
+        residual of :meth:`loss` (the $t=0$ term vanishes).
+        """
+        ts_pairs = time_patches(ts)
+        fn = ft.partial(self, params=params)
+        x_pred = jax.vmap(fn, in_axes=(0, 0))(x[:-1], ts_pairs)
+        return jnp.concatenate([x[:1], x_pred], axis=0)
+
 
 class DynTrajectory(DynamicalPrior):
     r"""Full-rollout dynamical prior.
@@ -300,3 +389,60 @@ class DynTrajectory(DynamicalPrior):
             x_gt = x
         x_pred = self(x[0], ts, params=params)
         return jnp.sum((x_pred - x_gt) ** 2)
+
+    def reconstruct(
+        self,
+        x: Array,
+        ts: Array,
+        params: PyTree | None = None,
+    ) -> Array:
+        r"""Full-rollout reconstruction: the trajectory from ``x[0]``.
+
+        $\|x - \text{reconstruct}(x, t_s)\|^2$ equals the trajectory
+        residual of :meth:`loss`.
+        """
+        return self(x[0], ts, params=params)
+
+
+# ---------------------------------------------------------------------------
+# Adapters (Decision D18)
+# ---------------------------------------------------------------------------
+
+
+class _BoundTemporalPrior(eqx.Module):
+    """A temporal prior with its time grid bound: satisfies `Prior`.
+
+    Returned by :meth:`DynamicalPrior.bind`; not constructed directly.
+    """
+
+    prior: DynamicalPrior
+    ts: Array
+    params: PyTree | None
+
+    def __call__(self, x: Array) -> Array:
+        """One-argument reconstruction, per the static `Prior` seam."""
+        return self.prior.reconstruct(x, self.ts, params=self.params)
+
+
+class _DynamicalForwardModel(eqx.Module):
+    """``pipekit_cycle.ForwardModel`` adapter over a `DynamicalPrior`.
+
+    Returned by :meth:`DynamicalPrior.as_forward_model`; not constructed
+    directly. ``step`` integrates the wrapped ODE over ``[0, dt]``
+    (autonomous dynamics).
+    """
+
+    prior: DynamicalPrior
+    dt: float
+
+    def step(self, state: Array, dt: float) -> Array:
+        """Advance ``state`` by ``dt`` through the wrapped ODE."""
+        ts = jnp.asarray([0.0, dt])
+        saveat = dfx.SaveAt(t1=True)
+        ys = self.prior._integrate(state, ts, saveat, dt, None)
+        return ys[-1]
+
+    @property
+    def state_signature(self) -> None:
+        """No named-dimension tracking (see ``pipekit.Signature``)."""
+        return None

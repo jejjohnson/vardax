@@ -7,15 +7,17 @@ and the plotting helpers used throughout the
 
 ## Dynamical systems
 
-Lorenz-96 is the standard chaotic testbed for assimilation experiments;
-`simulate_lorenz96` generates trajectories for the
-[Lorenz examples](../15_lorenz_examples.md) and the test suite.
+Lorenz-63 and Lorenz-96 are the standard chaotic testbeds for
+assimilation experiments; the `simulate_*` helpers generate trajectories
+for the [Lorenz examples](../15_lorenz_examples.md) and the test suite,
+and `time_patches` produces the consecutive time pairs consumed by the
+one-step increment losses.
 
 ::: vardax
     options:
       show_root_heading: false
       show_root_toc_entry: false
-      members: [simulate_lorenz96]
+      members: [simulate_lorenz63, simulate_lorenz96, time_patches]
 
 ## Validation gates
 
