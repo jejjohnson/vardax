@@ -307,6 +307,44 @@ def test_analysis_step_threads_obs_op_and_err_cov(lg_problem):
     assert not np.allclose(np.asarray(out_threaded), np.asarray(rolled), atol=1e-2)
 
 
+def test_masked_obs_marginalize_correlated_r():
+    """A masked entry must drop out of the likelihood exactly, even for a
+    correlated ``R``: the observed residual is weighted by ``(R_oo)^{-1}``
+    (here ``1``), not by the observed block of the full ``R^{-1}``
+    (``1/(1-rho^2)``). With B=I, x_b=0, identity H and a single window
+    step, the analysis is ``x_1 = y_1 * w/(1+w)`` with ``w = 1``."""
+    fwd = _LinearForward(alpha=1.0)
+    N = 2
+    rho = 0.5
+    R = lx.MatrixLinearOperator(
+        jnp.array([[1.0, rho], [rho, 1.0]], dtype=jnp.float32),
+        lx.positive_semidefinite_tag,
+    )
+    B = lx.IdentityLinearOperator(jax.ShapeDtypeStruct((N,), jnp.float32))
+    H = lx.IdentityLinearOperator(jax.ShapeDtypeStruct((N,), jnp.float32))
+
+    y1 = 2.0
+    batch = Batch1D(
+        input=jnp.array([[[y1, 5.0]]], dtype=jnp.float32),  # (B=1, T+1=1, N)
+        mask=jnp.array([[[1.0, 0.0]]], dtype=jnp.float32),  # second obs masked
+        target=None,
+    )
+    ana = Incremental4DVar(
+        fwd,
+        obs_op=LinearObs(H_mat=H),
+        prior_mean=jnp.zeros(N),
+        prior_cov_op=B,
+        obs_cov_op=R,
+        max_steps=500,
+    )
+    out = np.asarray(ana(batch)[0])
+    # Correct marginalized weight w = 1 -> x_1 = y1 / 2. The un-marginalized
+    # solve would give w = 1/(1-rho^2) = 4/3 -> x_1 = (4/7) y1 ~ 1.14.
+    np.testing.assert_allclose(out[0], y1 / 2.0, atol=5e-3)
+    # The masked component stays at the prior mean.
+    np.testing.assert_allclose(out[1], 0.0, atol=5e-3)
+
+
 def test_as_analysis_step_satisfies_protocol(lg_problem):
     """`Incremental4DVar.as_analysis_step()` returns an `AnalysisStep`."""
     p = lg_problem

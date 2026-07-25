@@ -141,8 +141,21 @@ class Incremental4DVar(eqx.Module):
                         else self.obs_op(x_t)
                     )
                     residual = m_t * (y_t - y_pred)
+                    # Solve against the marginalized covariance
+                    # R~ = M R M + (I - M): for a 0/1 mask its inverse on
+                    # the observed block equals (R_oo)^{-1}, so masked
+                    # entries drop out of the likelihood exactly. Solving
+                    # the full R against a zeroed residual would instead
+                    # weight observed entries by the observed block of
+                    # R^{-1}, biasing the analysis when R is correlated.
+                    mask_op = lx.DiagonalLinearOperator(m_t)
+                    r_masked = lx.TaggedLinearOperator(
+                        mask_op @ self.obs_cov_op @ mask_op
+                        + lx.DiagonalLinearOperator(1.0 - m_t),
+                        lx.positive_semidefinite_tag,
+                    )
                     R_inv_r = lx.linear_solve(
-                        self.obs_cov_op,
+                        r_masked,
                         residual,
                         solver=lx.CG(atol=1e-6, rtol=1e-6),
                     ).value
