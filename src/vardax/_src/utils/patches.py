@@ -1,10 +1,46 @@
-"""xarray patch extraction utilities for time-series data."""
+"""xarray patch extraction utilities for time-series data.
+
+``xarray`` is an optional dependency (the ``[data]`` extra) and is
+imported lazily inside the functions that need it, so that core-path
+imports of this module (e.g. ``time_patches`` via the package
+initializer) work on a base install.
+"""
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+import jax.numpy as jnp
 from jaxtyping import Array, Float
 import numpy as np
-import xarray as xr
+
+if TYPE_CHECKING:
+    import xarray as xr
+
+
+def time_patches(ts: Float[Array, T]) -> Float[Array, "T-1 2"]:  # type: ignore[unresolved-reference]  # ty:ignore[unresolved-reference]
+    """Overlapping consecutive time pairs for one-step increment losses.
+
+    Reimplements the legacy ``kernex.kmap(kernel_size=(2,), relative=True)``
+    sliding window without the ``kernex`` dependency: for a 1-D array of
+    times ``[t_0, t_1, ..., t_{T-1}]`` it returns the ``T - 1`` overlapping
+    pairs ``[[t_0, t_1], [t_1, t_2], ..., [t_{T-2}, t_{T-1}]]``.
+
+    Args:
+        ts: Monotonic time coordinates of shape ``(T,)``.
+
+    Returns:
+        Array of shape ``(T - 1, 2)`` of consecutive time pairs.
+
+    Examples:
+        >>> import jax.numpy as jnp
+        >>> from vardax import time_patches
+        >>> time_patches(jnp.arange(4.0))
+        Array([[0., 1.],
+               [1., 2.],
+               [2., 3.]], dtype=float32)
+    """
+    return jnp.stack([ts[:-1], ts[1:]], axis=-1)
 
 
 def trajectory_to_xr_dataset(
@@ -24,6 +60,8 @@ def trajectory_to_xr_dataset(
     Returns:
         Dataset with a ``"state"`` DataArray of dims ``(time, feature)``.
     """
+    import xarray as xr
+
     states_np = np.asarray(states)
     time_np = np.asarray(time_coords)
     n_features = states_np.shape[1]
@@ -62,6 +100,8 @@ def extract_patches(
         Dataset with a ``"state"`` DataArray of dims
         ``(patch, time, feature)``.
     """
+    import xarray as xr
+
     rng = np.random.default_rng(seed)
     state = ds["state"]
     n_time = state.sizes["time"]

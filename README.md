@@ -78,10 +78,12 @@ from vardax.models import StrongFourDVar
 model = StrongFourDVar(
     forward=somax_model,
     obs_op=AveragingKernel(A=A, x_a=xa, h=h),
-    prior_mean=x_b, prior_cov_op=B_op, obs_cov_op=R_op,
+    prior_mean=x_b,
+    prior_cov_op=B_op,
+    obs_cov_op=R_op,
     minimiser=optx.NonlinearCG(rtol=1e-5),
-    minimiser_adjoint=optx.ImplicitAdjoint(),           # IFT at the optimum
-    forward_adjoint=dfx.BacksolveAdjoint(),             # constant-memory adjoint ODE
+    minimiser_adjoint=optx.ImplicitAdjoint(),  # IFT at the optimum
+    forward_adjoint=dfx.BacksolveAdjoint(),  # constant-memory adjoint ODE
 )
 ```
 
@@ -98,7 +100,7 @@ import pipekit_cycle as pc
 da_cycle = pc.DACycle(
     forward_model=somax_model,
     obs_op=AveragingKernel(...),
-    analysis_step=model.as_analysis_step(),   # any of the seven
+    analysis_step=model.as_analysis_step(),  # any of the seven
     obs_source=satellite_loader,
     n_steps=n_assimilation_windows,
 )
@@ -148,7 +150,7 @@ model = vdx.FourDVarNet1D(
     latent_dim=8,
     hidden_dim=16,
     n_solver_steps=15,
-    solver_adjoint=OneStepAdjoint(),   # Bolte et al. (2023), O(1) memory
+    solver_adjoint=OneStepAdjoint(),  # Bolte et al. (2023), O(1) memory
     key=jax.random.PRNGKey(0),
 )
 

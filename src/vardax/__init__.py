@@ -38,10 +38,12 @@ from vardax._src.amortized import (
     ScoreDiffusionHead,
 )
 from vardax._src.costs import (
+    background_cost,
     decomposed_loss,
     obs_cost_1d,
     obs_cost_2d,
     prior_cost,
+    strong_variational_cost,
     variational_cost,
     variational_cost_grad,
 )
@@ -87,6 +89,11 @@ from vardax._src.priors import (
     L96Prior,
     MLPAEPrior1D,
 )
+from vardax._src.priors_dynamical import (
+    DynamicalPrior,
+    DynIncrements,
+    DynTrajectory,
+)
 from vardax._src.protocols import (
     AnalysisStep,
     CostFunction,
@@ -120,6 +127,7 @@ from vardax._src.training import (
     train_step,
 )
 from vardax._src.utils.dynamical_systems import simulate_lorenz96
+from vardax._src.utils.patches import time_patches
 from vardax._src.utils.validation import (
     assert_adjoint_calibrated,
     assert_posterior_agreement,
@@ -161,10 +169,12 @@ __all__ = [
     "LaplaceCovariance",
     "Posterior",
     # Costs
+    "background_cost",
     "decomposed_loss",
     "obs_cost_1d",
     "obs_cost_2d",
     "prior_cost",
+    "strong_variational_cost",
     "variational_cost",
     "variational_cost_grad",
     # Priors
@@ -172,6 +182,9 @@ __all__ = [
     "BilinAEPrior2D",
     "BilinAEPrior2DMultivar",
     "ConvAEPrior1D",
+    "DynIncrements",
+    "DynTrajectory",
+    "DynamicalPrior",
     "IdentityPrior",
     "L63Prior",
     "L96Prior",
@@ -232,6 +245,7 @@ __all__ = [
     "train_step",
     # Dynamical systems
     "simulate_lorenz96",
+    "time_patches",
     # Visualization
     "plot_l96_grid",
     "plot_l96_trajectories",
