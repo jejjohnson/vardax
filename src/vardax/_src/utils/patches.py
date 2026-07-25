@@ -1,11 +1,21 @@
-"""xarray patch extraction utilities for time-series data."""
+"""xarray patch extraction utilities for time-series data.
+
+``xarray`` is an optional dependency (the ``[data]`` extra) and is
+imported lazily inside the functions that need it, so that core-path
+imports of this module (e.g. ``time_patches`` via the package
+initializer) work on a base install.
+"""
 
 from __future__ import annotations
+
+from typing import TYPE_CHECKING
 
 import jax.numpy as jnp
 from jaxtyping import Array, Float
 import numpy as np
-import xarray as xr
+
+if TYPE_CHECKING:
+    import xarray as xr
 
 
 def time_patches(ts: Float[Array, T]) -> Float[Array, "T-1 2"]:  # type: ignore[unresolved-reference]  # ty:ignore[unresolved-reference]
@@ -50,6 +60,8 @@ def trajectory_to_xr_dataset(
     Returns:
         Dataset with a ``"state"`` DataArray of dims ``(time, feature)``.
     """
+    import xarray as xr
+
     states_np = np.asarray(states)
     time_np = np.asarray(time_coords)
     n_features = states_np.shape[1]
@@ -88,6 +100,8 @@ def extract_patches(
         Dataset with a ``"state"`` DataArray of dims
         ``(patch, time, feature)``.
     """
+    import xarray as xr
+
     rng = np.random.default_rng(seed)
     state = ds["state"]
     n_time = state.sizes["time"]

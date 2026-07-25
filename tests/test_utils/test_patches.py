@@ -91,3 +91,27 @@ class TestExtractPatches:
         r1 = extract_patches(ds, n_patches=5, n_timesteps=10, seed=0)
         r2 = extract_patches(ds, n_patches=5, n_timesteps=10, seed=0)
         np.testing.assert_array_equal(r1["state"].values, r2["state"].values)
+
+
+class TestTimePatches:
+    def test_pairs(self):
+        import jax.numpy as jnp
+
+        from vardax import time_patches
+
+        out = time_patches(jnp.array([0.0, 0.1, 0.2, 0.3]))
+        assert out.shape == (3, 2)
+        assert np.allclose(np.asarray(out), [[0.0, 0.1], [0.1, 0.2], [0.2, 0.3]])
+
+
+class TestXarrayIsLazy:
+    def test_core_import_does_not_load_xarray(self):
+        # xarray lives in the optional [data] extra; the core import path
+        # (vardax.__init__ -> priors_dynamical -> utils.patches) must not
+        # pull it in (Codex P1 on PR #60).
+        import subprocess
+        import sys
+
+        code = "import vardax, sys; sys.exit(1 if 'xarray' in sys.modules else 0)"
+        result = subprocess.run([sys.executable, "-c", code], check=False)
+        assert result.returncode == 0, "plain `import vardax` loaded xarray"

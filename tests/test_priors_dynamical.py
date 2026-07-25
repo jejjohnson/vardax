@@ -30,6 +30,25 @@ class TestDynamicalPriorBase:
         prior = DynIncrements(model=decay, solver=dfx.Euler())
         assert isinstance(prior.solver, dfx.Euler)
 
+    def test_fixed_step_solver_gets_constant_controller(self):
+        # Euler provides no error estimate; the default controller must not
+        # be adaptive, and integration must actually work.
+        prior = DynTrajectory(model=decay, solver=dfx.Euler())
+        assert isinstance(prior.stepsize, dfx.ConstantStepSize)
+        ts = jnp.linspace(0.0, 0.5, 6)
+        traj = prior(jnp.array([1.0, 2.0, -1.0]), ts)
+        assert traj.shape == (6, 3)
+        assert bool(jnp.all(jnp.isfinite(traj)))
+
+    def test_adaptive_solver_keeps_pid_controller(self):
+        prior = DynTrajectory(model=decay, solver=dfx.Tsit5())
+        assert isinstance(prior.stepsize, dfx.PIDController)
+
+    def test_explicit_stepsize_respected(self):
+        controller = dfx.ConstantStepSize()
+        prior = DynTrajectory(model=decay, stepsize=controller)
+        assert prior.stepsize is controller
+
 
 class TestDynTrajectory:
     def test_call_shape(self):

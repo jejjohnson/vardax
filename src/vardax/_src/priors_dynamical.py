@@ -73,8 +73,12 @@ class DynamicalPrior(eqx.Module):
             ``diffeqsolve`` (e.g. learnable ODE parameters ``θ``).
             Overridable per call.
         solver: Diffrax solver (default :class:`diffrax.Tsit5`).
-        stepsize: Diffrax step-size controller (default adaptive
-            :class:`diffrax.PIDController`).
+        stepsize: Diffrax step-size controller. Defaults to an adaptive
+            :class:`diffrax.PIDController` for solvers that provide error
+            estimates (:class:`diffrax.AbstractAdaptiveSolver` subclasses),
+            and to :class:`diffrax.ConstantStepSize` for fixed-step solvers
+            such as :class:`diffrax.Euler`, which cannot drive an adaptive
+            controller.
         adjoint: Diffrax adjoint strategy (default
             :class:`diffrax.RecursiveCheckpointAdjoint`).
     """
@@ -96,11 +100,14 @@ class DynamicalPrior(eqx.Module):
         self.model = model
         self.params = params
         self.solver = solver if solver is not None else dfx.Tsit5()
-        self.stepsize = (
-            stepsize
-            if stepsize is not None
-            else dfx.PIDController(rtol=1e-5, atol=1e-5)
-        )
+        if stepsize is not None:
+            self.stepsize = stepsize
+        elif isinstance(self.solver, dfx.AbstractAdaptiveSolver):
+            self.stepsize = dfx.PIDController(rtol=1e-5, atol=1e-5)
+        else:
+            # Fixed-step solvers (e.g. Euler) provide no error estimate and
+            # cannot drive an adaptive controller.
+            self.stepsize = dfx.ConstantStepSize()
         self.adjoint = (
             adjoint if adjoint is not None else dfx.RecursiveCheckpointAdjoint()
         )
