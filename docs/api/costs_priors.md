@@ -22,7 +22,7 @@ implements.
     options:
       show_root_heading: false
       show_root_toc_entry: false
-      members: [variational_cost, variational_cost_grad, obs_cost_1d, obs_cost_2d, prior_cost, decomposed_loss]
+      members: [variational_cost, variational_cost_grad, obs_cost_1d, obs_cost_2d, prior_cost, decomposed_loss, strong_variational_cost, background_cost]
 
 ## Priors
 
@@ -38,6 +38,21 @@ manifold.
       show_root_heading: false
       show_root_toc_entry: false
       members: [IdentityPrior, L63Prior, L96Prior, MLPAEPrior1D, ConvAEPrior1D, BilinAEPrior1D, BilinAEPrior2D, BilinAEPrior2DMultivar]
+
+## Dynamical priors
+
+ODE-based temporal priors ported from mfourdvar (Decision D18):
+`DynIncrements` scores one-step increments, `DynTrajectory` scores the
+full rollout from the initial state. Both satisfy the
+[`TemporalPrior`](protocols.md) protocol; `bind(ts)` adapts either to
+the static [`Prior`](protocols.md) seam, and `as_forward_model(dt)`
+adapts the wrapped ODE to `pipekit_cycle.ForwardModel`.
+
+::: vardax
+    options:
+      show_root_heading: false
+      show_root_toc_entry: false
+      members: [DynamicalPrior, DynIncrements, DynTrajectory]
 
 ## 4DVarNet inner-loop solvers
 

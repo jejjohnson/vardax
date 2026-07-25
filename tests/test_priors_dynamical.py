@@ -133,3 +133,86 @@ class TestDynIncrements:
         x = jnp.ones((4, 3))
         loss = eqx.filter_jit(prior.loss)(x, ts)
         assert jnp.isfinite(loss)
+
+
+class TestReconstructAndBind:
+    """Decision D18: reconstruction semantics and the Prior bridge."""
+
+    def test_trajectory_reconstruct_matches_rollout(self):
+        prior = DynTrajectory(model=decay)
+        ts = jnp.linspace(0.0, 0.5, 6)
+        x = jax.random.normal(jax.random.PRNGKey(0), (6, 3))
+        rec = prior.reconstruct(x, ts)
+        assert rec.shape == x.shape
+        assert jnp.allclose(rec, prior(x[0], ts))
+
+    def test_increments_reconstruct_shape_and_anchor(self):
+        prior = DynIncrements(model=decay)
+        ts = jnp.linspace(0.0, 0.5, 6)
+        x = jax.random.normal(jax.random.PRNGKey(1), (6, 3))
+        rec = prior.reconstruct(x, ts)
+        assert rec.shape == x.shape
+        # First element anchors to the input; residual there is zero.
+        assert jnp.allclose(rec[0], x[0])
+
+    def test_increments_residual_matches_loss(self):
+        prior = DynIncrements(model=decay)
+        ts = jnp.linspace(0.0, 0.5, 6)
+        x = jax.random.normal(jax.random.PRNGKey(2), (6, 3))
+        residual = jnp.sum((x - prior.reconstruct(x, ts)) ** 2)
+        assert jnp.allclose(residual, prior.loss(x, ts), atol=1e-5)
+
+    def test_bound_prior_in_variational_cost(self):
+        # A bound temporal prior drops into the weak-constraint cost as-is.
+        from vardax import Batch1D, variational_cost
+
+        prior = DynTrajectory(model=decay)
+        ts = jnp.linspace(0.0, 0.5, 6)
+        traj = prior(jnp.ones(3), ts)
+        x = traj[None, :, :]  # (B=1, T, N)
+        batch = Batch1D(input=x, mask=jnp.ones_like(x))
+
+        bound = prior.bind(ts)
+
+        def batched_bound(z):
+            return jax.vmap(bound)(z)
+
+        # State equals both the observations and its own rollout -> ~0 cost.
+        cost = variational_cost(x, batch, batched_bound)
+        assert float(cost) < 1e-6
+
+    def test_bind_closes_over_params(self):
+        prior = DynTrajectory(model=decay, params=1.0)
+        ts = jnp.linspace(0.0, 0.3, 4)
+        x = jnp.ones((4, 3))
+        fast = prior.bind(ts, params=5.0)(x)
+        slow = prior.bind(ts)(x)
+        assert not jnp.allclose(fast, slow)
+
+
+class TestAsForwardModel:
+    """Decision D18: pipekit_cycle.ForwardModel adapter."""
+
+    def test_step_matches_one_step_integration(self):
+        prior = DynTrajectory(model=decay)
+        fwd = prior.as_forward_model(dt=0.1)
+        state = jnp.array([1.0, 2.0, -1.0])
+        stepped = fwd.step(state, 0.1)
+        # dy/dt = -y  =>  y(dt) = y0 exp(-dt)
+        assert jnp.allclose(stepped, state * jnp.exp(-0.1), atol=1e-4)
+
+    def test_dt_and_signature(self):
+        fwd = DynIncrements(model=decay).as_forward_model(dt=0.05)
+        assert fwd.dt == 0.05
+        assert fwd.state_signature is None
+
+    def test_drives_rollout(self):
+        # Repeated stepping reproduces the trajectory rollout.
+        prior = DynTrajectory(model=decay)
+        fwd = prior.as_forward_model(dt=0.1)
+        ts = jnp.linspace(0.0, 0.3, 4)
+        traj = prior(jnp.ones(3), ts)
+        x = jnp.ones(3)
+        for t in range(1, 4):
+            x = fwd.step(x, 0.1)
+            assert jnp.allclose(x, traj[t], atol=1e-4)

@@ -103,6 +103,7 @@ from vardax._src.protocols import (
     ObservationOperator,
     PosteriorAdapter,
     Prior,
+    TemporalPrior,
 )
 from vardax._src.solver import (
     SolverState1D,
@@ -126,7 +127,7 @@ from vardax._src.training import (
     train_loss_fn,
     train_step,
 )
-from vardax._src.utils.dynamical_systems import simulate_lorenz96
+from vardax._src.utils.dynamical_systems import simulate_lorenz63, simulate_lorenz96
 from vardax._src.utils.patches import time_patches
 from vardax._src.utils.validation import (
     assert_adjoint_calibrated,
@@ -155,6 +156,7 @@ __all__ = [
     "ObservationOperator",
     "PosteriorAdapter",
     "Prior",
+    "TemporalPrior",
     # Observation operators (Decision D9)
     "AveragingKernel",
     "InstrumentRegistry",
@@ -244,6 +246,7 @@ __all__ = [
     "train_loss_fn",
     "train_step",
     # Dynamical systems
+    "simulate_lorenz63",
     "simulate_lorenz96",
     "time_patches",
     # Visualization
