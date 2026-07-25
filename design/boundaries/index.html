@@ -1,0 +1,4436 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="JAX-native data assimilation inference — seven peer analysis methods built on pipekit-cycle protocols.">
+      
+      
+        <meta name="author" content="J. Emmanuel Johnson">
+      
+      
+      
+        <link rel="prev" href="../architecture/">
+      
+      
+        <link rel="next" href="../decisions/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Boundaries - vardax</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#vardax-boundaries" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow md-header--lifted" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="vardax" class="md-header__button md-logo" aria-label="vardax" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            vardax
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Boundaries
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/jejjohnson/vardax" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    jejjohnson/vardax
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+    
+      
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../.." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../api/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  API Reference
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../01_problem_setting/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Mathematical Reference
+
+        </a>
+      </li>
+    
+  
+
+    
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Design Docs
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ul>
+  </div>
+</nav>
+    
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="vardax" class="md-nav__button md-logo" aria-label="vardax" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    vardax
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/jejjohnson/vardax" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    jejjohnson/vardax
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../api/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_2" id="__nav_2_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    API Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/models/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Models
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/amortized/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Amortized Inference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/obs_operators/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Observation Operators
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/posterior/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Posterior Covariance
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/costs_priors/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Costs, Priors & Solvers
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/training/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Training & Adjoints
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/cycle/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cycle Integration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/protocols/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Protocols & Types
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/utils/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Utilities & Diagnostics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Mathematical Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Mathematical Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_1" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_1" id="__nav_3_1_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Foundation
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_1_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_1">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Foundation
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../01_problem_setting/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    1. Problem Setting
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../02_observation_model/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2. Observation Model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../03_dynamical_model/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    3. Dynamical Model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_2" id="__nav_3_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Analysis Methods
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Analysis Methods
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../04_oi_blue/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    4. Optimal Interpolation / BLUE
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../05_threedvar/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    5. 3DVar
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../06_strong_4dvar/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    6. Strong-constraint 4DVar
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../07_weak_4dvar/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    7. Weak-constraint 4DVar
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../08_incremental_4dvar/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    8. Incremental 4DVar with CVT
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../09_4dvarnet/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    9. 4DVarNet — Learned 4DVar
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../10_amortized_inference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    10. Amortized Inference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_3" id="__nav_3_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cross-cutting
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Cross-cutting
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../11_observation_operators/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    11. Observation Operators
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../12_adjoint_methods/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    12. Adjoint Methods
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../13_posterior_covariance/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    13. Posterior Covariance
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../14_six_step_cycle/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    14. Six-Step Inference Cycle
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_4" id="__nav_3_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    End-to-end Examples
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    End-to-end Examples
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../15_lorenz_examples/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    15. Lorenz Examples
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../16_ssh_example/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    16. SSH Reconstruction
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../17_methane_example/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    17. Methane Single-Overpass
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../18_latent_da/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    18. Latent Variational DA
+  
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--draft"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_5" id="__nav_3_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Applications & Foundations
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Applications & Foundations
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../19_physical_models/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    19. Physical Models & ODE Priors
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../20_uncertainty/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    20. Uncertainty Quantification
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../21_oceanbench/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    21. OceanBench SSH Applications
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_6" id="__nav_3_6_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../notation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Notation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../references/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    References
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" checked>
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Design Docs
+  
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--draft"></span>
+  
+
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_4" id="__nav_4_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Design Docs
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../vision/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Vision
+  
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--draft"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--draft"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Boundaries
+  
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--draft"></span>
+  
+
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Boundaries
+  
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--draft"></span>
+  
+
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#what-vardax-does-not-do" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What vardax does NOT do
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ownership-map" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Ownership Map
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-where-does-x-go-test" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The "where does X go" test
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#dependency-graph" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Dependency graph
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#roadmap-epics-0-through-13" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Roadmap — Epics 0 through 13
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Roadmap — Epics 0 through 13">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#epic-0-equinox-migration-foundational" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Epic 0: Equinox Migration (foundational)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#epic-1-protocol-alignment-decision-d8" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Epic 1: Protocol Alignment (Decision D8)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#epic-2-observation-operators-decision-d9" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Epic 2: Observation Operators (Decision D9)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#epic-25-classical-da-methods-new-in-v04-decisions-d14-d16" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Epic 2.5: Classical DA Methods (New in v0.4 — Decisions D14, D16)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#epic-3-adjoint-composition-new-in-v04-decision-d15" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Epic 3: Adjoint Composition (New in v0.4 — Decision D15)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#epic-4-incremental-4dvar-decision-d11" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Epic 4: Incremental 4DVar (Decision D11)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#epic-5-posterior-adapters-decision-d10" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Epic 5: Posterior Adapters (Decision D10)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#epic-6-fourdvarnet" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Epic 6: FourDVarNet
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#epic-7-pipekit-integration-decision-d8" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Epic 7: pipekit Integration (Decision D8)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#epic-8-amortized-inference-decision-d12" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Epic 8: Amortized Inference (Decision D12)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#epic-9-hybrid-ensemble-variational" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Epic 9: Hybrid Ensemble-Variational
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#epic-10-documentation-math-reference" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Epic 10: Documentation &amp; Math Reference
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#epic-11-real-world-tutorials" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Epic 11: Real-World Tutorials
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#epic-12-performance-benchmarking" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Epic 12: Performance Benchmarking
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#epic-13-operational-deployment-patterns" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Epic 13: Operational Deployment Patterns
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#dependency-graph_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Dependency graph
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rough-timeline" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Rough timeline
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#open-questions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Open Questions
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#testing-strategy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Testing Strategy
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Testing Strategy">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#test-organisation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Test organisation
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#test-categories" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Test categories
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#test-priorities" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Test priorities
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#relationship-to-downstream-libraries" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Relationship to Downstream Libraries
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Relationship to Downstream Libraries">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#key-contract-jax-pipekit-transform-compatibility" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Key contract: JAX + pipekit transform compatibility
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#version-history" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Version History
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Version History">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#current-v016-flax-nnx-implementation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Current: v0.1.6 (Flax NNX implementation)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#upcoming-v020-equinox-native-pipekit-aligned" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Upcoming (v0.2.0+ — equinox-native, pipekit-aligned)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#references" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        References
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../decisions/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Decisions
+  
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--draft"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../pipekit_composition/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    pipekit Composition
+  
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--draft"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../posterior/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Posterior Adapter
+  
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--draft"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../latent_da/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Latent DA
+  
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--draft"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+          
+          
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_9" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../api/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API
+  
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--draft"></span>
+  
+
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_4_9" id="__nav_4_9_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_9_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_9">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    API
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api/primitives/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Primitives (Layer 0)
+  
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--draft"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api/components/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Components (Layer 1)
+  
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--draft"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api/observation_operators/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Observation Operators
+  
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--draft"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api/models/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Models (Layer 2)
+  
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--draft"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+          
+          
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_10" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../examples/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Examples
+  
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--draft"></span>
+  
+
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_4_10" id="__nav_4_10_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_10_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_10">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Examples
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../examples/primitives/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Primitives
+  
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--draft"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../examples/components/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Components
+  
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--draft"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../examples/models/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Models
+  
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--draft"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../examples/integration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Integration
+  
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--draft"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../examples/use_cases/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Use Cases
+  
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--draft"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#what-vardax-does-not-do" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What vardax does NOT do
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ownership-map" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Ownership Map
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-where-does-x-go-test" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The "where does X go" test
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#dependency-graph" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Dependency graph
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#roadmap-epics-0-through-13" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Roadmap — Epics 0 through 13
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Roadmap — Epics 0 through 13">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#epic-0-equinox-migration-foundational" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Epic 0: Equinox Migration (foundational)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#epic-1-protocol-alignment-decision-d8" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Epic 1: Protocol Alignment (Decision D8)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#epic-2-observation-operators-decision-d9" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Epic 2: Observation Operators (Decision D9)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#epic-25-classical-da-methods-new-in-v04-decisions-d14-d16" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Epic 2.5: Classical DA Methods (New in v0.4 — Decisions D14, D16)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#epic-3-adjoint-composition-new-in-v04-decision-d15" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Epic 3: Adjoint Composition (New in v0.4 — Decision D15)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#epic-4-incremental-4dvar-decision-d11" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Epic 4: Incremental 4DVar (Decision D11)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#epic-5-posterior-adapters-decision-d10" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Epic 5: Posterior Adapters (Decision D10)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#epic-6-fourdvarnet" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Epic 6: FourDVarNet
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#epic-7-pipekit-integration-decision-d8" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Epic 7: pipekit Integration (Decision D8)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#epic-8-amortized-inference-decision-d12" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Epic 8: Amortized Inference (Decision D12)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#epic-9-hybrid-ensemble-variational" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Epic 9: Hybrid Ensemble-Variational
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#epic-10-documentation-math-reference" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Epic 10: Documentation &amp; Math Reference
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#epic-11-real-world-tutorials" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Epic 11: Real-World Tutorials
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#epic-12-performance-benchmarking" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Epic 12: Performance Benchmarking
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#epic-13-operational-deployment-patterns" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Epic 13: Operational Deployment Patterns
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#dependency-graph_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Dependency graph
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rough-timeline" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Rough timeline
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#open-questions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Open Questions
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#testing-strategy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Testing Strategy
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Testing Strategy">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#test-organisation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Test organisation
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#test-categories" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Test categories
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#test-priorities" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Test priorities
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#relationship-to-downstream-libraries" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Relationship to Downstream Libraries
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Relationship to Downstream Libraries">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#key-contract-jax-pipekit-transform-compatibility" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Key contract: JAX + pipekit transform compatibility
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#version-history" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Version History
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Version History">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#current-v016-flax-nnx-implementation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Current: v0.1.6 (Flax NNX implementation)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#upcoming-v020-equinox-native-pipekit-aligned" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Upcoming (v0.2.0+ — equinox-native, pipekit-aligned)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#references" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        References
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+    <a href="https://github.com/jejjohnson/vardax/edit/main/docs/design/boundaries.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
+    </a>
+  
+  
+
+
+<h1 id="vardax-boundaries">vardax — Boundaries<a class="headerlink" href="#vardax-boundaries" title="Permanent link">&para;</a></h1>
+<h2 id="what-vardax-does-not-do">What vardax does NOT do<a class="headerlink" href="#what-vardax-does-not-do" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Define forward models.</strong> Geophysics → <code>somax</code> (shallow water, QG,
+  MQG, SWM, spherical). Atmospheric transport / methane → <code>plumax</code>
+  (Gaussian plume, Lagrangian Markov-1, Eulerian FV, RTM). Vardax
+  accepts any of them via <code>pipekit_cycle.ForwardModel</code>.</li>
+<li><strong>Own spatial operators.</strong> Finite-volume → <code>finitevolX</code>. Spectral →
+  <code>spectraldiffx</code>. Used inside <code>somax</code> / <code>plumax</code>, not by vardax.</li>
+<li><strong>Own structured linear algebra.</strong> Matérn factorisations, Kronecker /
+  LowRank / BlockDiag operators → <code>gaussx</code>. Vardax composes them.</li>
+<li><strong>Own optimisers.</strong> Gauss-Newton, BFGS, NonlinearCG, fixed-point
+  iteration → <code>optimistix</code>. Vardax wraps them as <code>Minimiser</code> for the
+  <code>CostFunction</code> interface but does not reimplement them.</li>
+<li><strong>Own ODE solvers or adjoints.</strong> <code>diffrax</code> provides the integrators
+  and the <code>RecursiveCheckpointAdjoint</code> / <code>BacksolveAdjoint</code> /
+  <code>ForwardMode</code> / <code>DirectAdjoint</code> family. Vardax passes them through as
+  constructor slots (Decision D15).</li>
+<li><strong>Own ensemble methods.</strong> EnKF, EnKS, EnKI → <code>filterax</code>. Vardax
+  exposes <code>EnsembleCovariance</code> for posterior assembly and accepts
+  ensemble batches, but propagation lives in filterax.</li>
+<li><strong>Own data I/O.</strong> Sensor data → <code>georeader</code>. Labelled arrays →
+  <code>coordax</code> + <code>xarray</code>. Vardax consumes <code>Batch*</code> containers.</li>
+<li><strong>Own experiment orchestration.</strong> Cycles → <code>pipekit-cycle</code>. Training
+  callbacks → <code>pipekit-train</code>. Model storage → <code>pipekit-experiment</code>.</li>
+<li><strong>Provide an opinionated training loop.</strong> <code>train_step</code> / <code>eval_step</code>
+  ship as library code. <code>fit()</code> is example-only.</li>
+</ul>
+<h2 id="ownership-map">Ownership Map<a class="headerlink" href="#ownership-map" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Concern</th>
+<th>Owner</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Variational cost functions (weak / strong / incremental / 3DVar / BLUE)</td>
+<td><strong>vardax</strong></td>
+</tr>
+<tr>
+<td><code>Prior</code> protocol + AE / diffusion / dynamical impls</td>
+<td><strong>vardax</strong></td>
+</tr>
+<tr>
+<td><code>ObservationOperator</code> impls (masked, AK, multi-instrument)</td>
+<td><strong>vardax</strong></td>
+</tr>
+<tr>
+<td><code>GradModulator</code> protocol + impls (<code>FourDVarNet</code> only)</td>
+<td><strong>vardax</strong></td>
+</tr>
+<tr>
+<td><code>AnalysisStep</code> impls (the seven Layer 2 classes)</td>
+<td><strong>vardax</strong></td>
+</tr>
+<tr>
+<td><code>PosteriorAdapter</code> impls (Laplace / GN-Hessian / Ensemble)</td>
+<td><strong>vardax</strong></td>
+</tr>
+<tr>
+<td>Control-variable transform machinery</td>
+<td><strong>vardax</strong> (composes <code>gaussx</code>)</td>
+</tr>
+<tr>
+<td><code>train_step</code> / <code>eval_step</code></td>
+<td><strong>vardax</strong> (thin)</td>
+</tr>
+<tr>
+<td><code>fit()</code> training loop</td>
+<td><strong>user code / examples</strong></td>
+</tr>
+<tr>
+<td>Geophysical forward models (SWM, QG, MQG, primitive eq.)</td>
+<td><strong>somax</strong></td>
+</tr>
+<tr>
+<td>Atmospheric transport forward models</td>
+<td><strong>plumax</strong></td>
+</tr>
+<tr>
+<td>Radiative transfer (HAPI LUTs, neural RTM)</td>
+<td><strong>plumax</strong> (RTM stack)</td>
+</tr>
+<tr>
+<td>Spatial operators (FV, spectral)</td>
+<td><strong>finitevolX / spectraldiffx</strong></td>
+</tr>
+<tr>
+<td>ODE / SDE integration + adjoints</td>
+<td><strong>diffrax</strong></td>
+</tr>
+<tr>
+<td>Optimisers + adjoints</td>
+<td><strong>optimistix</strong></td>
+</tr>
+<tr>
+<td>Linear solvers (CG, GMRES, Lanczos)</td>
+<td><strong>lineax</strong></td>
+</tr>
+<tr>
+<td>Structured operators (Matérn, Kronecker, LowRank)</td>
+<td><strong>gaussx</strong></td>
+</tr>
+<tr>
+<td>Ensemble propagation (EnKF / EnKS / EnKI)</td>
+<td><strong>filterax</strong></td>
+</tr>
+<tr>
+<td>MCMC sampling</td>
+<td><strong>user code</strong> (vardax provides costs / priors as building blocks for NumPyro)</td>
+</tr>
+<tr>
+<td>Cycle orchestration (<code>DACycle</code>, <code>SmootherCycle</code>)</td>
+<td><strong>pipekit-cycle</strong></td>
+</tr>
+<tr>
+<td>Run tracking</td>
+<td><strong>pipekit-experiment</strong></td>
+</tr>
+<tr>
+<td>Trained model persistence</td>
+<td><strong>pipekit-jax</strong> + <strong>pipekit-experiment</strong></td>
+</tr>
+<tr>
+<td>Sensor data I/O</td>
+<td><strong>georeader</strong></td>
+</tr>
+<tr>
+<td>Coordinate-aware arrays</td>
+<td><strong>coordax</strong></td>
+</tr>
+<tr>
+<td>Geospatial catalogs</td>
+<td><strong>GeoCatalog</strong> (geotoolz)</td>
+</tr>
+</tbody>
+</table>
+<h2 id="the-where-does-x-go-test">The "where does X go" test<a class="headerlink" href="#the-where-does-x-go-test" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Question</th>
+<th style="text-align: left;">Answer</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Is it a DA analysis algorithm (cost, minimiser wiring, adjoint composition)?</td>
+<td style="text-align: left;">→ <strong>vardax</strong></td>
+</tr>
+<tr>
+<td>Could a non-DA code use it as a forward model?</td>
+<td style="text-align: left;">→ somax / plumax</td>
+</tr>
+<tr>
+<td>Is it a spatial differential operator?</td>
+<td style="text-align: left;">→ finitevolX / spectraldiffx</td>
+</tr>
+<tr>
+<td>Is it an ODE / SDE integrator?</td>
+<td style="text-align: left;">→ diffrax</td>
+</tr>
+<tr>
+<td>Is it an adjoint method for ODE integration?</td>
+<td style="text-align: left;">→ diffrax</td>
+</tr>
+<tr>
+<td>Is it an optimisation algorithm?</td>
+<td style="text-align: left;">→ optimistix</td>
+</tr>
+<tr>
+<td>Is it an adjoint method for optimisation?</td>
+<td style="text-align: left;">→ optimistix</td>
+</tr>
+<tr>
+<td>Is it a linear solver primitive (CG, GMRES, Lanczos)?</td>
+<td style="text-align: left;">→ lineax</td>
+</tr>
+<tr>
+<td>Is it a structured matrix factorisation (Matérn, Kronecker, LowRank)?</td>
+<td style="text-align: left;">→ gaussx</td>
+</tr>
+<tr>
+<td>Is it ensemble propagation / Kalman update?</td>
+<td style="text-align: left;">→ filterax</td>
+</tr>
+<tr>
+<td>Is it a forecast/analysis cycle orchestrator?</td>
+<td style="text-align: left;">→ pipekit-cycle</td>
+</tr>
+<tr>
+<td>Is it about persisting / versioning trained models?</td>
+<td style="text-align: left;">→ pipekit-jax + pipekit-experiment</td>
+</tr>
+</tbody>
+</table>
+<h2 id="dependency-graph">Dependency graph<a class="headerlink" href="#dependency-graph" title="Permanent link">&para;</a></h2>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>                georeader ─→ coordax ─→ pipekit (carrier-agnostic core)
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>                                            ↓
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>                                       pipekit-cycle ─→ DACycle, SmootherCycle
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>                                            ↑
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>finitevolX ──→ somax  ┐                     │
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>spectraldiffx ─────┘  │                     │
+</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>                      │   ┌──→ gaussx ──┐   │
+</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>                      ↓   │             ↓   │
+</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>                   plumax │           vardax ─→ pipekit-jax ─→ pipekit-experiment
+</span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>                          │             ↑   │                     ↑
+</span><span id="__span-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>                          │           lineax │                     │
+</span><span id="__span-0-12"><a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>                          ↓           optimistix                   │
+</span><span id="__span-0-13"><a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a>                       diffrax ──────────────┘                     │
+</span><span id="__span-0-14"><a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a>                                                              pipekit-train
+</span><span id="__span-0-15"><a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a>                                                                   │
+</span><span id="__span-0-16"><a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a>                                                              filterax (optional)
+</span></code></pre></div>
+<h2 id="roadmap-epics-0-through-13">Roadmap — Epics 0 through 13<a class="headerlink" href="#roadmap-epics-0-through-13" title="Permanent link">&para;</a></h2>
+<h3 id="epic-0-equinox-migration-foundational">Epic 0: Equinox Migration (foundational)<a class="headerlink" href="#epic-0-equinox-migration-foundational" title="Permanent link">&para;</a></h3>
+<p>Blocks every other epic. Replace Flax NNX with equinox; replace
+<code>nnx.Optimizer</code> with <code>optax</code> + <code>eqx.filter_value_and_grad</code>; convert
+<code>NamedTuple</code> types to <code>eqx.Module</code>; introduce <code>SolverConfig</code>,
+<code>IncrementalConfig</code>, <code>AmortizedConfig</code> as <code>eqx.Module</code>. Remove <code>flax</code>
+and <code>jaxopt</code>. Add <code>optimistix</code>, <code>lineax</code>, <code>gaussx</code>, <code>pipekit</code>,
+<code>pipekit-cycle</code> as required.</p>
+<h3 id="epic-1-protocol-alignment-decision-d8">Epic 1: Protocol Alignment (Decision D8)<a class="headerlink" href="#epic-1-protocol-alignment-decision-d8" title="Permanent link">&para;</a></h3>
+<p>Vardax classes satisfy <code>pipekit-cycle</code> protocols directly.
+<code>vardax.protocols</code> re-exports <code>ForwardModel</code>, <code>ObservationOperator</code>,
+<code>AnalysisStep</code>. Vardax-specific protocols added for <code>Prior</code>,
+<code>GradModulator</code>, <code>CostFunction</code>, <code>PosteriorAdapter</code>, <code>Minimiser</code>.
+Conformance test suite <code>tests/test_pipekit_protocols.py</code> added.</p>
+<h3 id="epic-2-observation-operators-decision-d9">Epic 2: Observation Operators (Decision D9)<a class="headerlink" href="#epic-2-observation-operators-decision-d9" title="Permanent link">&para;</a></h3>
+<p><code>MaskedIdentity</code>, <code>LinearObs</code>, <code>AveragingKernel(A, x_a, h)</code>,
+<code>MultiInstrumentFusion(registry)</code>, <code>InstrumentRegistry</code>. All expose
+<code>linearize()</code> via <code>lineax.JacobianLinearOperator</code> or a structured
+override.</p>
+<h3 id="epic-25-classical-da-methods-new-in-v04-decisions-d14-d16">Epic 2.5: Classical DA Methods (<strong>New in v0.4 — Decisions D14, D16</strong>)<a class="headerlink" href="#epic-25-classical-da-methods-new-in-v04-decisions-d14-d16" title="Permanent link">&para;</a></h3>
+<p>The classical DA hierarchy as first-class peer classes:</p>
+<ul>
+<li><code>OptimalInterpolation</code> — closed-form BLUE / OI via <code>gaussx</code>. Layer 0
+  primitive <code>blue_analysis(x_b, y, B_op, R_op, H_op)</code>.</li>
+<li><code>ThreeDVar</code> — <code>optimistix.GaussNewton</code> / <code>BFGS</code> over the nonlinear
+  cost.</li>
+<li><code>StrongFourDVar</code> — control = <span class="arithmatex">\(x_0\)</span>, dynamics rollout via diffrax,
+  adjoint via <code>forward_adjoint</code> slot.</li>
+<li><code>WeakFourDVar</code> — augmented control, model-error cost term, separate
+  <code>model_err_cov_op</code> (Q).</li>
+</ul>
+<p>This epic establishes the foundation. <code>FourDVarNet</code> (Epic 6) and
+<code>AmortizedPosterior</code> (Epic 8) are learned variants of these classical
+methods.</p>
+<h3 id="epic-3-adjoint-composition-new-in-v04-decision-d15">Epic 3: Adjoint Composition (<strong>New in v0.4 — Decision D15</strong>)<a class="headerlink" href="#epic-3-adjoint-composition-new-in-v04-decision-d15" title="Permanent link">&para;</a></h3>
+<p>Drop <code>grad_mode</code> enum. Add <code>forward_adjoint: diffrax.AbstractAdjoint</code>
+and <code>minimiser_adjoint: optimistix.AbstractAdjoint</code> constructor slots.
+Validate default selections (<code>RecursiveCheckpointAdjoint</code> for both) via
+the conformance suite. Add <code>BacksolveAdjoint</code> example for long-window
+4DVar.</p>
+<p>Implement <code>vardax._src.adjoints.one_step.OneStepAdjoint(
+optimistix.AbstractAdjoint)</code> as the Bolte 2023 method; goal: contribute
+upstream once stable (Decision D6).</p>
+<h3 id="epic-4-incremental-4dvar-decision-d11">Epic 4: Incremental 4DVar (Decision D11)<a class="headerlink" href="#epic-4-incremental-4dvar-decision-d11" title="Permanent link">&para;</a></h3>
+<p><code>IncrementalFourDVar</code> as the operational fast path. Tangent-linear via
+<code>jax.linearize</code>, Gauss-Newton outer, CG inner via <code>lineax.CG</code>,
+control-variable transform via <code>gaussx.MaternLinearOperator.half()</code>.
+Layer 0 primitives: <code>incremental_cost</code>, <code>cvt_transform</code>,
+<code>gauss_newton_inner</code>, <code>incremental_outer</code>.</p>
+<h3 id="epic-5-posterior-adapters-decision-d10">Epic 5: Posterior Adapters (Decision D10)<a class="headerlink" href="#epic-5-posterior-adapters-decision-d10" title="Permanent link">&para;</a></h3>
+<p><code>LaplaceCovariance</code>, <code>GaussNewtonHessian</code> (Krylov via <code>lineax</code>),
+<code>EnsembleCovariance</code> (filterax bridge). <code>Posterior</code> container.
+<code>GaussianMarkLikelihood</code> serialiser → mark-likelihood for downstream
+population models.</p>
+<h3 id="epic-6-fourdvarnet">Epic 6: <code>FourDVarNet</code><a class="headerlink" href="#epic-6-fourdvarnet" title="Permanent link">&para;</a></h3>
+<p>Learned variant of strong-constraint 4DVar. Learned prior <span class="arithmatex">\(\varphi_\theta\)</span>
+(AE family) + learned gradient modulator <span class="arithmatex">\(\Phi_\phi\)</span> (ConvLSTM / MLP /
+Attention). The inner solver is itself a learned iteration; the adjoint
+choice (<code>RecursiveCheckpointAdjoint</code> / <code>OneStepAdjoint</code> / <code>ImplicitAdjoint</code>)
+comes from the <code>minimiser_adjoint</code> slot (Epic 3).</p>
+<h3 id="epic-7-pipekit-integration-decision-d8">Epic 7: pipekit Integration (Decision D8)<a class="headerlink" href="#epic-7-pipekit-integration-decision-d8" title="Permanent link">&para;</a></h3>
+<p><code>vardax.cycle.VarDACycle(forward, obs_op, model)</code> constructor returning
+a configured <code>pipekit_cycle.DACycle</code>. <code>JaxModelOp</code> wrappers for
+<code>FourDVarNet</code>, <code>AmortizedPosterior</code>. <code>pipekit-train</code> <code>Loss</code> / <code>Callback</code>
+adapters around <code>train_step</code>.</p>
+<h3 id="epic-8-amortized-inference-decision-d12">Epic 8: Amortized Inference (Decision D12)<a class="headerlink" href="#epic-8-amortized-inference-decision-d12" title="Permanent link">&para;</a></h3>
+<p><code>AmortizedPosterior</code> with conditional-flow head (<code>gauss_flows</code>),
+score-based head, and regression head. Simulation-based training loop.
+Six-step cycle validation gates as part of
+<code>tests/test_six_step_validation.py</code>.</p>
+<h3 id="epic-9-hybrid-ensemble-variational">Epic 9: Hybrid Ensemble-Variational<a class="headerlink" href="#epic-9-hybrid-ensemble-variational" title="Permanent link">&para;</a></h3>
+<p><code>EnVarFourDVar</code> hybrid: ensemble cov + variational solve. Depends on
+filterax. Per-instrument bias as joint state element. Ornstein-Uhlenbeck
+process prior on time-varying source (or analogous).</p>
+<h3 id="epic-10-documentation-math-reference">Epic 10: Documentation &amp; Math Reference<a class="headerlink" href="#epic-10-documentation-math-reference" title="Permanent link">&para;</a></h3>
+<p>The 17-chapter math reference (v0.4 rewrite — see
+<a href="../../"><code>../index.md</code></a> for TOC). Includes the seven Layer 2
+methods as separate chapters (4–10), shared foundation chapters (1–3),
+and concrete example chapters (15–17).</p>
+<h3 id="epic-11-real-world-tutorials">Epic 11: Real-World Tutorials<a class="headerlink" href="#epic-11-real-world-tutorials" title="Permanent link">&para;</a></h3>
+<p>OceanBench SSH interpolation walkthrough; methane single-overpass with
+plumax; multi-instrument fusion (TROPOMI + EMIT + GHGSat); incremental
+4DVar tutorial; amortized inference tutorial.</p>
+<h3 id="epic-12-performance-benchmarking">Epic 12: Performance Benchmarking<a class="headerlink" href="#epic-12-performance-benchmarking" title="Permanent link">&para;</a></h3>
+<p>Per-method benchmarks on Lorenz / SSH / methane synthetic problems.
+Adjoint-method memory/time tradeoffs (RecursiveCheckpoint vs Backsolve
+vs ForwardMode). Comparison of FourDVarNet adjoint choices.</p>
+<h3 id="epic-13-operational-deployment-patterns">Epic 13: Operational Deployment Patterns<a class="headerlink" href="#epic-13-operational-deployment-patterns" title="Permanent link">&para;</a></h3>
+<p>FastAPI handler example; persistent GeoCatalog integration; real-time
+alerting demo. The "research → operations arc" worked through
+end-to-end.</p>
+<h3 id="dependency-graph_1">Dependency graph<a class="headerlink" href="#dependency-graph_1" title="Permanent link">&para;</a></h3>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>Epic 0 (equinox migration)
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>  ↓
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>Epic 1 (protocol alignment)  ──→  Epic 2 (obs operators)
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>  ↓                                  ↓
+</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>Epic 2.5 (classical DA)  ──────→ Epic 3 (adjoint composition)
+</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>  ↓                                  ↓
+</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>Epic 4 (incremental 4DVar)  ←── Epic 5 (posterior adapters)
+</span><span id="__span-1-8"><a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a>  ↓
+</span><span id="__span-1-9"><a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a>Epic 6 (FourDVarNet)
+</span><span id="__span-1-10"><a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a>  ↓
+</span><span id="__span-1-11"><a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a>Epic 7 (pipekit integration)  ──→ Epic 8 (amortized) ──→ Epic 9 (hybrid EnVar)
+</span><span id="__span-1-12"><a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a>  ↓
+</span><span id="__span-1-13"><a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a>Epic 10 (docs)  ──→  Epic 11 (tutorials)  ──→  Epic 12 (benchmarks)  ──→  Epic 13 (ops)
+</span></code></pre></div>
+<h3 id="rough-timeline">Rough timeline<a class="headerlink" href="#rough-timeline" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Phase</th>
+<th>Focus</th>
+<th>Order</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Phase 1</td>
+<td>Equinox migration + protocols + obs operators (Epics 0–2)</td>
+<td>First</td>
+</tr>
+<tr>
+<td>Phase 2</td>
+<td><strong>Classical DA + adjoint composition (Epics 2.5, 3)</strong></td>
+<td><strong>Second — foundation for everything learned</strong></td>
+</tr>
+<tr>
+<td>Phase 3</td>
+<td>Incremental + posterior + FourDVarNet (Epics 4–6)</td>
+<td>Third</td>
+</tr>
+<tr>
+<td>Phase 4</td>
+<td>pipekit + amortized + hybrid (Epics 7–9)</td>
+<td>Fourth</td>
+</tr>
+<tr>
+<td>Phase 5</td>
+<td>Docs + tutorials + benchmarks + ops (Epics 10–13)</td>
+<td>Continuous</td>
+</tr>
+</tbody>
+</table>
+<h2 id="open-questions">Open Questions<a class="headerlink" href="#open-questions" title="Permanent link">&para;</a></h2>
+<ol>
+<li>
+<p><strong><code>coordax</code> adoption in <code>Batch*</code>.</strong> Should batches carry
+   <code>coordax.Field</code> instead of <code>Array</code>? Better provenance, but couples
+   vardax to coordax. Defer to Epic 7.</p>
+</li>
+<li>
+<p><strong>3D support depth.</strong> True volumetric <code>*3D</code> classes vs multilayer-2D
+   via <code>eqx.filter_vmap</code> over a leading axis. Decision deferred until
+   first 3D use case (likely Eulerian methane in plumax Tier III).</p>
+</li>
+<li>
+<p><strong><code>numpyro</code> integration depth.</strong> Vardax priors / costs as
+   <code>dist.Distribution</code> objects for NumPyro sampling, or stay JAX-array
+   only? Lean toward JAX-only; users wrap outside vardax.</p>
+</li>
+<li>
+<p><strong><code>gaussx</code> maturity gate.</strong> Incremental 4DVar with CVT depends on
+   <code>gaussx.MaternLinearOperator.half()</code>. If gaussx isn't ready, fall
+   back to <code>lineax</code>-only CG with identity preconditioner. Document the
+   fallback path.</p>
+</li>
+<li>
+<p><strong><code>OneStepAdjoint</code> upstreaming.</strong> When does
+   <code>vardax._src.adjoints.one_step.OneStepAdjoint</code> become
+   <code>optimistix.OneStepAdjoint</code>? Depends on optimistix maintainer
+   appetite. Track via Epic 3.</p>
+</li>
+<li>
+<p><strong>Posterior provenance schema.</strong> Open from v0.3 — refine in Epic 5.</p>
+</li>
+<li>
+<p><strong>Hybrid analysis: which class owns <code>EnVarFourDVar</code>?</strong> Could be in
+   vardax (as the eighth model) or in filterax (as the variational
+   variant of EnKF). Defer to Epic 9.</p>
+</li>
+</ol>
+<h2 id="testing-strategy">Testing Strategy<a class="headerlink" href="#testing-strategy" title="Permanent link">&para;</a></h2>
+<h3 id="test-organisation">Test organisation<a class="headerlink" href="#test-organisation" title="Permanent link">&para;</a></h3>
+<ul>
+<li>One test module per Layer 2 class</li>
+<li>One test module per major Layer 1 family (obs operators, priors, grad
+  mods, posteriors, minimisers)</li>
+<li>Conformance suite: <code>tests/test_pipekit_protocols.py</code></li>
+<li>Six-step cycle validation: <code>tests/test_six_step_validation.py</code></li>
+</ul>
+<h3 id="test-categories">Test categories<a class="headerlink" href="#test-categories" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Category</th>
+<th>What's tested</th>
+<th>Module</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Types</td>
+<td><code>Batch*</code>, <code>Posterior</code> shape validation</td>
+<td><code>test_types.py</code></td>
+</tr>
+<tr>
+<td>Costs</td>
+<td>obs / prior / weak / strong / incremental / 3DVar / BLUE</td>
+<td><code>test_costs.py</code></td>
+</tr>
+<tr>
+<td>Obs operators</td>
+<td><code>MaskedIdentity</code>, <code>LinearObs</code>, <code>AveragingKernel</code>, <code>MultiInstrumentFusion</code> (+ <code>linearize()</code> adjoint test)</td>
+<td><code>test_obs_operators.py</code></td>
+</tr>
+<tr>
+<td>Priors</td>
+<td>All AE archs + <code>DynamicalPrior</code> wrap</td>
+<td><code>test_priors.py</code></td>
+</tr>
+<tr>
+<td>Grad mods</td>
+<td>ConvLSTM / MLP / Attention / Identity (FourDVarNet only)</td>
+<td><code>test_grad_mod.py</code></td>
+</tr>
+<tr>
+<td>Minimisers</td>
+<td>optimistix wrappers — GaussNewton, BFGS, NonlinearCG</td>
+<td><code>test_minimisers.py</code></td>
+</tr>
+<tr>
+<td>Adjoints</td>
+<td><code>RecursiveCheckpointAdjoint</code>, <code>BacksolveAdjoint</code>, <code>OneStepAdjoint</code> correctness</td>
+<td><code>test_adjoints.py</code></td>
+</tr>
+<tr>
+<td>Posterior</td>
+<td>Laplace / GN-Hessian / Ensemble adapters</td>
+<td><code>test_posterior.py</code></td>
+</tr>
+<tr>
+<td>Models — classical</td>
+<td><code>OptimalInterpolation</code>, <code>ThreeDVar</code>, <code>StrongFourDVar</code>, <code>WeakFourDVar</code>, <code>IncrementalFourDVar</code></td>
+<td><code>test_classical_models.py</code></td>
+</tr>
+<tr>
+<td>Models — learned</td>
+<td><code>FourDVarNet</code>, <code>AmortizedPosterior</code></td>
+<td><code>test_learned_models.py</code></td>
+</tr>
+<tr>
+<td>Training</td>
+<td><code>train_step</code>, <code>eval_step</code>, reconstruction loss</td>
+<td><code>test_training.py</code></td>
+</tr>
+<tr>
+<td><strong>Pipekit conformance</strong></td>
+<td>All seven Layer 2 models pass <code>isinstance(model.as_analysis_step(), AnalysisStep)</code>. All obs ops (or their <code>.to_observation_operator()</code> adapters) pass <code>isinstance(..., ObservationOperator)</code>.</td>
+<td><code>test_pipekit_protocols.py</code></td>
+</tr>
+<tr>
+<td>Six-step cycle gates</td>
+<td>Posterior agreement, adjoint calibration, SBC</td>
+<td><code>test_six_step_validation.py</code></td>
+</tr>
+<tr>
+<td>Utils</td>
+<td>Dynamical systems, masks, preprocessing</td>
+<td><code>test_utils/</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="test-priorities">Test priorities<a class="headerlink" href="#test-priorities" title="Permanent link">&para;</a></h3>
+<ol>
+<li><strong>Protocol conformance</strong> — every Layer 2 class satisfies
+   <code>AnalysisStep</code>; every obs op satisfies <code>ObservationOperator</code>.</li>
+<li><strong>Linear-Gaussian baseline</strong> — <code>OptimalInterpolation</code> agrees with
+   <code>ThreeDVar(linear obs op)</code>, agrees with <code>StrongFourDVar(T=0,
+   linear)</code>, agrees with <code>FourDVarNet(IdentityPrior, n_steps=∞)</code> in
+   the linear-Gaussian limit. All four converge to the same posterior.</li>
+<li><strong>JAX transform compatibility</strong> — every component works under
+   <code>jax.jit</code>, <code>jax.grad</code>, <code>eqx.filter_vmap</code>.</li>
+<li><strong>Adjoint correctness</strong> — every adjoint variant produces the same
+   gradient up to floating-point tolerance.</li>
+<li><strong>Dimensional consistency</strong> — 1D / 2D / 3D subclasses produce correct
+   output shapes.</li>
+<li><strong>Six-step cycle gates</strong> — emulator MAP ≈ physics MAP within
+   tolerance (D12).</li>
+</ol>
+<h2 id="relationship-to-downstream-libraries">Relationship to Downstream Libraries<a class="headerlink" href="#relationship-to-downstream-libraries" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Library</th>
+<th>Role</th>
+<th>Coupling</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>somax</code></td>
+<td>Geophysical forward models, dynamical priors</td>
+<td>Optional — accepts via <code>Prior</code> / <code>ForwardModel</code> protocols</td>
+</tr>
+<tr>
+<td><code>plumax</code></td>
+<td>Atmospheric transport + RTM forwards</td>
+<td>Optional — accepts via <code>ForwardModel</code></td>
+</tr>
+<tr>
+<td><code>finitevolX / spectraldiffx</code></td>
+<td>Spatial operators inside somax / plumax</td>
+<td>Indirect</td>
+</tr>
+<tr>
+<td><code>diffrax</code></td>
+<td>ODE integration + adjoints</td>
+<td><strong>Required</strong> (Decision D15)</td>
+</tr>
+<tr>
+<td><code>optimistix</code></td>
+<td>Optimisers + adjoints</td>
+<td><strong>Required</strong> (Decision D15)</td>
+</tr>
+<tr>
+<td><code>lineax</code></td>
+<td>Linear solvers</td>
+<td>Required (incremental 4DVar, AbstractLinearOperator)</td>
+</tr>
+<tr>
+<td><code>gaussx</code></td>
+<td>Structured operators</td>
+<td>Required (CVT, BLUE)</td>
+</tr>
+<tr>
+<td><code>filterax</code></td>
+<td>Ensemble methods</td>
+<td>Optional (<code>[ensemble]</code> extra)</td>
+</tr>
+<tr>
+<td><code>pipekit / pipekit-cycle</code></td>
+<td>Operator composition + cycle protocols</td>
+<td><strong>Required</strong></td>
+</tr>
+<tr>
+<td><code>pipekit-jax / -experiment / -train</code></td>
+<td>Persistence, registry, training callbacks</td>
+<td>Optional</td>
+</tr>
+<tr>
+<td><code>georeader / coordax</code></td>
+<td>Data I/O, labelled arrays</td>
+<td>Optional</td>
+</tr>
+</tbody>
+</table>
+<h3 id="key-contract-jax-pipekit-transform-compatibility">Key contract: JAX + pipekit transform compatibility<a class="headerlink" href="#key-contract-jax-pipekit-transform-compatibility" title="Permanent link">&para;</a></h3>
+<p>Vardax guarantees:</p>
+<ul>
+<li><code>jax.jit</code> — no Python-level side effects in operator <code>__call__</code></li>
+<li><code>jax.grad</code> / <code>eqx.filter_value_and_grad</code> — differentiable w.r.t. array
+  params</li>
+<li><code>eqx.filter_vmap</code> — batches over leading dimensions</li>
+<li><code>pipekit_cycle.ObservationOperator</code> — <code>__call__(state) → obs</code>,
+  <code>linearize(state) → AbstractLinearOperator</code></li>
+<li><code>pipekit_cycle.ForwardModel</code> — <code>step(state, dt) → state</code>, <code>dt</code>
+  property</li>
+<li><code>pipekit_cycle.AnalysisStep</code> — <code>__call__(forecast, obs, *, obs_op,
+  obs_err_cov) → analysis</code></li>
+</ul>
+<h2 id="version-history">Version History<a class="headerlink" href="#version-history" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Version</th>
+<th>Milestone</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>0.0.1–0.1.0</td>
+<td>Initial VarDANet implementation (Flax NNX)</td>
+</tr>
+<tr>
+<td>0.1.1–0.1.3</td>
+<td>1D + 2D models, BilinAE / ConvAE / MLP priors</td>
+</tr>
+<tr>
+<td>0.1.4</td>
+<td>Fixed-point solver + one-step differentiation (Bolte 2023)</td>
+</tr>
+<tr>
+<td>0.1.5</td>
+<td>L63 / L96 dynamical system demos</td>
+</tr>
+<tr>
+<td>0.1.6</td>
+<td>Multivariate 2D, 8 tutorial notebooks, 11 math docs</td>
+</tr>
+<tr>
+<td>0.3.0</td>
+<td>Design doc v0.3: pipekit-cycle integration, AK + multi-instrument as first-class, three learned model families, six-step cycle methodology. Math chapters 12–16 added.</td>
+</tr>
+<tr>
+<td><strong>0.4.0</strong></td>
+<td><strong>Design doc v0.4: DA hierarchy as horizontal peer classes, optimistix/diffrax adjoint composition, BLUE/OI as first-class method, math reference fully rewritten to DA-textbook style (17 chapters).</strong></td>
+</tr>
+</tbody>
+</table>
+<h3 id="current-v016-flax-nnx-implementation">Current: v0.1.6 (Flax NNX implementation)<a class="headerlink" href="#current-v016-flax-nnx-implementation" title="Permanent link">&para;</a></h3>
+<p>The package code is still v0.1.6 with Flax NNX. The v0.3 and v0.4 design
+doc revisions target the equinox migration roadmap (Epics 0–13). Math
+chapters describe the API documented in <code>docs/design/</code>, which is not yet
+implemented in <code>src/vardax/_src/</code>.</p>
+<h3 id="upcoming-v020-equinox-native-pipekit-aligned">Upcoming (v0.2.0+ — equinox-native, pipekit-aligned)<a class="headerlink" href="#upcoming-v020-equinox-native-pipekit-aligned" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Priority</th>
+<th>Epic</th>
+<th>Key work</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>P0</td>
+<td>Epic 0</td>
+<td>Equinox migration</td>
+</tr>
+<tr>
+<td>P0</td>
+<td>Epic 1</td>
+<td>Pipekit-cycle protocol alignment</td>
+</tr>
+<tr>
+<td>P0</td>
+<td>Epic 2</td>
+<td>Averaging kernel + multi-instrument obs operators</td>
+</tr>
+<tr>
+<td><strong>P0</strong></td>
+<td><strong>Epic 2.5</strong></td>
+<td><strong>Classical DA: OptimalInterpolation, ThreeDVar, StrongFourDVar, WeakFourDVar</strong></td>
+</tr>
+<tr>
+<td><strong>P0</strong></td>
+<td><strong>Epic 3</strong></td>
+<td><strong>Adjoint composition via optimistix + diffrax</strong></td>
+</tr>
+<tr>
+<td>P1</td>
+<td>Epic 4</td>
+<td>Incremental 4DVar with CVT</td>
+</tr>
+<tr>
+<td>P1</td>
+<td>Epic 5</td>
+<td>Posterior adapters</td>
+</tr>
+<tr>
+<td>P1</td>
+<td>Epic 6</td>
+<td>FourDVarNet (learned variant of strong-4DVar)</td>
+</tr>
+<tr>
+<td><strong>P2</strong></td>
+<td><strong>Epic 7</strong></td>
+<td><strong>pipekit-cycle integration (<code>VarDACycle</code>, <code>VarSmootherCycle</code>) — landed in v0.5</strong></td>
+</tr>
+<tr>
+<td><strong>P2</strong></td>
+<td><strong>Epic 8</strong></td>
+<td><strong>Amortized inference (<code>AmortizedPosterior</code>, regression head, six-step gates) — landed in v0.5; flow/score heads ship as stubs pending <code>gauss_flows</code></strong></td>
+</tr>
+<tr>
+<td>P3</td>
+<td>Epic 9</td>
+<td>Hybrid ensemble-variational</td>
+</tr>
+<tr>
+<td>P3</td>
+<td>Epic 10</td>
+<td>Math reference (17 chapters) — landed in v0.4</td>
+</tr>
+<tr>
+<td>P3</td>
+<td>Epic 11</td>
+<td>Tutorials</td>
+</tr>
+<tr>
+<td>P3</td>
+<td>Epic 12</td>
+<td>Benchmarks</td>
+</tr>
+<tr>
+<td>P3</td>
+<td>Epic 13</td>
+<td>Operational deployment</td>
+</tr>
+</tbody>
+</table>
+<h2 id="references">References<a class="headerlink" href="#references" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Talagrand, O., &amp; Courtier, P. (1987). <em>Variational assimilation of
+  meteorological observations with the adjoint vorticity equation.</em>
+  QJRMS 113(478).</li>
+<li>Lorenc, A. (1981). <em>A global three-dimensional multivariate
+  statistical interpolation scheme.</em> MWR 109(4).</li>
+<li>Courtier, P., Thépaut, J.-N., &amp; Hollingsworth, A. (1994). <em>A strategy
+  for operational implementation of 4D-Var, using an incremental
+  approach.</em> QJRMS 120(519).</li>
+<li>Trémolet, Y. (2006). <em>Accounting for an imperfect model in 4D-Var.</em>
+  QJRMS 132(621).</li>
+<li>Fablet, R., et al. (2021). <em>Learning Variational Data Assimilation
+  Models and Solvers.</em> JAMES 13(10).</li>
+<li>Bolte, J., Pauwels, E., &amp; Vaiter, S. (2023). <em>One-step differentiation
+  of iterative algorithms.</em> NeurIPS.</li>
+<li>Carrassi, A., et al. (2018). <em>Data assimilation in the geosciences: An
+  overview of methods, issues, and perspectives.</em> WIREs CC 9(5).</li>
+<li>Bannister, R. N. (2017). <em>A review of operational methods of
+  variational and ensemble-variational data assimilation.</em> QJRMS
+  143(703).</li>
+<li>Reference: <a href="https://github.com/CIA-Oceanix/4dvarnet-starter">CIA-Oceanix/4dvarnet-starter</a>.</li>
+<li>Predecessor: <a href="https://github.com/jejjohnson/mvardax">mvardax</a> (deprecated).</li>
+</ul>
+
+
+
+
+
+
+
+  
+  
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+        
+<div class="md-social">
+  
+    
+    
+    
+    
+      
+      
+    
+    <a href="https://github.com/jejjohnson/vardax" target="_blank" rel="noopener" title="github.com" class="md-social__link">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.tabs.sticky", "navigation.sections", "navigation.top", "navigation.indexes", "toc.follow", "content.code.copy", "content.code.annotate", "content.action.edit"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+        <script src="../../javascripts/mathjax.js"></script>
+      
+        <script src="https://unpkg.com/mathjax@3.2.2/es5/tex-mml-chtml.js"></script>
+      
+    
+  </body>
+</html>
