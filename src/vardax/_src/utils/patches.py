@@ -2,9 +2,35 @@
 
 from __future__ import annotations
 
+import jax.numpy as jnp
 from jaxtyping import Array, Float
 import numpy as np
 import xarray as xr
+
+
+def time_patches(ts: Float[Array, T]) -> Float[Array, "T-1 2"]:  # type: ignore[unresolved-reference]  # ty:ignore[unresolved-reference]
+    """Overlapping consecutive time pairs for one-step increment losses.
+
+    Reimplements the legacy ``kernex.kmap(kernel_size=(2,), relative=True)``
+    sliding window without the ``kernex`` dependency: for a 1-D array of
+    times ``[t_0, t_1, ..., t_{T-1}]`` it returns the ``T - 1`` overlapping
+    pairs ``[[t_0, t_1], [t_1, t_2], ..., [t_{T-2}, t_{T-1}]]``.
+
+    Args:
+        ts: Monotonic time coordinates of shape ``(T,)``.
+
+    Returns:
+        Array of shape ``(T - 1, 2)`` of consecutive time pairs.
+
+    Examples:
+        >>> import jax.numpy as jnp
+        >>> from vardax import time_patches
+        >>> time_patches(jnp.arange(4.0))
+        Array([[0., 1.],
+               [1., 2.],
+               [2., 3.]], dtype=float32)
+    """
+    return jnp.stack([ts[:-1], ts[1:]], axis=-1)
 
 
 def trajectory_to_xr_dataset(

@@ -16,6 +16,7 @@ def obs_cost_1d(
     state: Float[Array, "B T N"],
     obs: Float[Array, "B T N"],
     mask: Float[Array, "B T N"],
+    nan_to_num: bool = False,
 ) -> Float[Array, ""]:
     r"""Observation cost for 1-D data.
 
@@ -32,6 +33,13 @@ def obs_cost_1d(
         obs: Observations of shape ``(B, T, N)``.
         mask: Binary observation mask of shape ``(B, T, N)``.
             A value of ``1`` indicates an observed location.
+        nan_to_num: When ``True``, replace ``NaN`` entries in ``obs`` with
+            zero (via :func:`jax.numpy.nan_to_num`) *before* masking. Use this
+            for real-world geophysical products (e.g. satellite altimetry)
+            where gaps are stored as ``NaN`` rather than an explicit binary
+            mask. Without it, a ``NaN`` observation poisons both the cost and
+            its gradient even at masked-out locations, since ``0 * NaN`` is
+            ``NaN`` in JAX. Ported from ``mfourdvar``'s ``ObsOperator.loss``.
 
     Returns:
         Scalar observation cost.
@@ -45,6 +53,8 @@ def obs_cost_1d(
         >>> float(obs_cost_1d(state, obs, mask))
         1.0
     """
+    if nan_to_num:
+        obs = jnp.nan_to_num(obs)
     diff = mask * (state - obs)
     return jnp.mean(diff**2)
 
@@ -53,6 +63,7 @@ def obs_cost_2d(
     state: Float[Array, "B T H W"],
     obs: Float[Array, "B T H W"],
     mask: Float[Array, "B T H W"],
+    nan_to_num: bool = False,
 ) -> Float[Array, ""]:
     r"""Observation cost for 2-D data.
 
@@ -68,10 +79,14 @@ def obs_cost_2d(
         state: Current state estimate of shape ``(B, T, H, W)``.
         obs: Observations of shape ``(B, T, H, W)``.
         mask: Binary observation mask of shape ``(B, T, H, W)``.
+        nan_to_num: When ``True``, replace ``NaN`` entries in ``obs`` with
+            zero before masking (see :func:`obs_cost_1d` for the rationale).
 
     Returns:
         Scalar observation cost.
     """
+    if nan_to_num:
+        obs = jnp.nan_to_num(obs)
     diff = mask * (state - obs)
     return jnp.mean(diff**2)
 
@@ -194,3 +209,90 @@ def decomposed_loss(
     obs = alpha_obs * jnp.mean(obs_diff**2)
     prior = alpha_prior * jnp.mean((x - prior_fn(x)) ** 2)
     return {"obs": obs, "prior": prior, "total": obs + prior}
+
+
+# ---------------------------------------------------------------------------
+# Strong-constraint variational cost (ported from mfourdvar)
+# ---------------------------------------------------------------------------
+
+
+def background_cost(
+    x0: Float[Array, ...],
+    xb: Float[Array, ...],
+) -> Float[Array, ""]:
+    r"""Background cost $\|x_0 - x_b\|^2$.
+
+    Penalises departure of the initial state $x_0$ (the control variable
+    in strong-constraint 4DVar) from the background / first guess $x_b$.
+    Uses the same mean-squared convention as the other functional costs in
+    this module.
+
+    Args:
+        x0: Initial state estimate of arbitrary shape.
+        xb: Background state, same shape as ``x0``.
+
+    Returns:
+        Scalar background cost.
+    """
+    return jnp.mean((x0 - xb) ** 2)
+
+
+def strong_variational_cost(
+    x0: Float[Array, ...],
+    ts: Float[Array, T],  # type: ignore[unresolved-reference]  # ty:ignore[unresolved-reference]
+    batch: Batch1D,
+    forward_fn: Callable[..., Any],
+    *,
+    xb: Float[Array, ...] | None = None,
+    alpha_obs: float = 0.5,
+    alpha_bg: float = 0.5,
+    nan_to_num: bool = False,
+) -> Float[Array, ""]:
+    r"""Strong-constraint variational cost $U(x_0)$.
+
+    $$
+    U(x_0) = \alpha_{obs}\,\|m \odot (\varphi(x_0) - y)\|^2
+           + \alpha_{bg}\,\|x_0 - x_b\|^2 .
+    $$
+
+    The dynamical model is enforced as a **hard** constraint: the initial
+    state ``x0`` is propagated through the dynamics ``forward_fn(x0, ts)``
+    and only the resulting trajectory is scored against the observations.
+    This differs from the weak / soft-constraint
+    [`variational_cost`][vardax.variational_cost], where the model appears
+    as an *additive* prior penalty and the whole state field is free.
+
+    Ported from ``mfourdvar``'s ``StrongVarCost``, adapted to a functional
+    form that mirrors [`variational_cost`][vardax.variational_cost].
+
+    Args:
+        x0: Initial state (control variable). Whatever shape ``forward_fn``
+            expects — e.g. ``(B, N)`` for a batched 1-D system.
+        ts: Time coordinates of shape ``(T,)`` passed to ``forward_fn``.
+        batch: Observed data batch supplying ``input`` (``y``) and ``mask``
+            (``m``), each of shape matching ``forward_fn``'s trajectory output
+            (e.g. ``(B, T, N)``).
+        forward_fn: Callable ``(x0, ts) -> trajectory`` producing a state
+            trajectory the same shape as ``batch.input``. A
+            [`DynTrajectory`][vardax.DynTrajectory] (optionally ``vmap``-ed
+            over the batch axis) is the canonical choice.
+        xb: Background state for the background term. Defaults to ``x0``
+            (i.e. no background penalty).
+        alpha_obs: Weight for the observation term (default ``0.5``).
+        alpha_bg: Weight for the background term (default ``0.5``).
+        nan_to_num: When ``True``, replace ``NaN`` entries in the
+            observations with zero before masking (see
+            [`obs_cost_1d`][vardax.obs_cost_1d]).
+
+    Returns:
+        Scalar strong-constraint variational cost.
+    """
+    if xb is None:
+        xb = x0
+    traj = forward_fn(x0, ts)
+    obs = batch.input
+    if nan_to_num:
+        obs = jnp.nan_to_num(obs)
+    j_obs = jnp.mean((batch.mask * (traj - obs)) ** 2)
+    j_bg = background_cost(x0, xb)
+    return alpha_obs * j_obs + alpha_bg * j_bg
