@@ -67,6 +67,7 @@ from vardax._src.model import (
     FourDVarNet2D,
 )
 from vardax._src.models import (
+    Incremental4DVar,
     IncrementalConfig,
     IncrementalFourDVar,
     OptimalInterpolation,
@@ -247,6 +248,7 @@ __all__ = [
     "FourDVarNet1D",
     "FourDVarNet2D",
     # Classical DA methods (Decision D14)
+    "Incremental4DVar",
     "IncrementalConfig",
     "IncrementalFourDVar",
     "OptimalInterpolation",
