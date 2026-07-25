@@ -99,6 +99,10 @@ nav:
           - 16. SSH Reconstruction: 16_ssh_example.md
           - 17. Methane Single-Overpass: 17_methane_example.md
           - 18. Latent Variational DA: 18_latent_da.md
+      - Applications & Foundations:
+          - 19. Physical Models & ODE Priors: 19_physical_models.md
+          - 20. Uncertainty Quantification: 20_uncertainty.md
+          - 21. OceanBench SSH Applications: 21_oceanbench.md
       - Reference:
           - Notation: notation.md
           - References: references.md
