@@ -78,9 +78,11 @@ from vardax._src.obs_operators import (
     AveragingKernel,
     InstrumentRegistry,
     InstrumentSpec,
+    InterpObs,
     LinearObs,
     MaskedIdentity,
     MultiInstrumentFusion,
+    interp_obs_from_coords,
 )
 from vardax._src.posterior import (
     EnsembleCovariance,
@@ -187,9 +189,11 @@ __all__ = [
     "AveragingKernel",
     "InstrumentRegistry",
     "InstrumentSpec",
+    "InterpObs",
     "LinearObs",
     "MaskedIdentity",
     "MultiInstrumentFusion",
+    "interp_obs_from_coords",
     # Posterior adapters (Decision D10)
     "EnsembleCovariance",
     "GaussNewtonHessian",
