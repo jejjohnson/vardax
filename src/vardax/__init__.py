@@ -37,6 +37,16 @@ from vardax._src.amortized import (
     RegressionHead,
     ScoreDiffusionHead,
 )
+from vardax._src.basis import (
+    CompositeBasis,
+    LinearBasis,
+    composite_basis,
+    eof_basis,
+    fourier_basis,
+    linear_basis,
+    rbf_basis,
+    wavelet_basis,
+)
 from vardax._src.costs import (
     background_cost,
     decomposed_loss,
@@ -103,6 +113,7 @@ from vardax._src.protocols import (
     ObservationOperator,
     PosteriorAdapter,
     Prior,
+    ReducedBasis,
     TemporalPrior,
 )
 from vardax._src.solver import (
@@ -161,7 +172,17 @@ __all__ = [
     "ObservationOperator",
     "PosteriorAdapter",
     "Prior",
+    "ReducedBasis",
     "TemporalPrior",
+    # Reduced bases (issue #49)
+    "CompositeBasis",
+    "LinearBasis",
+    "composite_basis",
+    "eof_basis",
+    "fourier_basis",
+    "linear_basis",
+    "rbf_basis",
+    "wavelet_basis",
     # Observation operators (Decision D9)
     "AveragingKernel",
     "InstrumentRegistry",

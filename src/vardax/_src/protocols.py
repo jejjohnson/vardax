@@ -1,7 +1,7 @@
 r"""Runtime-checkable protocols used across vardax.
 
 vardax re-exports the three core ``pipekit_cycle`` protocols
-(`ForwardModel`, `ObservationOperator`, `AnalysisStep`) and adds six
+(`ForwardModel`, `ObservationOperator`, `AnalysisStep`) and adds seven
 vardax-specific protocols that ``pipekit-cycle`` doesn't name:
 
 - [`Prior`][vardax.Prior] — $\varphi: x \mapsto x_\text{prior}$
@@ -16,6 +16,8 @@ vardax-specific protocols that ``pipekit-cycle`` doesn't name:
 - [`Minimiser`][vardax.Minimiser] — wraps
   ``optimistix.AbstractMinimiser`` over vardax's cost-function
   interface
+- [`ReducedBasis`][vardax.ReducedBasis] —
+  $X \mapsto \Phi(t) X$ reduced-basis control-vector operator
 
 All protocols are ``@runtime_checkable`` so ``isinstance(obj, Protocol)``
 works for structural conformance checking — used by
@@ -175,6 +177,38 @@ class Minimiser(Protocol):
     ) -> Float[Array, ...]: ...
 
 
+@runtime_checkable
+class ReducedBasis(Protocol):
+    r"""Reduced-basis control-vector operator.
+
+    Maps a coefficient vector $X \in \mathbb{R}^M$ to a state increment
+    $\Phi(t) X$ on the grid, with a separable Gaussian background term
+    $\tfrac{1}{2} X^\top Q^{-1} X$.
+
+    Implementations: `LinearBasis` (any linear family — built via the
+    `rbf_basis` / `fourier_basis` / `wavelet_basis` / `eof_basis` /
+    `linear_basis` constructors) and `CompositeBasis`. Used by
+    variational analysis steps to parameterise the increment in a
+    low-dimensional space.
+
+    This protocol is defined in vardax for now; the plan is to upstream
+    it into ``pipekit_cycle.protocols`` so other algorithm libraries
+    can satisfy the same contract.
+
+    Members:
+        ``operg(t, X, state=None) -> increment``
+        ``prior_inv(X) -> Q⁻¹ X``
+        ``nbasis: int`` property
+    """
+
+    def operg(self, t: float, X: Any, state: Any = None) -> Any: ...
+
+    def prior_inv(self, X: Any) -> Any: ...
+
+    @property
+    def nbasis(self) -> int: ...
+
+
 __all__ = [
     # Re-exports from pipekit-cycle
     "AnalysisStep",
@@ -186,5 +220,6 @@ __all__ = [
     "Minimiser",
     "PosteriorAdapter",
     "Prior",
+    "ReducedBasis",
     "TemporalPrior",
 ]
