@@ -13,6 +13,8 @@ they're required for any RTM-derived L2 satellite product.
 Public surface:
 
 - [`MaskedIdentity`][vardax.MaskedIdentity] — $H(x) = m \odot x$
+- [`InterpObs`][vardax.InterpObs] — sparse bilinear grid-to-points
+  interpolation
 - [`LinearObs`][vardax.LinearObs] — $H(x) = H_\text{mat} \cdot x$
 - [`AveragingKernel`][vardax.AveragingKernel] —
   $H(x) = A(h \cdot x + (1-h) x_a)$
@@ -27,6 +29,7 @@ Public surface:
 from __future__ import annotations
 
 from .averaging_kernel import AveragingKernel
+from .interp_obs import InterpObs, interp_obs_from_coords
 from .linear import LinearObs
 from .masked import MaskedIdentity
 from .multi_instrument import (
@@ -39,7 +42,9 @@ __all__ = [
     "AveragingKernel",
     "InstrumentRegistry",
     "InstrumentSpec",
+    "InterpObs",
     "LinearObs",
     "MaskedIdentity",
     "MultiInstrumentFusion",
+    "interp_obs_from_coords",
 ]
