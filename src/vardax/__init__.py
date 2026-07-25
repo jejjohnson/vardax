@@ -127,7 +127,12 @@ from vardax._src.training import (
     train_loss_fn,
     train_step,
 )
-from vardax._src.utils.dynamical_systems import simulate_lorenz63, simulate_lorenz96
+from vardax._src.utils.dynamical_systems import (
+    Lorenz63,
+    Lorenz96,
+    simulate_lorenz63,
+    simulate_lorenz96,
+)
 from vardax._src.utils.patches import time_patches
 from vardax._src.utils.validation import (
     assert_adjoint_calibrated,
@@ -246,6 +251,8 @@ __all__ = [
     "train_loss_fn",
     "train_step",
     # Dynamical systems
+    "Lorenz63",
+    "Lorenz96",
     "simulate_lorenz63",
     "simulate_lorenz96",
     "time_patches",

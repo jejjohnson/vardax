@@ -16,7 +16,7 @@
 This directory contains documentation for the vardax library, in two
 layers:
 
-- **Mathematical reference** (this directory, 17 chapters) — the
+- **Mathematical reference** (this directory, 21 chapters) — the
   equations, algorithms, and pseudocode behind every analysis method.
 - **Design docs** ([`design/`](design/)) — architecture, API
   contracts, ecosystem boundaries, decision log.
@@ -57,7 +57,7 @@ layers:
 14. [Six-Step Inference Cycle](14_six_step_cycle.md) — methodology for
     the research-to-operations arc
 
-### End-to-end examples (chapters 15–17)
+### End-to-end examples (chapters 15–18)
 
 15. [Lorenz Examples](15_lorenz_examples.md) — L63 / L96 walkthroughs
     with all seven methods
@@ -65,6 +65,20 @@ layers:
     with `OI`, `IncrementalFourDVar`, `FourDVarNet` side-by-side
 17. [Methane Single-Overpass](17_methane_example.md) — multi-instrument
     inversion with `plumax` + `IncrementalFourDVar`
+18. [Latent Variational DA](18_latent_da.md) — assimilation in a
+    learned latent space (Decision D17)
+
+### Applications & foundations (chapters 19–21, ported from mfourdvar)
+
+19. [Physical Models & ODE Priors](19_physical_models.md) — the
+    testbed-model ladder (L63/L96 → SW/QG → GCM) and the
+    `DynamicalPrior` family (Decision D18)
+20. [Uncertainty Quantification](20_uncertainty.md) — where
+    stochasticity enters (data, model, parameters, estimation) and
+    which vardax lever addresses each source
+21. [OceanBench SSH Applications](21_oceanbench.md) — the benchmark
+    context: data products, OSSE/OSE ladder, interpolation /
+    forecasting / surrogate tasks
 
 ### Reference
 
@@ -83,7 +97,7 @@ contents and reading order. Recommended entry points:
 - [`design/boundaries.md`](design/boundaries.md) — ownership map,
   Epics 0–13 roadmap
 - [`design/decisions.md`](design/decisions.md) — design decisions
-  D1–D16
+  D1–D19
 - [`design/api/`](design/api/) — protocol + class contracts by layer
 - [`design/examples/`](design/examples/) — patterns and use case
   walkthroughs

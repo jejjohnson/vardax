@@ -17,7 +17,7 @@ one-step increment losses.
     options:
       show_root_heading: false
       show_root_toc_entry: false
-      members: [simulate_lorenz63, simulate_lorenz96, time_patches]
+      members: [Lorenz63, Lorenz96, simulate_lorenz63, simulate_lorenz96, time_patches]
 
 ## Validation gates
 
