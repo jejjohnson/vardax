@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.1.9](https://github.com/jejjohnson/vardax/compare/v0.1.8...v0.1.9) (2026-07-25)
+
+
+### Features
+
+* general reduced-basis operators backed by geonnax ([#61](https://github.com/jejjohnson/vardax/issues/61)) ([ce9e975](https://github.com/jejjohnson/vardax/commit/ce9e975bb839652c910627d9b1f96b0174193699))
+* k-step adjoints and the pipekit adjoint-spec interpreter ([#55](https://github.com/jejjohnson/vardax/issues/55)) ([b8ee08c](https://github.com/jejjohnson/vardax/commit/b8ee08c82ac87aec1eb8a43cca0f8606b3f25a6c))
+* mfourdvar migration Phase 2 — temporal prior seam and varcost API (D18/D19) ([#62](https://github.com/jejjohnson/vardax/issues/62)) ([8a9aec8](https://github.com/jejjohnson/vardax/commit/8a9aec85b49bfa99dea1e4880f0acde79440fd16))
+* port mfourdvar legacy components (Phase 1 of [#13](https://github.com/jejjohnson/vardax/issues/13)) ([#60](https://github.com/jejjohnson/vardax/issues/60)) ([bd7258b](https://github.com/jejjohnson/vardax/commit/bd7258b9e69cd0cfe092f8c46f3cf31f193844d0))
+* reduced-basis 4DVar analysis step Incremental4DVar ([#50](https://github.com/jejjohnson/vardax/issues/50)) ([92ba369](https://github.com/jejjohnson/vardax/commit/92ba36911e3307b2f4f1ed5b47bdbc654b5ae8f5))
+* sparse bilinear InterpObs observation operator ([#63](https://github.com/jejjohnson/vardax/issues/63)) ([f7ad607](https://github.com/jejjohnson/vardax/commit/f7ad6071f53b8633ecbb38b481619da1ed89b554))
+
 ## [0.1.8](https://github.com/jejjohnson/vardax/compare/v0.1.7...v0.1.8) (2026-05-27)
 
 
