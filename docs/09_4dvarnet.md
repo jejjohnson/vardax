@@ -167,6 +167,10 @@ mathematically equivalent to gradient descent on the variational cost
 — it's the classical 4DVar baseline, useful for sanity-checking
 agreement with the linear-Gaussian baseline (Decision D14 invariant).
 
+Notebook [11](notebooks/11_gradient_learning_L63.py) trains a
+`ConvLSTMGradMod1D` on its own, with the prior frozen, and compares it
+with that fixed-step baseline across solver-step budgets.
+
 ## Linear-Gaussian agreement
 
 With `IdentityPrior` (so $\varphi(x) = x$ and the prior cost vanishes

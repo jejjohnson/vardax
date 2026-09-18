@@ -250,18 +250,22 @@ This is the Decision D14 invariant in action.
 
 ## Notebook examples
 
-The notebooks/ directory contains end-to-end Lorenz tutorials:
+The [Tutorials](notebooks/index.md) section renders the end-to-end Lorenz
+notebooks (jupytext percent-format sources under `docs/notebooks/`,
+executed at docs build time):
 
-- `01_model_based_4dvar_L63.py` — Classical 4DVar with known L63 dynamics
-- `02_unrolling_vs_fixedpoint_L63.py` — Adjoint method comparison
-- `03_4dvarnet_L63.py` — Full 4DVarNet on L63
-- `05_end_to_end_L63.py` — Complete pipeline including data utilities
-- `06_end_to_end_L96.py` — Lorenz-96 end-to-end
-- `07_prior_pretraining_L63.py` — Pre-training the bilinear prior
-- `08_classical_4dvar_vs_4dvarnet_L63.py` — Side-by-side comparison
+- [01 — Model-based 4DVar on L63](notebooks/01_model_based_4dvar_L63.py)
+- [02 — Unrolling vs fixed-point on L63](notebooks/02_unrolling_vs_fixedpoint_L63.py) — unrolled vs fixed-point solver comparison
+- [03 — 4DVarNet end-to-end on L63](notebooks/03_4dvarnet_L63.py)
+- [05 — End-to-end L63 pipeline](notebooks/05_end_to_end_L63.py) — including the data utilities
+- [06 — End-to-end L96 pipeline](notebooks/06_end_to_end_L96.py)
+- [07 — Prior pre-training on L63](notebooks/07_prior_pretraining_L63.py) — pre-training the bilinear prior
+- [08 — Classical 4DVar vs 4DVarNet on L63](notebooks/08_classical_4dvar_vs_4dvarnet_L63.py) — side-by-side comparison
+- [09 — Parameter estimation on L63](notebooks/09_param_estimation_L63.py) — learnable ODE parameters via `DynTrajectory`
+- [10 — Bilevel optimisation on L63](notebooks/10_bilevel_opt_L63.py) — learning the cost weights through the inner solve
+- [11 — Learning the gradient update](notebooks/11_gradient_learning_L63.py) — the gradient modulator in isolation
 
-Each follows jupytext percent-format; open as `.ipynb` with
-`jupytext --to notebook`.
+To open one as a notebook locally: `jupytext --to notebook docs/notebooks/<name>.py`.
 
 ## See also
 

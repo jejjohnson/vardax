@@ -43,7 +43,7 @@ from vardax._src.utils.dynamical_systems import simulate_lorenz63
 from vardax._src.utils.patches import trajectory_to_xr_dataset, extract_patches
 from vardax._src.utils.masks import regular_mask
 from vardax._src.utils.noise import add_gaussian_noise
-from vardax._src.utils.preprocessing import train_test_split, xr_to_batch1d
+from vardax._src.utils.preprocessing import xr_to_batch1d
 from vardax._src.utils.standardize import compute_scaler_params, apply_standardization
 
 # %% [markdown]
@@ -55,11 +55,16 @@ time_coords, states = simulate_lorenz63(
     key, sigma=10.0, rho=28.0, beta=8.0 / 3.0, dt=0.01, n_steps=5000, n_burn_in=1000
 )
 ds = trajectory_to_xr_dataset(states, time_coords, feature_names=["X", "Y", "Z"])
-ds = extract_patches(ds, n_patches=200, n_timesteps=20, seed=42)
-ds = regular_mask(ds, variable="state", obs_interval=2)
-ds = add_gaussian_noise(ds, variable="state", sigma=0.5, seed=0, name="obs")
-
-ds_train, ds_test = train_test_split(ds, n_train=160, n_test=40, seed=0)
+# Split the trajectory in time *before* cutting windows, so no window
+# straddles the boundary: windows drawn at random from one trajectory and
+# split afterwards would leak test timesteps into the training set.
+n_time = ds.sizes["time"]
+ds_train = extract_patches(ds.isel(time=slice(0, int(0.8 * n_time))), n_patches=160, n_timesteps=20, seed=42)
+ds_test = extract_patches(ds.isel(time=slice(int(0.8 * n_time), None)), n_patches=40, n_timesteps=20, seed=43)
+ds_train = regular_mask(ds_train, variable="state", obs_interval=2)
+ds_test = regular_mask(ds_test, variable="state", obs_interval=2)
+ds_train = add_gaussian_noise(ds_train, variable="state", sigma=0.5, seed=0, name="obs")
+ds_test = add_gaussian_noise(ds_test, variable="state", sigma=0.5, seed=1, name="obs")
 mean, std = compute_scaler_params(ds_train, variable="state", mask_variable="mask")
 ds_train = apply_standardization(ds_train, variables=["state", "obs"], mean=mean, std=std)
 ds_test = apply_standardization(ds_test, variables=["state", "obs"], mean=mean, std=std)
@@ -72,25 +77,43 @@ print(f"Test batch shape: {batch_test.input.shape}")
 # %% [markdown]
 # ## 2. Classical 4DVar — gradient descent on $x$
 #
-# We use a fixed (randomly initialised) prior and minimise $U(x)$ with respect
-# to $x$ directly, running a manual gradient-descent loop so we can track the
-# convergence trajectory.
+# We use a fixed prior — a bilinear autoencoder pre-trained on clean training
+# windows, as in notebook [07](07_prior_pretraining_L63.py) — and minimise
+# $U(x)$ with respect to $x$ directly, running a manual gradient-descent loop
+# so we can track the convergence trajectory.
 
 # %%
-# (NNX removed in Epic 0 — vardax is now equinox-native)
+import equinox as eqx
+import optax
 
 prior = BilinAEPrior1D(state_dim=N, latent_dim=8, n_time=T, key=jax.random.PRNGKey(5))
+pre_opt = optax.adam(1e-2)
+pre_state = pre_opt.init(eqx.filter(prior, eqx.is_array))
+
+
+@eqx.filter_jit
+def pretrain_step(prior, opt_state, x):
+    loss, grads = eqx.filter_value_and_grad(lambda p: jnp.mean((x - p(x)) ** 2))(prior)
+    updates, opt_state = pre_opt.update(grads, opt_state, prior)
+    return eqx.apply_updates(prior, updates), opt_state, loss
+
+
+for _ in range(300):
+    prior, pre_state, pre_loss = pretrain_step(prior, pre_state, batch_train.target)
+print(f"prior reconstruction MSE after pre-training: {float(pre_loss):.4f}")
 
 
 # Initialise x from masked observations
 x_classical = batch_test.input * batch_test.mask
 
 classical_losses = []
-# Classical gradient descent uses a larger learning rate than 4DVarNet (1e-3)
-# because we are optimising directly in state space (low-dimensional), whereas
-# 4DVarNet optimises millions of network parameters requiring a much smaller lr.
-lr_classical = 0.05
+# `variational_cost` is a *mean* over all B*T*N elements, so its gradient per
+# element is tiny. Scaling the step by the element count gives a per-element
+# step size `eta` (gradient descent on the equivalent sum cost), which lets
+# the baseline actually converge within the step budget.
+eta_classical = 0.2
 n_classical_steps = 50
+n_elem = x_classical.size
 
 grad_fn = jax.jit(jax.value_and_grad(variational_cost))
 
@@ -98,7 +121,7 @@ for step in range(n_classical_steps):
     loss_val, grad = grad_fn(
         x_classical, batch_test, prior, alpha_obs=0.5, alpha_prior=0.5
     )
-    x_classical = x_classical - lr_classical * grad
+    x_classical = x_classical - eta_classical * n_elem * grad
     classical_losses.append(float(loss_val))
 
 mse_classical = float(jnp.mean((x_classical - batch_test.target) ** 2))
@@ -152,7 +175,7 @@ axes[1].set_title("4DVarNet learning curve")
 
 # MSE bar chart
 bars = axes[2].bar(
-    ["Classical 4DVar\n(fixed prior)", "4DVarNet\n(trained)"],
+    ["Classical 4DVar\n(pre-trained prior)", "4DVarNet\n(trained)"],
     [mse_classical, mse_4dvarnet],
     color=["steelblue", "tomato"],
 )

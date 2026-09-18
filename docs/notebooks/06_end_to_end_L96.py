@@ -23,9 +23,9 @@
 # 1. Simulate L96 with Diffrax (N=40, F=8)
 # 2. Build an xarray Dataset and extract patches
 # 3. Add observation masks and Gaussian noise
-# 4. Train/test split and standardize
+# 4. Train/test split in time (before patch extraction) and standardize
 # 5. Visualize the L96 attractor (`plot_l96_grid`)
-# 6. Train `FourDVarNet1D` with `L96Prior`
+# 6. Train `FourDVarNet1D` (default bilinear autoencoder prior)
 # 7. Evaluate and visualize reconstruction
 
 # %%
@@ -45,7 +45,7 @@ from vardax import (
 from vardax._src.utils.patches import trajectory_to_xr_dataset, extract_patches
 from vardax._src.utils.masks import regular_mask
 from vardax._src.utils.noise import add_gaussian_noise
-from vardax._src.utils.preprocessing import train_test_split, xr_to_batch1d
+from vardax._src.utils.preprocessing import xr_to_batch1d
 from vardax._src.utils.standardize import (
     compute_scaler_params,
     apply_standardization,
@@ -73,22 +73,28 @@ print(f"states shape: {states.shape}, time range: [{time_coords[0]:.2f}, {time_c
 
 # %%
 ds = trajectory_to_xr_dataset(states, time_coords)
-ds = extract_patches(ds, n_patches=200, n_timesteps=20, seed=42)
-print(ds)
+# Split the trajectory in time *before* cutting windows, so no window
+# straddles the boundary: windows drawn at random from one trajectory and
+# split afterwards would leak test timesteps into the training set.
+n_time = ds.sizes["time"]
+ds_train = extract_patches(ds.isel(time=slice(0, int(0.8 * n_time))), n_patches=160, n_timesteps=20, seed=42)
+ds_test = extract_patches(ds.isel(time=slice(int(0.8 * n_time), None)), n_patches=40, n_timesteps=20, seed=43)
+print(ds_train)
 
 # %% [markdown]
 # ## 3. Add Observation Masks and Gaussian Noise
 
 # %%
-ds = regular_mask(ds, variable="state", obs_interval=2)
-ds = add_gaussian_noise(ds, variable="state", sigma=0.5, seed=0, name="obs")
-print(ds)
+ds_train = regular_mask(ds_train, variable="state", obs_interval=2)
+ds_test = regular_mask(ds_test, variable="state", obs_interval=2)
+ds_train = add_gaussian_noise(ds_train, variable="state", sigma=0.5, seed=0, name="obs")
+ds_test = add_gaussian_noise(ds_test, variable="state", sigma=0.5, seed=1, name="obs")
+print(ds_train)
 
 # %% [markdown]
-# ## 4. Train/Test Split and Standardize
+# ## 4. Standardize
 
 # %%
-ds_train, ds_test = train_test_split(ds, n_train=160, n_test=40, seed=0)
 print(f"train patches: {ds_train.sizes['patch']}, test patches: {ds_test.sizes['patch']}")
 
 mean, std = compute_scaler_params(ds_train, variable="state", mask_variable="mask")
@@ -113,7 +119,11 @@ plt.tight_layout()
 plt.show()
 
 # %% [markdown]
-# ## 6. Train FourDVarNet1D with L96Prior
+# ## 6. Train FourDVarNet1D
+#
+# `FourDVarNet1D` builds its own `BilinAEPrior1D` over the flattened
+# `(T, N)` window; the per-state `L96Prior` autoencoder targets the
+# `(B, N)` seam and is not used here.
 
 # %%
 # (NNX removed in Epic 0 — vardax is now equinox-native)

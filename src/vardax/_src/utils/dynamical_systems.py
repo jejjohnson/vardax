@@ -98,6 +98,9 @@ def simulate_lorenz63(
         dt0=dt,
         y0=x0,
         saveat=SaveAt(ts=save_times),
+        # Fixed-step integration takes exactly ``total_steps`` steps; diffrax's
+        # default cap (4096) would abort long simulations (e.g. 5000 + 1000).
+        max_steps=total_steps + 1,
     )
 
     # Discard burn-in steps; keep indices n_burn_in .. total_steps (inclusive)
@@ -177,6 +180,9 @@ def simulate_lorenz96(
         dt0=dt,
         y0=x0,
         saveat=SaveAt(ts=save_times),
+        # Fixed-step integration takes exactly ``total_steps`` steps; diffrax's
+        # default cap (4096) would abort long simulations (e.g. 5000 + 1000).
+        max_steps=total_steps + 1,
     )
 
     states = sol.ys[n_burn_in:]
