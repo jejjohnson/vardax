@@ -16,22 +16,78 @@
 # # 01 — Model-Based 4DVar on Lorenz-63
 #
 # Classical strong-constraint 4DVar with the *true* Lorenz-63 dynamics as the
-# model. Given a background estimate $x_b$ of the initial state and noisy,
-# gappy observations $y_t$ along a window, the analysis is the initial state
-# whose model trajectory best fits both:
+# model. This is the reference point for every later notebook: the learned
+# methods replace pieces of this picture, and their value is measured
+# against it.
+#
+# ## The problem
+#
+# We are given a background estimate $x_b$ of the state at the start of an
+# assimilation window, and noisy, gappy observations $y_t$ along it. The
+# model $M$ is treated as *perfect*: the state at any later time is
+# $x_t = M_t(x_0)$, so the whole trajectory is determined by the initial
+# state and the only unknown is $x_0$. The generative model is
 #
 # $$
-# x_0^* = \underset{x_0}{\arg\min}\;
-#   \tfrac{1}{2}\|x_0 - x_b\|^2_{B^{-1}}
-#   + \tfrac{1}{2}\sum_{t=0}^{T} \|m_t \odot (y_t - M_t(x_0))\|^2_{R^{-1}} .
+# x_0 \sim \mathcal{N}(x_b, B), \qquad
+# y_t = m_t \odot \big(H\, M_t(x_0) + \varepsilon_t\big), \quad
+# \varepsilon_t \sim \mathcal{N}(0, R),
 # $$
 #
-# This is [`StrongFourDVar`](../api/models.md) (chapter
-# [6](../06_strong_4dvar.md)). The forward model $M_t$ comes from a
-# [`DynTrajectory`](../api/costs_priors.md) ODE prior via
+# and the analysis is the maximum a posteriori estimate of $x_0$,
+#
+# $$
+# x_0^* = \underset{x_0}{\arg\min}\; J(x_0), \qquad
+# J(x_0) = \tfrac{1}{2}\|x_0 - x_b\|^2_{B^{-1}}
+#   + \tfrac{1}{2}\sum_{t=0}^{T} \|m_t \odot (y_t - H\, M_t(x_0))\|^2_{R^{-1}} ,
+# $$
+#
+# where $\|v\|^2_{A} = v^\top A v$. The "strong constraint" is the perfect
+# model assumption: the dynamics are imposed exactly, not penalised, and
+# the observations can only choose *which* model trajectory, never bend it.
+# Chapter [6](../06_strong_4dvar.md) derives this cost; chapter
+# [7](../07_weak_4dvar.md) relaxes the constraint by adding model-error
+# increments to the control vector.
+#
+# ## The geometry
+#
+# Think of the set of all model trajectories over the window as a
+# 3-dimensional surface embedded in the $(T+1) \times 3$-dimensional space of
+# state sequences, parameterised by $x_0$. The observations are a point in
+# that space (with missing coordinates), and 4DVar finds the point on the
+# surface closest to them in the $R^{-1}$ metric, pulled toward the
+# background in the $B^{-1}$ metric. With a linear model and linear $H$ this
+# is a least-squares projection and the answer is closed-form (the BLUE of
+# chapter [4](../04_oi_blue.md)); with Lorenz-63 the surface is curved and
+# we need an iterative minimiser.
+#
+# ## The gradient
+#
+# The minimiser needs $\nabla J$, and the chain rule through the rollout gives
+#
+# $$
+# \nabla_{x_0} J = B^{-1}(x_0 - x_b)
+#   + \sum_{t=0}^{T} \big(M_t'\big)^{\!\top} H^\top R^{-1}\, m_t \odot \big(H M_t(x_0) - y_t\big),
+# $$
+#
+# where $M_t' = \partial M_t / \partial x_0$ is the tangent-linear model and
+# its transpose is the *adjoint* model. Classical DA systems hand-code the
+# adjoint; here `jax.grad` derives it from the forward model, and the
+# `diffrax` adjoint strategy decides how much of the forward trajectory to
+# store versus recompute (chapter [12](../12_adjoint_methods.md)). The
+# outer minimiser is BFGS, a quasi-Newton method that builds up curvature
+# information from successive gradients; operational systems use the
+# incremental (Gauss–Newton) scheme of chapter
+# [8](../08_incremental_4dvar.md), which linearises $M_t$ once per outer
+# loop and solves a quadratic inner problem.
+#
+# ## Where the pieces live
+#
+# All of this is [`StrongFourDVar`](../api/models.md). The forward model
+# $M_t$ comes from a [`DynTrajectory`](../api/costs_priors.md) ODE prior via
 # `as_forward_model`, so the same object that serves as a dynamical prior
-# elsewhere drives the rollout here. The later notebooks replace pieces of
-# this picture with learned components; this one is the reference point.
+# elsewhere drives the rollout here; $B$ and $R$ are `lineax` operators, so
+# correlated errors are a one-line change.
 
 # %%
 import jax
@@ -55,6 +111,13 @@ from vardax import (
 # $T + 1$ states at spacing $\Delta t = 0.05$, and observe every other step
 # with Gaussian noise. The background $x_b$ is the true initial state
 # perturbed with a larger error than the observations carry.
+#
+# The window is one time unit long — about one Lyapunov time for Lorenz-63
+# ($\lambda_1 \approx 0.9$), so errors in $x_0$ grow by a factor $e$ across
+# it. That is the sweet spot for strong-constraint 4DVar: long enough that
+# later observations constrain $x_0$ through the dynamics, short enough that
+# $J$ is still smooth and unimodal. Chapter [6](../06_strong_4dvar.md)
+# describes what happens when the window grows past this.
 
 # %%
 DT_SIM, SUBSAMPLE = 0.01, 5
@@ -84,8 +147,16 @@ print(f"background error |x_b - x_0|: {float(jnp.linalg.norm(x_b - x_true[0])):.
 # `Lorenz63` is the vector field; wrapping it in `DynTrajectory` gives an
 # ODE solve (Tsit5 with adaptive steps by default), and `as_forward_model`
 # exposes the one-step `step(state, dt)` interface `StrongFourDVar` rolls
-# out. $B$ and $R$ are diagonal with the true error variances; the tag tells
-# lineax they are positive definite so the cost can solve with CG.
+# out. $B = \sigma_b^2 I$ and $R = \sigma_{obs}^2 I$ use the true error
+# variances; the tag tells lineax they are positive definite so the cost can
+# apply $B^{-1}$ and $R^{-1}$ with conjugate gradients rather than forming
+# inverses.
+#
+# With diagonal covariances the cost reduces to the weighted least squares
+# of the introduction with weights $1/2\sigma_b^2$ and $1/2\sigma_{obs}^2$:
+# here $\sigma_b / \sigma_{obs} = 4$, so a single observation is worth
+# sixteen background constraints and the analysis should move a long way
+# from $x_b$.
 
 # %%
 prior = DynTrajectory(model=Lorenz63(sigma=10.0, rho=28.0, beta=8.0 / 3.0))
@@ -113,8 +184,12 @@ print(f"analysis error   |x_0* - x_0|: {float(jnp.linalg.norm(x0_analysis - x_tr
 # ## 3. First guess vs analysis along the window
 #
 # Rolling the background and the analysis through the same dynamics shows
-# what the observations bought: the analysed trajectory tracks the truth
-# across the whole window, including the unobserved steps.
+# what the observations bought. The first guess drifts away from the truth
+# at the Lyapunov rate; the analysed trajectory tracks it across the whole
+# window, including the unobserved steps and the unobserved half of the
+# time grid — the dynamics carry information from observed times to
+# unobserved ones, which is the whole point of assimilating a *window*
+# rather than a single snapshot (chapter [5](../05_threedvar.md)).
 
 # %%
 traj_first_guess = prior(x_b, ts)
@@ -147,6 +222,13 @@ plt.show()
 
 # %% [markdown]
 # ## 4. Error budget
+#
+# Two numbers summarise the analysis: the error in the control variable
+# $x_0$, and the error of the trajectory it generates over the window. The
+# second is what a forecast user sees. Note the trajectory RMSE of the
+# analysis is *below* the observation noise: the analysis is not an
+# interpolation of the observations but a model trajectory fitted to all of
+# them at once, so the noise averages out across the window.
 
 # %%
 labels = ["background\n$x_b$", "analysis\n$x_0^*$"]
@@ -170,12 +252,17 @@ plt.show()
 # %% [markdown]
 # ## Summary
 #
-# - `StrongFourDVar` minimises the classical 4DVar cost over the initial
-#   state with `optimistix` (BFGS by default); the dynamics are enforced
-#   exactly through the rollout.
+# - Strong-constraint 4DVar is the MAP estimate of the initial state under
+#   a perfect-model assumption; the analysis is a model trajectory chosen
+#   to fit the background and all observations in the window.
+# - `StrongFourDVar` minimises that cost over $x_0$ with `optimistix` (BFGS
+#   by default); the gradient through the rollout is the adjoint model,
+#   derived by `jax.grad` rather than hand-coded.
 # - Any object with `step(state, dt)` can be the model. Here it is the
 #   Lorenz-63 ODE via `DynTrajectory.as_forward_model`; chapter
 #   [19](../19_physical_models.md) covers the ODE priors and notebook
 #   [09](09_param_estimation_L63.py) makes their parameters learnable.
 # - Notebook [08](08_classical_4dvar_vs_4dvarnet_L63.py) contrasts this
-#   model-based analysis with the learned 4DVarNet solver.
+#   model-based analysis with the learned 4DVarNet solver, and notebook
+#   [10](10_bilevel_opt_L63.py) learns the cost weights that were set from
+#   known variances here.
