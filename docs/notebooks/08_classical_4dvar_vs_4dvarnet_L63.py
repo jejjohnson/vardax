@@ -77,25 +77,43 @@ print(f"Test batch shape: {batch_test.input.shape}")
 # %% [markdown]
 # ## 2. Classical 4DVar — gradient descent on $x$
 #
-# We use a fixed (randomly initialised) prior and minimise $U(x)$ with respect
-# to $x$ directly, running a manual gradient-descent loop so we can track the
-# convergence trajectory.
+# We use a fixed prior — a bilinear autoencoder pre-trained on clean training
+# windows, as in notebook [07](07_prior_pretraining_L63.py) — and minimise
+# $U(x)$ with respect to $x$ directly, running a manual gradient-descent loop
+# so we can track the convergence trajectory.
 
 # %%
-# (NNX removed in Epic 0 — vardax is now equinox-native)
+import equinox as eqx
+import optax
 
 prior = BilinAEPrior1D(state_dim=N, latent_dim=8, n_time=T, key=jax.random.PRNGKey(5))
+pre_opt = optax.adam(1e-2)
+pre_state = pre_opt.init(eqx.filter(prior, eqx.is_array))
+
+
+@eqx.filter_jit
+def pretrain_step(prior, opt_state, x):
+    loss, grads = eqx.filter_value_and_grad(lambda p: jnp.mean((x - p(x)) ** 2))(prior)
+    updates, opt_state = pre_opt.update(grads, opt_state, prior)
+    return eqx.apply_updates(prior, updates), opt_state, loss
+
+
+for _ in range(300):
+    prior, pre_state, pre_loss = pretrain_step(prior, pre_state, batch_train.target)
+print(f"prior reconstruction MSE after pre-training: {float(pre_loss):.4f}")
 
 
 # Initialise x from masked observations
 x_classical = batch_test.input * batch_test.mask
 
 classical_losses = []
-# Classical gradient descent uses a larger learning rate than 4DVarNet (1e-3)
-# because we are optimising directly in state space (low-dimensional), whereas
-# 4DVarNet optimises millions of network parameters requiring a much smaller lr.
-lr_classical = 0.05
+# `variational_cost` is a *mean* over all B*T*N elements, so its gradient per
+# element is tiny. Scaling the step by the element count gives a per-element
+# step size `eta` (gradient descent on the equivalent sum cost), which lets
+# the baseline actually converge within the step budget.
+eta_classical = 0.2
 n_classical_steps = 50
+n_elem = x_classical.size
 
 grad_fn = jax.jit(jax.value_and_grad(variational_cost))
 
@@ -103,7 +121,7 @@ for step in range(n_classical_steps):
     loss_val, grad = grad_fn(
         x_classical, batch_test, prior, alpha_obs=0.5, alpha_prior=0.5
     )
-    x_classical = x_classical - lr_classical * grad
+    x_classical = x_classical - eta_classical * n_elem * grad
     classical_losses.append(float(loss_val))
 
 mse_classical = float(jnp.mean((x_classical - batch_test.target) ** 2))
@@ -157,7 +175,7 @@ axes[1].set_title("4DVarNet learning curve")
 
 # MSE bar chart
 bars = axes[2].bar(
-    ["Classical 4DVar\n(fixed prior)", "4DVarNet\n(trained)"],
+    ["Classical 4DVar\n(pre-trained prior)", "4DVarNet\n(trained)"],
     [mse_classical, mse_4dvarnet],
     color=["steelblue", "tomato"],
 )

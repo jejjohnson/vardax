@@ -255,7 +255,7 @@ notebooks (jupytext percent-format sources under `docs/notebooks/`,
 executed at docs build time):
 
 - [01 — Model-based 4DVar on L63](notebooks/01_model_based_4dvar_L63.py)
-- [02 — Unrolling vs fixed-point on L63](notebooks/02_unrolling_vs_fixedpoint_L63.py) — adjoint method comparison
+- [02 — Unrolling vs fixed-point on L63](notebooks/02_unrolling_vs_fixedpoint_L63.py) — unrolled vs fixed-point solver comparison
 - [03 — 4DVarNet end-to-end on L63](notebooks/03_4dvarnet_L63.py)
 - [05 — End-to-end L63 pipeline](notebooks/05_end_to_end_L63.py) — including the data utilities
 - [06 — End-to-end L96 pipeline](notebooks/06_end_to_end_L96.py)

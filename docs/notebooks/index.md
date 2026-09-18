@@ -11,7 +11,7 @@ released code.
 | # | Notebook | What it shows |
 |---|---|---|
 | 01 | [Model-based 4DVar on L63](01_model_based_4dvar_L63.py) | The `Batch1D` / `FourDVarNet1D` entry point on a toy problem |
-| 02 | [Unrolling vs fixed-point on L63](02_unrolling_vs_fixedpoint_L63.py) | Adjoint strategies for differentiating through the inner solver |
+| 02 | [Unrolling vs fixed-point on L63](02_unrolling_vs_fixedpoint_L63.py) | The unrolled learned solver vs the prior-only fixed-point solver, plus warm-start initialisation |
 | 03 | [4DVarNet end-to-end on L63](03_4dvarnet_L63.py) | Training `FourDVarNet1D` with the demo training loop |
 | 04 | [4DVarNet 2-D demo](04_4dvarnet_2d_demo.py) | `FourDVarNet2D` on synthetic spatiotemporal fields |
 | 05 | [End-to-end L63 pipeline](05_end_to_end_L63.py) | Simulation, patching, masking, standardisation, training |

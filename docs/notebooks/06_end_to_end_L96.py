@@ -25,7 +25,7 @@
 # 3. Add observation masks and Gaussian noise
 # 4. Train/test split in time (before patch extraction) and standardize
 # 5. Visualize the L96 attractor (`plot_l96_grid`)
-# 6. Train `FourDVarNet1D` with `L96Prior`
+# 6. Train `FourDVarNet1D` (default bilinear autoencoder prior)
 # 7. Evaluate and visualize reconstruction
 
 # %%
@@ -119,7 +119,11 @@ plt.tight_layout()
 plt.show()
 
 # %% [markdown]
-# ## 6. Train FourDVarNet1D with L96Prior
+# ## 6. Train FourDVarNet1D
+#
+# `FourDVarNet1D` builds its own `BilinAEPrior1D` over the flattened
+# `(T, N)` window; the per-state `L96Prior` autoencoder targets the
+# `(B, N)` seam and is not used here.
 
 # %%
 # (NNX removed in Epic 0 — vardax is now equinox-native)
