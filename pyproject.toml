@@ -143,7 +143,10 @@ docs = [
     "ipython>=8.28.0",
     "ipykernel>=6.29.0",
     "jupytext>=1.16.0",
+    # Runtime deps of the executed tutorial notebooks (docs/notebooks/).
     "matplotlib>=3.9.0",
+    "xarray>=2024.0",
+    "numpy>=1.26",
 ]
 
 [tool.pytest.ini_options]
@@ -157,7 +160,7 @@ markers = ["slow: marks tests as slow (deselect with '-m \"not slow\"')"]
 fix = true
 line-length = 88
 target-version = "py312"
-exclude = ["docs/", "notebooks/"]
+exclude = ["docs/"]
 
 [tool.ruff.lint]
 select = [

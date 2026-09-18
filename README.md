@@ -179,8 +179,8 @@ Gradient modes: `"unrolled"` (O(K) memory, standard backprop),
 `"implicit"` (O(1) memory, IFT via fixed point).
 
 See [`docs/09_4dvarnet.md`](docs/09_4dvarnet.md) for the math and
-[`notebooks/`](notebooks/) for end-to-end tutorials on Lorenz-63 and
-Lorenz-96.
+[`docs/notebooks/`](docs/notebooks/) for end-to-end tutorials on Lorenz-63
+and Lorenz-96 (rendered under *Tutorials* on the docs site).
 
 ## Documentation
 
@@ -237,8 +237,8 @@ vardax/
 ├── docs/                           ← math reference (17 chapters) + design docs
 │   ├── *.md                        ← chapters 01–17
 │   ├── design/                     ← architecture, API contracts, decisions
+│   ├── notebooks/                  ← jupytext tutorials on Lorenz-63 / 96 (executed at docs build)
 │   └── notation.md, references.md
-├── notebooks/                      ← jupytext tutorials on Lorenz-63 / 96
 ├── tests/                          ← pytest suite (147 tests)
 └── .github/workflows/              ← CI, lint, format, typecheck, pages, release-please
 ```

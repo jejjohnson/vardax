@@ -24,4 +24,6 @@ jobs:
         run: uv sync --group docs
 
       - name: Build and deploy docs
-        run: uv run mkdocs gh-deploy --force
+        env:
+          JAX_PLATFORMS: cpu
+        run: uv run mkdocs gh-deploy --force --strict
