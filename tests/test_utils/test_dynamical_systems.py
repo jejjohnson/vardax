@@ -78,6 +78,14 @@ class TestSimulateLorenz63:
         _time_coords, states = simulate_lorenz63(key, n_steps=100, n_burn_in=10, x0=x0)
         assert states.shape[1] == 3
 
+    def test_long_simulation_exceeds_default_max_steps(self):
+        """The notebook setting (5000 + 1000 steps) exceeds diffrax's default
+        ``max_steps`` of 4096; the simulator must size the cap itself."""
+        key = jax.random.PRNGKey(0)
+        _, states = simulate_lorenz63(key, n_steps=5000, n_burn_in=1000)
+        assert states.shape == (5001, 3)
+        assert jnp.all(jnp.isfinite(states))
+
     def test_burn_in_excluded(self):
         """Burn-in points must not appear in the returned trajectory.
 
@@ -144,6 +152,13 @@ class TestSimulateLorenz96:
         key = jax.random.PRNGKey(7)
         _, states = simulate_lorenz96(key, n_steps=500, n_burn_in=200)
         assert jnp.all(jnp.abs(states) < 200)
+
+    def test_long_simulation_exceeds_default_max_steps(self):
+        """Same cap regression as Lorenz-63 (see notebook 06's 5000 + 1000 steps)."""
+        key = jax.random.PRNGKey(0)
+        _, states = simulate_lorenz96(key, N=8, n_steps=5000, n_burn_in=1000)
+        assert states.shape == (5001, 8)
+        assert jnp.all(jnp.isfinite(states))
 
     def test_custom_n_and_f(self):
         key = jax.random.PRNGKey(5)
