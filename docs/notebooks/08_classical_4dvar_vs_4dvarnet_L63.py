@@ -43,7 +43,7 @@ from vardax._src.utils.dynamical_systems import simulate_lorenz63
 from vardax._src.utils.patches import trajectory_to_xr_dataset, extract_patches
 from vardax._src.utils.masks import regular_mask
 from vardax._src.utils.noise import add_gaussian_noise
-from vardax._src.utils.preprocessing import train_test_split, xr_to_batch1d
+from vardax._src.utils.preprocessing import xr_to_batch1d
 from vardax._src.utils.standardize import compute_scaler_params, apply_standardization
 
 # %% [markdown]
@@ -55,11 +55,16 @@ time_coords, states = simulate_lorenz63(
     key, sigma=10.0, rho=28.0, beta=8.0 / 3.0, dt=0.01, n_steps=5000, n_burn_in=1000
 )
 ds = trajectory_to_xr_dataset(states, time_coords, feature_names=["X", "Y", "Z"])
-ds = extract_patches(ds, n_patches=200, n_timesteps=20, seed=42)
-ds = regular_mask(ds, variable="state", obs_interval=2)
-ds = add_gaussian_noise(ds, variable="state", sigma=0.5, seed=0, name="obs")
-
-ds_train, ds_test = train_test_split(ds, n_train=160, n_test=40, seed=0)
+# Split the trajectory in time *before* cutting windows, so no window
+# straddles the boundary: windows drawn at random from one trajectory and
+# split afterwards would leak test timesteps into the training set.
+n_time = ds.sizes["time"]
+ds_train = extract_patches(ds.isel(time=slice(0, int(0.8 * n_time))), n_patches=160, n_timesteps=20, seed=42)
+ds_test = extract_patches(ds.isel(time=slice(int(0.8 * n_time), None)), n_patches=40, n_timesteps=20, seed=43)
+ds_train = regular_mask(ds_train, variable="state", obs_interval=2)
+ds_test = regular_mask(ds_test, variable="state", obs_interval=2)
+ds_train = add_gaussian_noise(ds_train, variable="state", sigma=0.5, seed=0, name="obs")
+ds_test = add_gaussian_noise(ds_test, variable="state", sigma=0.5, seed=1, name="obs")
 mean, std = compute_scaler_params(ds_train, variable="state", mask_variable="mask")
 ds_train = apply_standardization(ds_train, variables=["state", "obs"], mean=mean, std=std)
 ds_test = apply_standardization(ds_test, variables=["state", "obs"], mean=mean, std=std)

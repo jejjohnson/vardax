@@ -23,7 +23,7 @@
 # 1. Simulate L63 with Diffrax
 # 2. Build an xarray Dataset and extract patches
 # 3. Add observation masks and Gaussian noise
-# 4. Train/test split
+# 4. Train/test split in time (before patch extraction)
 # 5. Standardize
 # 6. Convert to `Batch1D`
 # 7. Visualize raw data
@@ -41,7 +41,7 @@ from vardax._src.utils.dynamical_systems import simulate_lorenz63
 from vardax._src.utils.patches import trajectory_to_xr_dataset, extract_patches
 from vardax._src.utils.masks import regular_mask
 from vardax._src.utils.noise import add_gaussian_noise
-from vardax._src.utils.preprocessing import train_test_split, xr_to_batch1d
+from vardax._src.utils.preprocessing import xr_to_batch1d
 from vardax._src.utils.standardize import (
     compute_scaler_params,
     apply_standardization,
@@ -75,23 +75,30 @@ print(f"states shape: {states.shape}, time range: [{time_coords[0]:.2f}, {time_c
 
 # %%
 ds = trajectory_to_xr_dataset(states, time_coords, feature_names=["X", "Y", "Z"])
-ds = extract_patches(ds, n_patches=200, n_timesteps=20, seed=42)
 print(ds)
 
 # %% [markdown]
-# ## 3. Add Observation Masks and Gaussian Noise
+# ## 3. Train/Test Split in Time, Then Extract Patches
+#
+# The trajectory is split in time *before* cutting windows, so no window
+# straddles the boundary. Windows drawn at random from one trajectory and
+# split afterwards would leak test timesteps into the training set.
 
 # %%
-ds = regular_mask(ds, variable="state", obs_interval=2)
-ds = add_gaussian_noise(ds, variable="state", sigma=0.5, seed=0, name="obs")
-print(ds)
-
-# %% [markdown]
-# ## 4. Train/Test Split
-
-# %%
-ds_train, ds_test = train_test_split(ds, n_train=160, n_test=40, seed=0)
+n_time = ds.sizes["time"]
+ds_train = extract_patches(ds.isel(time=slice(0, int(0.8 * n_time))), n_patches=160, n_timesteps=20, seed=42)
+ds_test = extract_patches(ds.isel(time=slice(int(0.8 * n_time), None)), n_patches=40, n_timesteps=20, seed=43)
 print(f"train patches: {ds_train.sizes['patch']}, test patches: {ds_test.sizes['patch']}")
+
+# %% [markdown]
+# ## 4. Add Observation Masks and Gaussian Noise
+
+# %%
+ds_train = regular_mask(ds_train, variable="state", obs_interval=2)
+ds_test = regular_mask(ds_test, variable="state", obs_interval=2)
+ds_train = add_gaussian_noise(ds_train, variable="state", sigma=0.5, seed=0, name="obs")
+ds_test = add_gaussian_noise(ds_test, variable="state", sigma=0.5, seed=1, name="obs")
+print(ds_train)
 
 # %% [markdown]
 # ## 5. Standardize
