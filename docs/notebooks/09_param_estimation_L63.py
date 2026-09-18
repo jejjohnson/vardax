@@ -70,10 +70,14 @@
 # [6](../06_strong_4dvar.md) with the control variable extended from $u_0$
 # to $(u_0, \theta)$ — the *augmented state* trick of the data-assimilation
 # literature. In code it is [`strong_variational_cost`](../api/costs_priors.md)
-# with a `forward_fn` that closes over $\theta$; the weights
+# with a `forward_fn` that closes over $\theta$. In this sum form the weights
 # $\alpha_{obs} = 1 / 2\sigma_{obs}^2$ and $\alpha_{bg} = 1 / 2\sigma_b^2$ are
-# the inverse error variances, so their *ratio* is the only thing that
-# matters for the minimiser.
+# the inverse error variances, and only their *ratio* matters for the
+# minimiser. One caveat for reading the code: the library's costs are
+# *means* over their elements (the misfit over $B \cdot T \cdot N$ entries,
+# the background over $B \cdot N$), so the `alpha` arguments are algorithmic
+# weights whose variance interpretation carries a factor of $T$ — section 5
+# does the bookkeeping.
 #
 # ## What the gradient is
 #
@@ -285,25 +289,35 @@ plt.show()
 # ## 4. Identifiability — the cost along each parameter axis
 #
 # Sweeping one parameter at a time (others held at the truth) shows how
-# sharply the data constrain each of them. Near the truth the cost is
-# approximately quadratic,
+# sharply the data constrain each of them. Around its minimiser
+# $\hat\theta$ the realised cost is approximately quadratic,
 #
 # $$
-# U(\theta) \approx U(\theta_{\text{true}}) + \tfrac{1}{2}(\theta - \theta_{\text{true}})^\top
-#   \mathcal{I}\, (\theta - \theta_{\text{true}}),
-# \qquad
-# \mathcal{I} = \frac{1}{\sigma_{obs}^2} \sum_{b,t} J_{b,t}^\top\, \mathrm{diag}(m_t)\, J_{b,t},
-# \quad J_{b,t} = \frac{\partial \varphi_t(u_0^b; \theta)}{\partial \theta},
+# U(\theta) \approx U(\hat\theta) + \tfrac{1}{2}(\theta - \hat\theta)^\top
+#   \nabla^2 U(\hat\theta)\, (\theta - \hat\theta),
 # $$
 #
-# and $\mathcal{I}$ is the Fisher information of the experiment. Its inverse
-# is the Cramér–Rao bound on the covariance of *any* unbiased estimator, so
-# the curvature of each profile is not a property of the optimiser but of
-# the data: a flat direction means the observations cannot tell those
-# parameter values apart, and no amount of iteration will fix it. The
-# profiles below are the diagonal of that picture (the off-diagonal terms,
-# parameter correlations, need the full Hessian; chapter
-# [13](../13_posterior_covariance.md) builds it with `GaussNewtonHessian`).
+# and for a least-squares cost the Hessian splits into a Gauss–Newton part
+# built from first derivatives plus terms weighted by the residuals,
+#
+# $$
+# \nabla^2 U = \underbrace{\frac{1}{\sigma_{obs}^2} \sum_{b,t} J_{b,t}^\top\, \mathrm{diag}(m_t)\, J_{b,t}}_{\mathcal{I}(\theta)}
+#   + \frac{1}{\sigma_{obs}^2}\sum_{b,t} \sum_i \big(m_t \odot r_{b,t}\big)_i\, \nabla^2_\theta (\varphi_t)_i ,
+# \qquad J_{b,t} = \frac{\partial \varphi_t(u_0^b; \theta)}{\partial \theta}.
+# $$
+#
+# The first part is the Fisher information $\mathcal{I}$ of the experiment
+# (the expected curvature; the residual-weighted part averages to zero
+# under the noise model). Its inverse is the Cramér–Rao bound on the
+# covariance of *any* unbiased estimator, so the curvature of each profile
+# is not a property of the optimiser but of the data: a flat direction
+# means the observations cannot tell those parameter values apart, and no
+# amount of iteration will fix it. Two honest caveats about the plots: for
+# one noisy realisation the minimiser $\hat\theta$ sits near, not exactly
+# at, the truth (the score $\nabla U(\theta_{\text{true}})$ is small but not
+# zero), and each profile is a one-dimensional slice — parameter
+# correlations need the full matrix, which chapter
+# [13](../13_posterior_covariance.md) builds with `GaussNewtonHessian`.
 #
 # The horizontal line is the noise floor
 # $\sigma_{obs}^2 \cdot$ (observed fraction) $= 0.5$. Try re-running section 2
@@ -350,14 +364,20 @@ plt.show()
 #   `StrongFourDVar`. Adding $\theta$ to the control vector costs three more
 #   coordinates and nothing else, which is why "augmented state" is the
 #   standard DA route to parameter estimation.
-# - **The weights encode relative trust.** With $\alpha_{obs} = 1$ and
-#   $\alpha_{bg} = 0.1$ we are asserting $\sigma_b^2 / \sigma_{obs}^2 = 10$,
-#   i.e. that the background is about three times less reliable than an
-#   observation. The true background error here *is* observation noise, so
-#   this deliberately under-trusts $u_b$; the payoff is that $u_0$ can move
-#   freely while $\theta$ is still wrong, at the price of a slightly noisier
-#   final $u_0$. The next notebook learns such weights instead of guessing
-#   them.
+# - **The weights encode relative trust — after normalisation.**
+#   `strong_variational_cost` averages the misfit over $B \cdot T \cdot N$
+#   entries and the background over $B \cdot N$, so per *element* the
+#   observation weight is $\alpha_{obs} / T$ relative to $\alpha_{bg}$.
+#   Matching to the Gaussian sum cost gives
+#   $\sigma_b^2 / \sigma_{obs}^2 = \alpha_{obs} / (\alpha_{bg} T) = 1 / (0.1 \cdot 40) = 0.25$:
+#   with these settings the background counts as twice as precise as a
+#   single observation. The true background error here *is* one
+#   observation's worth of noise, so this over-trusts $u_b$ by a factor of
+#   four in variance — and the fit still moves $u_0$ a long way, because
+#   sixty observed values per window outweigh three background values.
+#   The exact Gaussian weighting would be $\alpha_{bg} = \alpha_{obs} / T$;
+#   try it, and then let the next notebook learn such weights instead of
+#   reasoning them out by hand.
 
 # %%
 def cost_joint(control, ts, batch, xb):

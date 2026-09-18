@@ -65,16 +65,18 @@
 #
 # ### Why a learned solver can beat the minimiser of $U$
 #
-# Gradient descent on $U$ converges to $\arg\min U$. But the truth is *not*
-# the minimiser of $U$: the prior is imperfect and the observations are
-# noisy, so $\arg\min U$ sits somewhere between the data and the prior's
-# range, and no amount of iteration moves it closer to $x_{\text{true}}$.
-# The learned solver is trained on reconstruction error, not on $U$, so it is
-# free to use $\nabla_x U$ as a *feature* — a signal about where the data
-# and prior disagree — without being bound to follow it downhill. The gap
-# between the two curves below is therefore two effects at once: faster
-# convergence within the iteration budget, and convergence to a better
-# point.
+# Gradient descent on $U$ heads for a stationary point of $U$ — with a
+# neural-network prior the cost is nonconvex, so "the" minimiser is not
+# guaranteed, only *some* point where $\nabla_x U = 0$. Whichever one it
+# reaches, the truth is not there: the prior is imperfect and the
+# observations are noisy, so the stationary points of $U$ sit somewhere
+# between the data and the prior's fixed points, and more iterations do not
+# move them closer to $x_{\text{true}}$. The learned solver is trained on
+# reconstruction error, not on $U$, so it is free to use $\nabla_x U$ as a
+# *feature* — a signal about where the data and prior disagree — without
+# being bound to follow it downhill. The gap between the two curves below
+# therefore mixes two effects: faster progress within the iteration budget,
+# and the freedom to stop somewhere gradient descent on $U$ would not.
 #
 # This notebook isolates that one ingredient. The prior $\varphi$ is
 # pre-trained and **frozen**, and only the modulator is trained, so any
@@ -167,12 +169,13 @@ print(f"prior reconstruction MSE after pre-training: {float(pre_loss):.4f}")
 # size $\eta$ from the masked observations.
 #
 # The step size is chosen from the observation term, whose gradient is
-# $2\, m \odot (x - y)$: with $\eta = 0.1$ each step closes 20% of the
-# remaining gap at observed points, so the error there decays geometrically
-# as $0.8^k$. At unobserved points the only force is the prior term, and
-# progress depends on how strongly $\varphi$ couples observed and
-# unobserved entries — which is why the baseline improves steadily but
-# slowly.
+# $2\, m \odot (x - y)$: ignoring the prior, each step with $\eta = 0.1$
+# closes 20% of the remaining gap at observed points, so that part of the
+# error decays geometrically as $0.8^k$. The prior term acts everywhere —
+# it is the only force at unobserved points and it also pulls observed
+# points toward the reconstruction — so the actual rate depends on how
+# strongly $\varphi$ couples entries, which is why the baseline improves
+# steadily but slowly.
 
 # %%
 PRIOR_WEIGHT = 1.0
@@ -294,17 +297,20 @@ plt.show()
 # held-out MSE with vanilla gradient descent run for the same number of
 # steps.
 #
-# Two trends to expect. Gradient descent improves monotonically with $K$,
-# along the geometric curve of section 2, and would eventually reach
-# $\arg\min U$. The learned solver is far ahead at small $K$ — one or two
+# Two things to keep separate when reading the plot. Vanilla descent
+# lowers $U$ at every step, but the plotted quantity is held-out
+# reconstruction MSE, a different objective: in this run the MSE happens to
+# fall with $K$, and there is no guarantee it must — once close to a
+# stationary point of $U$, further descent can lower $U$ while moving away
+# from the truth. The learned solver is far ahead at small $K$ — one or two
 # learned steps beat fifteen plain ones — because it is not constrained to
-# be a descent method on $U$. Its own curve need not be monotone: a longer
-# unroll is a harder training problem (the product of Jacobians above) with
-# the same iteration budget, so the modulator trained at large $K$ can end
-# slightly worse than the one trained at moderate $K$. In practice 4DVarNet
-# uses $K \sim 10$–$15$ for exactly this reason, and chapter
-# [9](../09_4dvarnet.md) discusses the one-step and implicit adjoints that
-# make larger $K$ trainable.
+# be a descent method on $U$ at all. Its own curve need not be monotone
+# either: a longer unroll is a harder training problem (the product of
+# Jacobians above) with the same iteration budget, so the modulator trained
+# at large $K$ can end slightly worse than the one trained at moderate $K$.
+# In practice 4DVarNet uses $K \sim 10$–$15$ for exactly this reason, and
+# chapter [9](../09_4dvarnet.md) discusses the one-step and implicit
+# adjoints that make larger $K$ trainable.
 
 # %%
 K_VALUES = [1, 2, 5, 10, 15]
@@ -339,7 +345,7 @@ plt.show()
 #   `ConvLSTMGradMod1D` is what buys the fast convergence of 4DVarNet: the
 #   modulator learns step sizes, momentum, and preconditioning from data,
 #   and — because it is trained on the truth rather than on $U$ — it can
-#   land closer to the truth than the minimiser of $U$.
+#   land closer to the truth than descent on $U$ does.
 # - `solve_4dvarnet_1d` / `solver_step_1d` expose the solver as plain
 #   functions, so partial training is a matter of which argument you
 #   differentiate.

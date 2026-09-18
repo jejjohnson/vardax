@@ -67,10 +67,14 @@
 #
 # $$
 # \nabla_{x_0} J = B^{-1}(x_0 - x_b)
-#   + \sum_{t=0}^{T} \big(M_t'\big)^{\!\top} H^\top R^{-1}\, m_t \odot \big(H M_t(x_0) - y_t\big),
+#   + \sum_{t=0}^{T} \big(M_t'\big)^{\!\top} H^\top D_t\, R^{-1} D_t \big(H M_t(x_0) - y_t\big),
+# \qquad D_t = \mathrm{diag}(m_t),
 # $$
 #
-# where $M_t' = \partial M_t / \partial x_0$ is the tangent-linear model and
+# where the mask appears on both sides of $R^{-1}$ (the cost is the
+# $R^{-1}$-norm of the *masked* residual, so unobserved coordinates receive
+# no gradient even when $R$ is non-diagonal), $M_t' = \partial M_t / \partial x_0$
+# is the tangent-linear model and
 # its transpose is the *adjoint* model. Classical DA systems hand-code the
 # adjoint; here `jax.grad` derives it from the forward model, and the
 # `diffrax` adjoint strategy decides how much of the forward trajectory to

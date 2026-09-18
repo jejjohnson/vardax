@@ -55,8 +55,10 @@
 #
 # a generalised Tikhonov (Wiener) filter whose regularisation strength is the
 # ratio $\alpha_{prior} / \alpha_{obs}$. Too small and the analysis
-# interpolates the noise; too large and it collapses onto the prior's range
-# and ignores the data. In the Bayesian reading of chapter
+# interpolates the noise; too large and it collapses onto the prior's
+# *fixed-point set* $\ker(I - A)$ — the states the prior reconstructs
+# exactly, which for a trained autoencoder is its learned manifold — and
+# ignores the data. In the Bayesian reading of chapter
 # [1](../01_problem_setting.md) the weights are inverse error variances and
 # the right ratio is $\sigma_{obs}^2 / \sigma_{prior}^2$; when the prior is a
 # neural network nobody knows $\sigma_{prior}$, so the ratio is a knob to be
