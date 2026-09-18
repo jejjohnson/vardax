@@ -1,7 +1,9 @@
 # Tutorials
 
 End-to-end, runnable walkthroughs of vardax on the Lorenz-63 and
-Lorenz-96 testbeds. Each page is a [jupytext](https://jupytext.readthedocs.io/)
+Lorenz-96 testbeds. Notebooks 01–08 cover state estimation with 4DVar and
+4DVarNet; 09–11 port the parameter-estimation, bilevel-optimisation and
+gradient-learning chapters of the legacy *mfourdvar* book. Each page is a [jupytext](https://jupytext.readthedocs.io/)
 percent-format `.py` source under `docs/notebooks/`, executed when the
 documentation is built, so the outputs you see here are produced by the
 released code.
@@ -16,6 +18,9 @@ released code.
 | 06 | [End-to-end L96 pipeline](06_end_to_end_L96.py) | The same pipeline on Lorenz-96 |
 | 07 | [Prior pre-training on L63](07_prior_pretraining_L63.py) | Two-stage training: pre-train the prior, then fine-tune |
 | 08 | [Classical 4DVar vs 4DVarNet](08_classical_4dvar_vs_4dvarnet_L63.py) | Gradient descent on the variational cost vs the learned solver |
+| 09 | [Parameter estimation on L63](09_param_estimation_L63.py) | Learning ODE parameters (and the initial state) with `DynTrajectory` and `strong_variational_cost` |
+| 10 | [Bilevel optimisation on L63](10_bilevel_opt_L63.py) | Learning the cost weights by differentiating through the inner 4DVar solve |
+| 11 | [Learning the gradient update](11_gradient_learning_L63.py) | Training only the `ConvLSTMGradMod1D` against vanilla gradient descent, with a solver-steps ablation |
 
 ## Running locally
 

@@ -195,6 +195,9 @@ grad_theta = jax.grad(lambda p: prior.loss(x, ts, params=p))(theta_0)
 This is the parameter-estimation seam: fit $\theta$ (a forcing, a
 drag coefficient, a neural closure's weights) by minimising the
 dynamical residual of observed or analysed trajectories.
+Notebook [09](notebooks/09_param_estimation_L63.py) walks through it on
+Lorenz-63, including joint state–parameter estimation and an
+identifiability check.
 
 ### One prior, three seams
 

@@ -261,6 +261,9 @@ executed at docs build time):
 - [06 — End-to-end L96 pipeline](notebooks/06_end_to_end_L96.py)
 - [07 — Prior pre-training on L63](notebooks/07_prior_pretraining_L63.py) — pre-training the bilinear prior
 - [08 — Classical 4DVar vs 4DVarNet on L63](notebooks/08_classical_4dvar_vs_4dvarnet_L63.py) — side-by-side comparison
+- [09 — Parameter estimation on L63](notebooks/09_param_estimation_L63.py) — learnable ODE parameters via `DynTrajectory`
+- [10 — Bilevel optimisation on L63](notebooks/10_bilevel_opt_L63.py) — learning the cost weights through the inner solve
+- [11 — Learning the gradient update](notebooks/11_gradient_learning_L63.py) — the gradient modulator in isolation
 
 To open one as a notebook locally: `jupytext --to notebook docs/notebooks/<name>.py`.
 
