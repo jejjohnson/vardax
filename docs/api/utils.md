@@ -19,6 +19,22 @@ one-step increment losses.
       show_root_toc_entry: false
       members: [Lorenz63, Lorenz96, simulate_lorenz63, simulate_lorenz96, time_patches]
 
+## Forward-model adapters
+
+`SoftBoundedForward` wraps any `pipekit_cycle.ForwardModel` so that the
+line search of a variational solver cannot drive an explicit ODE step
+off the attractor into overflow: inside a box the adapter is the
+identity, outside it saturates smoothly. Notebooks
+[13](../notebooks/13_neural_closure_L96.py) and
+[14](../notebooks/14_posterior_uncertainty_L63.py) use it around
+Lorenz-96 and Lorenz-63 forwards.
+
+::: vardax
+    options:
+      show_root_heading: false
+      show_root_toc_entry: false
+      members: [SoftBoundedForward]
+
 ## Validation gates
 
 The six-step methodology's go/no-go checks (Decision D12):

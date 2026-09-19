@@ -147,6 +147,7 @@ from vardax._src.utils.dynamical_systems import (
     simulate_lorenz63,
     simulate_lorenz96,
 )
+from vardax._src.utils.forward import SoftBoundedForward
 from vardax._src.utils.patches import time_patches
 from vardax._src.utils.validation import (
     assert_adjoint_calibrated,
@@ -282,6 +283,7 @@ __all__ = [
     "Lorenz96",
     "simulate_lorenz63",
     "simulate_lorenz96",
+    "SoftBoundedForward",
     "time_patches",
     # Visualization
     "plot_l96_grid",

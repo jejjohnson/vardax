@@ -64,7 +64,13 @@ def simulate_lorenz63(
         n_steps: Total number of integration steps *after* burn-in.
         n_burn_in: Number of initial steps to discard (burn-in).
         x0: Optional explicit initial condition of shape ``(3,)``.  When
-            ``None``, the classic fixed-point perturbation is used.
+            ``None``, the classic off-attractor point ``(1, 1, 1)`` is used,
+            perturbed by ``key``. From there the transient onto the
+            attractor takes a couple of time units, so the default burn-in
+            lands on it. (Starting at the unstable fixed point instead, as
+            older versions did, leaves the trajectory within a fraction of
+            a unit of it for ~40 time units — far longer than any burn-in
+            the tutorials use.)
 
     Returns:
         ``(time_coords, states)`` — time coordinates of shape ``(T,)``
@@ -74,15 +80,8 @@ def simulate_lorenz63(
     model = Lorenz63(sigma=sigma, rho=rho, beta=beta)
 
     if x0 is None:
-        fp = jnp.array(
-            [
-                jnp.sqrt(beta * (rho - 1)),
-                jnp.sqrt(beta * (rho - 1)),
-                rho - 1.0,
-            ]
-        )
         noise = jax.random.normal(key, shape=(3,)) * 0.01
-        x0 = fp + noise
+        x0 = jnp.array([1.0, 1.0, 1.0]) + noise
 
     total_steps = n_burn_in + n_steps
     t0 = 0.0

@@ -125,6 +125,12 @@ nav:
       - 09. Parameter estimation on L63: notebooks/09_param_estimation_L63.py
       - 10. Bilevel optimisation on L63: notebooks/10_bilevel_opt_L63.py
       - 11. Learning the gradient update: notebooks/11_gradient_learning_L63.py
+      - 12. Weak-constraint 4DVar on L63: notebooks/12_weak_constraint_4dvar_L63.py
+      - 13. Neural closures on two-level L96: notebooks/13_neural_closure_L96.py
+      - 14. Posterior uncertainty on L63: notebooks/14_posterior_uncertainty_L63.py
+      - 15. Observation operators: notebooks/15_observation_operators.py
+      - 16. Cycled assimilation on L63: notebooks/16_cycled_assimilation_L63.py
+      - 17. Amortized posterior on L63: notebooks/17_amortized_posterior_L63.py
   - Design Docs:
       - Overview: design/README.md
       - Vision: design/vision.md
