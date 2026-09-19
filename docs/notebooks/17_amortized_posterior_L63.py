@@ -263,18 +263,28 @@ def minimise_from(x0_init, y):
 
 @jax.jit
 def oracle_solve(y):
-    """Multi-start MAP trajectory and its (T_WIN*3 x T_WIN*3) Laplace covariance, batched over windows."""
+    """Multi-start MAP trajectory and its (T_WIN*3 x T_WIN*3) Laplace covariance, batched over windows.
 
-    def one(y_i):
-        cands = jax.vmap(minimise_from, in_axes=(0, None))(starts, y_i)
-        best = jnp.argmin(jax.vmap(cost_4dvar, in_axes=(0, None))(cands, y_i))
-        x0_i = cands[best]
+    The (start, window) pairs are flattened into one batch so that a single
+    vmap covers the BFGS solves; nesting a vmap over starts inside a vmap over
+    windows compiles pathologically slowly.
+    """
+    n = y.shape[0]
+    xs = jnp.tile(starts, (n, 1))  # (n * N_STARTS, 3)
+    ys = jnp.repeat(y, N_STARTS, axis=0)  # (n * N_STARTS, T_WIN, 3)
+    cands = jax.vmap(minimise_from)(xs, ys)
+    costs = jax.vmap(cost_4dvar)(cands, ys).reshape(n, N_STARTS)
+    best = jnp.argmin(costs, axis=1)
+    x0 = cands.reshape(n, N_STARTS, 3)[jnp.arange(n), best]
+
+    def posterior(x0_i):
         G = jax.jacfwd(lambda x: (mask * rollout(x)).ravel())(x0_i)
         P0 = jnp.linalg.inv(jnp.diag(1.0 / SD**2) + G.T @ G / SIGMA_OBS**2)
         M = jax.jacfwd(rollout)(x0_i).reshape(T_WIN * 3, 3)
-        return rollout(x0_i), M @ P0 @ M.T, best
+        return rollout(x0_i), M @ P0 @ M.T
 
-    return jax.vmap(one)(y)
+    traj, cov = jax.vmap(posterior)(x0)
+    return traj, cov, best
 
 
 @jax.jit
@@ -335,10 +345,13 @@ plt.tight_layout()
 plt.show()
 
 # %% [markdown]
-# The amortized mean is close to the oracle at a small fraction of the
-# cost, and its $z$ — never observed — is inferred from the $x$, $y$
-# history as the dynamics demand. Its stated uncertainty is wider than
-# the oracle's, as the direction of the KL divergence predicted.
+# The amortized mean matches the oracle's accuracy at a small fraction
+# of the cost, and its $z$ — never observed — is inferred from the $x$,
+# $y$ history as the dynamics demand. Its stated uncertainty is of the
+# oracle's size, on average slightly narrower; whether that is honest is
+# what the calibration gate below decides. Note also how many windows
+# needed a start other than the climatological mean: a single-start
+# oracle would have been wrong more often than the model it grades.
 #
 # ## 4. Gate 1 — posterior agreement
 #
@@ -375,12 +388,15 @@ print("mean z at observed vs unobserved entries:",
 # at an observed time is a small fraction of $\sigma_o$ — five
 # observations of $x$ and $y$ pin a three-dimensional state down hard —
 # so a network error of a few tenths is several oracle sigmas. Most
-# windows pass at a loose tolerance and fail at one sigma, which is the
+# windows pass at two or three sigma and fail at one, which is the
 # honest verdict on a regression head of this size: good enough to
 # initialise a solver or to screen data, not a replacement for the
-# solver where its precision is needed. The gap is largest at the
-# observed entries, where the oracle is most certain, and smallest at
-# the unobserved $z$, where both models lean on the dynamics.
+# solver where its precision is needed. The standardised gap is about
+# the same at observed and unobserved entries — the oracle is more
+# certain where it has data, but the network is also more accurate
+# there, and the two effects cancel. The worst window is off by an
+# order of magnitude more than the median, the silent failure the gate
+# exists to catch.
 #
 # ## 5. Gate 2 — adjoint calibration
 #
@@ -495,18 +511,33 @@ plt.tight_layout()
 plt.show()
 
 # %% [markdown]
+# The rank histogram is U-shaped: the true window's norm falls in the
+# tails of the sample norms far more often than it should, the
+# signature of an over-confident posterior. Yet the marginal coverage
+# on the right is only a little below nominal. The two readings are
+# consistent, and the difference between them is the diagonal
+# covariance. The true posterior is strongly correlated along the window
+# (every state is a function of the same initial condition), and the
+# norm of a correlated vector varies far more than the norm of an
+# independent one with the same marginals; samples drawn without the
+# correlations therefore cluster in norm, and the truth lands outside
+# the cluster. SBC on a summary statistic sees what marginal coverage
+# cannot, which is why the gate uses one — and why the next head to
+# try is one that can represent correlations.
+#
 # ## Summary
 #
 # - Amortized inference replaces a per-window optimisation with a
 #   network evaluation; training by maximum likelihood on simulated
 #   pairs is posterior matching in expectation over the data.
-# - The regression head reaches an accuracy near the oracle's at a tiny
-#   fraction of its cost, with a diagonal Gaussian uncertainty that is
-#   wider than the oracle's.
+# - The regression head reaches the oracle's accuracy at a tiny fraction
+#   of its cost, with a diagonal Gaussian uncertainty of about the
+#   oracle's size.
 # - The gates grade it honestly: it passes posterior agreement only at a
-#   loose tolerance, fails adjoint calibration at the operational
-#   threshold, and its calibration is what the SBC histogram and the
-#   coverage numbers say it is — read them rather than the summary.
+#   loose tolerance, fails adjoint calibration by a wide margin, and its
+#   marginals are slightly over-confident while its samples ignore the
+#   within-window correlations, which the SBC histogram exposes as a
+#   U-shape.
 # - What the gates flag is what the next models fix: a flow or score
 #   head for the covariance structure, derivative-aware training for the
 #   Jacobian, and distillation against the oracle for the mean.
