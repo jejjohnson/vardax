@@ -42,9 +42,20 @@ def test_identity_gradient_inside_box_including_zero():
 
 def test_gradient_nonzero_outside_box():
     fwd = SoftBoundedForward(Identity(), bound=10.0)
-    g = jax.grad(lambda x: jnp.sum(fwd.step(x, 0.5)))(jnp.array([25.0, -40.0]))
+    # Just outside, and as far out as a runaway line search ever gets.
+    g = jax.grad(lambda x: jnp.sum(fwd.step(x, 0.5)))(
+        jnp.array([25.0, -40.0, 1e6, -1e9])
+    )
     assert jnp.all(jnp.isfinite(g))
     assert jnp.all(g > 0.0)
+
+
+def test_slope_matches_at_box_edge():
+    fwd = SoftBoundedForward(Identity(), bound=10.0)
+    g = jax.grad(lambda x: jnp.sum(fwd.step(x, 0.5)))(
+        jnp.array([10.0 - 1e-3, 10.0 + 1e-3])
+    )
+    assert jnp.allclose(g, 1.0, atol=1e-3)
 
 
 def test_satisfies_forward_model_protocol_and_delegates_dt():

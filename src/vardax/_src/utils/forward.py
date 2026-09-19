@@ -23,7 +23,7 @@ class SoftBoundedForward(eqx.Module):
     $$
     s(x) = \operatorname{sign}(x)\,\begin{cases}
       |x| & |x| \le b \\
-      b + b \tanh\!\big((|x| - b)/b\big) & |x| > b
+      b + b\,\dfrac{u}{1 + u}, \quad u = (|x| - b)/b & |x| > b
     \end{cases}
     $$
 
@@ -34,9 +34,13 @@ class SoftBoundedForward(eqx.Module):
       the wrapped model wherever the analysis can end up);
     - states outside are confined to $|x_i| < 2b$, keeping every trial
       cost finite;
-    - the map is smooth with a non-zero gradient, unlike a hard clip,
-      which would zero the gradient and break quasi-Newton curvature
-      updates.
+    - the map is continuously differentiable (slope one at the box edge
+      from both sides) and its gradient outside, $1/(1+u)^2$, stays
+      representable in single precision for trial states up to about
+      $10^{19}$ times the bound, unlike a hard clip (zero gradient) or a
+      ``tanh`` saturation (gradient underflows to zero a few bounds out);
+      a rejected trial therefore still carries curvature information if
+      the minimiser asks for it.
 
     Attributes:
         forward: The wrapped ``pipekit_cycle.ForwardModel``.
@@ -75,8 +79,12 @@ class SoftBoundedForward(eqx.Module):
         a = jnp.abs(state)
         # The in-box branch returns ``state`` itself (not ``sign * abs``) so the
         # gradient is exactly one everywhere inside, including at zero, where
-        # ``jnp.sign`` would otherwise zero it.
-        outside = jnp.sign(state) * (b + b * jnp.tanh((a - b) / b))
+        # ``jnp.sign`` would otherwise zero it. Outside, the algebraic
+        # saturation u / (1 + u) keeps the derivative 1 / (1 + u)^2 finite and
+        # non-zero far beyond any state a line search will try (tanh would
+        # underflow to a zero gradient a few bounds out).
+        u = jnp.maximum(a - b, 0.0) / b
+        outside = jnp.sign(state) * (b + b * u / (1.0 + u))
         return jnp.where(a <= b, state, outside)
 
     def step(self, state: Array, dt: float) -> Array:
