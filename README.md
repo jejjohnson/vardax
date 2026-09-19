@@ -50,7 +50,7 @@ All seven ship today, and all seven satisfy
 | `ThreeDVar` | 3D variational | $x$ | Snapshot inversion with nonlinear $H$ |
 | `StrongFourDVar` | Strong-constraint 4DVar | $x_0$ | A window of data, dynamics trusted |
 | `WeakFourDVar` | Weak-constraint 4DVar | $(x_0, \boldsymbol{\eta})$ | A window of data, model error active |
-| `IncrementalFourDVar` | Gauss–Newton outer, CG inner, CVT | $\delta x_0$ | The operational fast path |
+| `IncrementalFourDVar` | Gauss–Newton outer, CG inner | $\delta x_0$ | The operational fast path |
 | `FourDVarNet1D` / `FourDVarNet2D` | Learned prior $\varphi_\theta$ + learned solver | $x$ | Dense training data, no trusted model |
 | `AmortizedPosterior` | Direct head $q_\phi(x \mid y)$ | — | Real-time, many-event regimes |
 
@@ -71,9 +71,11 @@ chapter derives it.
 ## Install
 
 `vardax` is not on PyPI yet. Install from the repository with
-[uv](https://docs.astral.sh/uv/), which resolves the pinned git
-dependencies (`gaussx`, `geonnax`, `pipekit`) declared in
-`[tool.uv.sources]`:
+[uv](https://docs.astral.sh/uv/), which resolves the git dependencies
+declared in `[tool.uv.sources]`. `gaussx` and `geonnax` are pinned to a
+revision there; the `pipekit` packages track their default branch and
+`uv.lock` is not committed, so a fresh install can pick up newer pipekit
+commits than the last one tested:
 
 ```bash
 git clone https://github.com/jejjohnson/vardax.git
@@ -179,7 +181,7 @@ cycle's $x_b$ the previous forecast.
 | Adjoints | `OneStepAdjoint`, `KStepAdjoint`, `ImplicitAdjoint`, `RecursiveCheckpointAdjoint`, `to_optimistix_adjoint` | The Bolte (2023) one-step rule packaged as an `optimistix.AbstractAdjoint`, targeting upstream contribution |
 | Dynamical priors | `DynTrajectory`, `DynIncrements`, `DynamicalPrior` | An ODE prior that doubles as a forward model (`.as_forward_model(dt)`) or a trajectory loss (`.bind(ts)`) |
 | Reduced bases | `LinearBasis`, `CompositeBasis`, `eof_basis`, `fourier_basis`, `rbf_basis`, `wavelet_basis` | Control-variable transforms for incremental 4DVar |
-| Amortized inference | `AmortizedPosterior`, `MLPObsEncoder`, `RegressionHead`, `ConditionalFlowHead`, `ScoreDiffusionHead` | Train once on simulations, assimilate in a forward pass |
+| Amortized inference | `AmortizedPosterior`, `MLPObsEncoder`, `IdentityObsEncoder`, `RegressionHead` | Train once on simulations, assimilate in a forward pass. `ConditionalFlowHead` and `ScoreDiffusionHead` are declared but raise `NotImplementedError` on construction, pending `gauss_flows` and the reverse-SDE sampler |
 | Validation gates | `assert_posterior_agreement`, `assert_adjoint_calibrated`, `simulation_based_calibration` | The go/no-go checks that decide whether a fast method may replace a trusted one |
 | Forward adapters | `SoftBoundedForward` | Identity inside a box, smooth saturation outside, so a line-search trial far off the attractor cannot overflow an explicit ODE step and NaN-poison the solve |
 
