@@ -17,19 +17,66 @@
 #
 # Ported from the mfourdvar *Learning how to Learn* chapter.
 #
-# The core 4DVarNet idea is that the *solver* can be learned: instead of
-# the fixed gradient-descent update $x_{k+1} = x_k - \eta \nabla_x U(x_k)$, a
-# recurrent network $g_\phi$ maps the gradient (and its own memory) to the
-# update,
+# ## From a solver to a learned solver
+#
+# Every variational analysis in this library is computed by iterating an
+# update rule on a cost $U$. Vanilla gradient descent is the simplest,
 #
 # $$
-# x_{k+1} = x_k - g_\phi\big(\nabla_x U(x_k),\; x_k,\; h_k\big),
+# x_{k+1} = x_k - \eta\, \nabla_x U(x_k), \qquad k = 0, \ldots, K-1,
 # $$
 #
-# and $\phi$ is trained so that $K$ such steps land close to the truth. In
-# vardax this is the `ConvLSTMGradMod1D` *gradient modulator* — see the
+# and most of numerical optimisation is a catalogue of better update rules
+# that use the same gradient more cleverly: momentum keeps a running
+# average $h_k$ of past gradients, Adam rescales each coordinate by a
+# running estimate of its variance, Newton's method preconditions by the
+# inverse Hessian, $x_{k+1} = x_k - [\nabla^2_x U]^{-1} \nabla_x U$. All of
+# them have the form
+#
+# $$
+# x_{k+1} = x_k - g\big(\nabla_x U(x_k),\; x_k,\; h_k\big), \qquad
+# h_{k+1} = \text{update}(h_k, \nabla_x U(x_k)),
+# $$
+#
+# with a hand-designed $g$ and a hand-designed hidden state $h$.
+#
+# The core 4DVarNet idea, inherited from *learning to learn by gradient
+# descent by gradient descent* (Andrychowicz et al., 2016), is to make $g$
+# a small recurrent network $g_\phi$ and to choose $\phi$ by minimising
+# what we actually care about after $K$ steps:
+#
+# $$
+# \phi^* = \underset{\phi}{\arg\min}\;
+#   \mathbb{E}\, \big\| x_K(\phi) - x_{\text{true}} \big\|^2 ,
+# \qquad
+# x_{k+1} = x_k - g_\phi\big(\nabla_x U(x_k),\; x_k,\; h_k\big).
+# $$
+#
+# This is the bilevel problem of notebook
+# [10](10_bilevel_opt_L63.py) with the *update rule* as the outer variable
+# instead of the cost weights, and it is trained the same way: unroll $K$
+# steps, back-propagate the reconstruction error through all of them. In
+# vardax $g_\phi$ is the `ConvLSTMGradMod1D` *gradient modulator* — see the
 # *learned inner solver* and *gradient modulator family* sections of
-# chapter [9](../09_4dvarnet.md).
+# chapter [9](../09_4dvarnet.md). The LSTM cell state is the learned
+# counterpart of a momentum buffer; the convolution lets the step at one
+# location depend on gradients nearby, a learned, data-dependent
+# preconditioner.
+#
+# ### Why a learned solver can beat the minimiser of $U$
+#
+# Gradient descent on $U$ heads for a stationary point of $U$ — with a
+# neural-network prior the cost is nonconvex, so "the" minimiser is not
+# guaranteed, only *some* point where $\nabla_x U = 0$. Whichever one it
+# reaches, the truth is not there: the prior is imperfect and the
+# observations are noisy, so the stationary points of $U$ sit somewhere
+# between the data and the prior's fixed points, and more iterations do not
+# move them closer to $x_{\text{true}}$. The learned solver is trained on
+# reconstruction error, not on $U$, so it is free to use $\nabla_x U$ as a
+# *feature* — a signal about where the data and prior disagree — without
+# being bound to follow it downhill. The gap between the two curves below
+# therefore mixes two effects: faster progress within the iteration budget,
+# and the freedom to stop somewhere gradient descent on $U$ would not.
 #
 # This notebook isolates that one ingredient. The prior $\varphi$ is
 # pre-trained and **frozen**, and only the modulator is trained, so any
@@ -61,6 +108,12 @@ from vardax._src.utils.standardize import apply_standardization, compute_scaler_
 
 # %% [markdown]
 # ## 1. Lorenz-63 patches and a frozen prior
+#
+# The data pipeline of notebook [08](08_classical_4dvar_vs_4dvarnet_L63.py):
+# Lorenz-63 windows split in time, masked every other step, noisy, and
+# standardised. The prior is a bilinear autoencoder pre-trained on clean
+# training windows, as in notebook [07](07_prior_pretraining_L63.py), and
+# then treated as a constant.
 
 # %%
 key = jax.random.PRNGKey(0)
@@ -114,6 +167,15 @@ print(f"prior reconstruction MSE after pre-training: {float(pre_loss):.4f}")
 # $U(x) = \|m \odot (x - y)\|^2 + \lambda \|x - \varphi(x)\|^2$ (sums, with
 # $\lambda = 1$). Vanilla gradient descent takes $K$ steps with a fixed step
 # size $\eta$ from the masked observations.
+#
+# The step size is chosen from the observation term, whose gradient is
+# $2\, m \odot (x - y)$: ignoring the prior, each step with $\eta = 0.1$
+# closes 20% of the remaining gap at observed points, so that part of the
+# error decays geometrically as $0.8^k$. The prior term acts everywhere —
+# it is the only force at unobserved points and it also pulls observed
+# points toward the reconstruction — so the actual rate depends on how
+# strongly $\varphi$ couples entries, which is why the baseline improves
+# steadily but slowly.
 
 # %%
 PRIOR_WEIGHT = 1.0
@@ -154,6 +216,14 @@ print(f"vanilla GD, K={K}: MSE {float(gd_trace[0]):.4f} -> {float(gd_trace[-1]):
 # learned solver. The modulator is the only argument we differentiate:
 # `eqx.filter_value_and_grad` takes gradients with respect to the arrays of
 # its first argument, and the frozen prior is captured by closure.
+#
+# The training loss is the reconstruction error after $K$ steps, so its
+# gradient back-propagates through $K$ applications of the modulator *and*
+# $K$ evaluations of $\nabla_x U$ (a second-order quantity: the derivative
+# of a gradient). This is back-propagation through time with the solver
+# iteration as the time axis, and it inherits the usual difficulty of long
+# unrolls: the sensitivity of $x_K$ to an early step passes through a
+# product of $K$ Jacobians. Keep that in mind for the ablation.
 
 # %%
 HIDDEN = 16
@@ -225,8 +295,22 @@ plt.show()
 #
 # For each $K$ we train a fresh modulator *at that* $K$ and compare its
 # held-out MSE with vanilla gradient descent run for the same number of
-# steps. The learned update is most valuable when the iteration budget is
-# small; vanilla descent needs many more steps to catch up.
+# steps.
+#
+# Two things to keep separate when reading the plot. Vanilla descent
+# lowers $U$ at every step, but the plotted quantity is held-out
+# reconstruction MSE, a different objective: in this run the MSE happens to
+# fall with $K$, and there is no guarantee it must — once close to a
+# stationary point of $U$, further descent can lower $U$ while moving away
+# from the truth. The learned solver is far ahead at small $K$ — one or two
+# learned steps beat fifteen plain ones — because it is not constrained to
+# be a descent method on $U$ at all. Its own curve need not be monotone
+# either: a longer unroll is a harder training problem (the product of
+# Jacobians above) with the same iteration budget, so the modulator trained
+# at large $K$ can end slightly worse than the one trained at moderate $K$.
+# In practice 4DVarNet uses $K \sim 10$–$15$ for exactly this reason, and
+# chapter [9](../09_4dvarnet.md) discusses the one-step and implicit
+# adjoints that make larger $K$ trainable.
 
 # %%
 K_VALUES = [1, 2, 5, 10, 15]
@@ -254,12 +338,17 @@ plt.show()
 # %% [markdown]
 # ## Summary
 #
+# - A solver is an update rule; learning it is a bilevel problem whose
+#   outer objective is the reconstruction error after $K$ steps and whose
+#   outer variable is the rule itself.
 # - With the prior frozen, replacing the fixed gradient step by a trained
 #   `ConvLSTMGradMod1D` is what buys the fast convergence of 4DVarNet: the
-#   modulator learns step sizes, momentum, and preconditioning from data.
+#   modulator learns step sizes, momentum, and preconditioning from data,
+#   and — because it is trained on the truth rather than on $U$ — it can
+#   land closer to the truth than descent on $U$ does.
 # - `solve_4dvarnet_1d` / `solver_step_1d` expose the solver as plain
 #   functions, so partial training is a matter of which argument you
 #   differentiate.
 # - `FourDVarNet1D` (notebook [03](03_4dvarnet_L63.py)) trains the prior and
 #   the modulator jointly; chapter [9](../09_4dvarnet.md) gives the full
-#   picture.
+#   picture and the adjoint options for long unrolls.

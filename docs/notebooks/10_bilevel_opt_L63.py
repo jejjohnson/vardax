@@ -15,7 +15,10 @@
 # %% [markdown]
 # # 10 — Bilevel Optimisation: Learning the Cost Weights
 #
-# Ported from the mfourdvar *Bi-Level Estimation* chapter.
+# Ported from the mfourdvar *Bi-Level Estimation* chapter and the
+# *argmin differentiation* notes.
+#
+# ## Two levels
 #
 # A variational analysis $x^*(\theta)$ is itself a function of the
 # hyper-parameters $\theta$ of its cost — here the weights of the observation
@@ -25,17 +28,74 @@
 #
 # $$
 # \begin{aligned}
-# \theta^* &= \underset{\theta}{\arg\min}\; L\big(x^*(\theta)\big) \\
+# \theta^* &= \underset{\theta}{\arg\min}\; L\big(x^*(\theta)\big),
+#   \qquad L(x) = \|x - x_{\text{true}}\|^2 \\
 # x^*(\theta) &= \underset{x}{\arg\min}\; U(x; \theta),
 # \qquad
 # U(x; \theta) = \alpha_{obs} \|m \odot (x - y)\|^2 + \alpha_{prior} \|x - \varphi(x)\|^2 .
 # \end{aligned}
 # $$
 #
-# The inner problem is solved by $K$ steps of gradient descent on
-# [`variational_cost`](../api/costs_priors.md), written as a `lax.scan` so
-# that `jax.grad` unrolls through it (chapter [12](../12_adjoint_methods.md)
-# covers the implicit alternative).
+# The inner problem is the weak-constraint state estimate of notebook
+# [08](08_classical_4dvar_vs_4dvarnet_L63.py): $y$ are the masked, noisy
+# observations and $\varphi$ is a learned prior whose reconstruction error
+# plays the role of the model-error term. The outer problem asks a different
+# question of the same cost: *not* "which $x$ minimises $U$?" but "which $U$
+# has a minimiser closest to the truth?".
+#
+# ### Why the weights matter
+#
+# For a linear prior $\varphi(x) = Ax$ the inner problem is a quadratic and
+# its minimiser is explicit,
+#
+# $$
+# x^*(\theta) = \big(\alpha_{obs} M + \alpha_{prior} (I - A)^\top (I - A)\big)^{-1} \alpha_{obs} M y ,
+# \qquad M = \mathrm{diag}(m),
+# $$
+#
+# a generalised Tikhonov (Wiener) filter whose regularisation strength is the
+# ratio $\alpha_{prior} / \alpha_{obs}$. Too small and the analysis
+# interpolates the noise; too large and it collapses onto the prior's
+# *fixed-point set* $\ker(I - A)$ — the states the prior reconstructs
+# exactly, which for a trained autoencoder is its learned manifold — and
+# ignores the data. In the Bayesian reading of chapter
+# [1](../01_problem_setting.md) the weights are inverse error variances and
+# the right ratio is $\sigma_{obs}^2 / \sigma_{prior}^2$; when the prior is a
+# neural network nobody knows $\sigma_{prior}$, so the ratio is a knob to be
+# tuned — by hand, by cross-validation, or, as here, by gradient descent on
+# held-out truth.
+#
+# ### Differentiating through the argmin
+#
+# The outer gradient is a chain rule through the inner solution,
+#
+# $$
+# \frac{dL}{d\theta} = \frac{\partial L}{\partial x}\Big|_{x^*} \cdot \frac{d x^*}{d\theta} ,
+# $$
+#
+# and everything hinges on the *hypergradient* $dx^*/d\theta$. Two routes:
+#
+# - **Unrolling.** Compute $x_K$ by $K$ explicit gradient steps
+#   $x_{k+1} = x_k - \eta\, \nabla_x U(x_k; \theta)$ and back-propagate
+#   through the recursion. Differentiating the update gives the linear
+#   recursion
+#   $\frac{dx_{k+1}}{d\theta} = \big(I - \eta\, \nabla^2_x U\big)\frac{dx_k}{d\theta} - \eta\, \partial_\theta \nabla_x U$,
+#   which is what `jax.grad` through a `lax.scan` evaluates. Memory grows
+#   with $K$, but the gradient is exact for the analysis you actually
+#   compute, converged or not.
+# - **Implicit differentiation.** At a true minimiser
+#   $\nabla_x U(x^*; \theta) = 0$ for every $\theta$, so differentiating that
+#   identity (the implicit function theorem) gives
+#   $\frac{dx^*}{d\theta} = -\big[\nabla_x^2 U\big]^{-1} \partial_\theta \nabla_x U$.
+#   The outer gradient then needs one linear solve with the inner Hessian,
+#   by conjugate gradients with Hessian-vector products, and no memory of
+#   the iterates. It is exact only if the inner solver converged.
+#
+# The mfourdvar notes summarise the trade as *approximate the solution
+# (unrolling) versus approximate the gradient (implicit)*. Here the inner
+# loop is short and unrolled, so `jax.grad` unrolls through it; chapter
+# [12](../12_adjoint_methods.md) covers `optimistix.ImplicitAdjoint` for the
+# other route and `OneStepAdjoint` for the cheap approximation in between.
 
 # %%
 import equinox as eqx
@@ -95,7 +155,12 @@ print(f"train {batch_train.input.shape}, test {batch_test.input.shape}")
 #
 # The prior $\varphi$ is a bilinear autoencoder pre-trained on clean
 # trajectories (as in notebook [07](07_prior_pretraining_L63.py)) and then
-# frozen: the only things learned below are the two cost weights.
+# frozen: the only things learned below are the two cost weights. Freezing
+# it is what makes this a *hyper*-parameter problem with two unknowns
+# rather than the full 4DVarNet training of chapter
+# [9](../09_4dvarnet.md), where $\theta$ would also contain every weight of
+# $\varphi$ and of the learned solver — the same bilevel structure with a
+# much larger outer variable.
 
 # %%
 prior = BilinAEPrior1D(state_dim=N, latent_dim=8, n_time=T, key=jax.random.PRNGKey(10))
@@ -121,9 +186,22 @@ print(f"prior reconstruction MSE after pre-training: {float(pre_loss):.4f}")
 # `variational_cost` is a *mean* over all elements, so its gradient is tiny
 # per element; scaling the step by the number of elements gives a
 # per-element step size $\eta$ that is easy to reason about (it is gradient
-# descent on the equivalent *sum* cost). With $\eta$ fixed, the overall scale
-# of $(\alpha_{obs}, \alpha_{prior})$ acts as an effective step size and their
-# ratio sets the obs/prior trade-off — both are learnable.
+# descent on the equivalent *sum* cost).
+#
+# For the quadratic part of the cost the update contracts the error at the
+# observed points by a factor $1 - 2\eta\alpha_{obs}$ per step, so with
+# $\eta = 0.2$ and $\alpha_{obs} = 0.5$ twenty steps reduce it by
+# $0.8^{20} \approx 0.01$: the inner loop is close to, but not at, its
+# minimiser, which is precisely the regime where unrolling is the honest
+# choice of hypergradient.
+#
+# Note the interplay between the weights and the step. Scaling both
+# $\alpha$'s by a constant $c$ leaves $\arg\min U$ unchanged but multiplies
+# the gradient — and therefore the effective step size — by $c$. With
+# $\eta$ fixed, the overall scale of $(\alpha_{obs}, \alpha_{prior})$ acts as
+# an inner learning rate and their ratio sets the obs/prior trade-off, so
+# the outer loop is really learning two distinct things: how much to
+# regularise, and how far to move in $K$ steps.
 
 # %%
 N_INNER = 20
@@ -162,7 +240,10 @@ print(f"outer loss with fixed weights (0.5, 0.5): {mse_fixed_train:.4f}")
 # ## 4. Outer loop — learn $(\alpha_{obs}, \alpha_{prior})$
 #
 # `jax.grad(outer_loss)` differentiates through the unrolled inner solver.
-# The outer optimiser is plain Adam on the two log-weights.
+# The outer optimiser is plain Adam on the two log-weights, and the outer
+# objective is the reconstruction error on the *training* windows: the
+# held-out windows are touched only in section 5, so the comparison there
+# is a fair test of generalisation of the learned weights.
 
 # %%
 outer_opt = optax.adam(learning_rate=0.05)
@@ -190,6 +271,13 @@ print(f"outer loss: {mse_fixed_train:.4f} -> {hist_outer[-1]:.4f}")
 
 # %% [markdown]
 # ## 5. Fixed vs learned weights on held-out windows
+#
+# The learned weights are evaluated on windows the outer loop never saw.
+# Read the three panels together: the weights move away from the arbitrary
+# $(0.5, 0.5)$ start, the outer objective falls, and the improvement carries
+# over to held-out data. Look also at *where* the weights went — the ratio
+# tells you how much the data was trusted relative to the prior, and the
+# overall scale tells you how aggressive twenty steps needed to be.
 
 # %%
 x_fixed, trace_fixed = inner_solve(hyper_fixed, batch_test, prior)
@@ -234,7 +322,12 @@ plt.show()
 # %% [markdown]
 # The inner cost traces show why: the learned weights change the geometry of
 # $U$ so that $K$ steps land closer to the truth, even though the cost value
-# itself is not what the outer loop optimises.
+# itself is not what the outer loop optimises. A lower inner cost is not the
+# goal — the truth does not minimise $U$ for any weights, since the prior is
+# imperfect and the observations are noisy — so the outer loop is free to
+# pick weights whose minimiser is *wrong in a useful direction*. This is
+# the general lesson of bilevel DA: the inner cost is an instrument, and
+# ground truth (or any independent validation signal) is what calibrates it.
 
 # %%
 sample, feature = 0, 0
@@ -270,13 +363,17 @@ plt.show()
 #
 # - Any analysis produced by a differentiable inner solver is a function of
 #   the cost's hyper-parameters; an outer objective on ground truth turns
-#   hand-tuning into optimisation.
-# - Here the inner loop is unrolled gradient descent on `variational_cost`
-#   and `jax.grad` back-propagates through all $K$ steps. This costs
-#   $O(K)$ memory; for large states use `optimistix` with
-#   `ImplicitAdjoint` (chapter [12](../12_adjoint_methods.md)) or the
-#   one-step adjoint of notebook [02](02_unrolling_vs_fixedpoint_L63.py).
+#   hand-tuning of the regularisation ratio into optimisation.
+# - The hypergradient $dx^*/d\theta$ can be obtained by unrolling the inner
+#   iterations (exact for the computed analysis, $O(K)$ memory) or by the
+#   implicit function theorem at the minimiser (one Hessian solve, $O(1)$
+#   memory, exact only at convergence). Here the inner loop is unrolled
+#   gradient descent on `variational_cost`; for large states use
+#   `optimistix` with `ImplicitAdjoint` (chapter
+#   [12](../12_adjoint_methods.md)) or the one-step adjoint of notebook
+#   [02](02_unrolling_vs_fixedpoint_L63.py).
 # - The same mechanism learns any other cost hyper-parameter — the inner
 #   step size, the prior's own weights (that is 4DVarNet, chapter
-#   [9](../09_4dvarnet.md)), or the ODE parameters of notebook
-#   [09](09_param_estimation_L63.py).
+#   [9](../09_4dvarnet.md)), the ODE parameters of notebook
+#   [09](09_param_estimation_L63.py), or the update rule itself (notebook
+#   [11](11_gradient_learning_L63.py)).
