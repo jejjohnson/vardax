@@ -72,6 +72,18 @@ class TestSimulateLorenz63:
         _, states = simulate_lorenz63(key, n_steps=2000, n_burn_in=500)
         assert jnp.all(jnp.abs(states) < 200)
 
+    def test_default_burn_in_reaches_attractor(self):
+        """With the default initial condition and the tutorials' burn-in
+        (1000 steps at dt = 0.01) the returned trajectory must be on the
+        attractor, i.e. show O(10) excursions in every component rather
+        than the O(0.1) wobble of an orbit still near the unstable fixed
+        point (which the old fixed-point default produced for ~40 time
+        units). The bound of 3 is well below the attractor's per-component
+        standard deviation of roughly 8 and well above the wobble."""
+        key = jax.random.PRNGKey(0)
+        _, states = simulate_lorenz63(key, dt=0.01, n_steps=1000, n_burn_in=1000)
+        assert jnp.all(jnp.std(states, axis=0) > 3.0)
+
     def test_explicit_x0(self):
         key = jax.random.PRNGKey(0)
         x0 = jnp.array([1.0, 0.0, 0.0])
