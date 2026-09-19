@@ -91,9 +91,11 @@
 # \mathrm{Cov}(x_t \mid y) \approx M_t' \, P^* \, M_t'^{\top} .
 # $$
 #
-# The same push-forward applied to the *prior* $B$ gives the uncertainty
-# a forecast from the background would have had; the ratio of the two is
-# the information the observations added. Because 4DVar is a smoother —
+# The same push-forward applied to the *prior* $B$, with the
+# tangent-linear model taken along the background forecast from $x_b$
+# rather than along the analysis, gives the uncertainty a forecast from
+# the background would have had; the ratio of the two is the information
+# the observations added. Because 4DVar is a smoother —
 # every state is conditioned on observations before *and* after it — the
 # posterior spread is smallest in the middle of the window and grows
 # toward the end, where no future observations constrain the state; in
@@ -314,12 +316,17 @@ print("posterior correlation matrix:\n", np.asarray(corr))
 #
 # ## 3. Uncertainty along the window
 #
-# Push $P^*$ and $B$ through the tangent-linear model at every step.
+# Push $P^*$ through the tangent-linear model along the analysis, and
+# $B$ through the tangent-linear model along the background forecast,
+# at every step. The two linearisations differ because Lorenz-63 is
+# nonlinear and $x_b$ is not $x_0^*$; each is the right one for the
+# trajectory whose spread it describes.
 
 # %%
-M_jac = jax.jacfwd(rollout)(x0_star)  # (T+1, 3, 3): M_t' for every t
+M_jac = jax.jacfwd(rollout)(x0_star)  # (T+1, 3, 3): M_t' along the analysis
+M_jac_b = jax.jacfwd(rollout)(x_b)  # M_t' along the background forecast
 cov_post_t = jnp.einsum("tij,jk,tlk->til", M_jac, P_laplace, M_jac)
-cov_prior_t = jnp.einsum("tij,jk,tlk->til", M_jac, jnp.eye(3) * SIGMA_BG**2, M_jac)
+cov_prior_t = jnp.einsum("tij,jk,tlk->til", M_jac_b, jnp.eye(3) * SIGMA_BG**2, M_jac_b)
 std_post_t = jnp.sqrt(jnp.diagonal(cov_post_t, axis1=1, axis2=2))
 std_prior_t = jnp.sqrt(jnp.diagonal(cov_prior_t, axis1=1, axis2=2))
 traj_star = rollout(x0_star)

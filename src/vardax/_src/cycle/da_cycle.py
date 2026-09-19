@@ -125,16 +125,18 @@ def VarSmootherCycle(
 ) -> SmootherCycle:
     """Build a ``pipekit_cycle.SmootherCycle`` from a vardax model.
 
-    Retrospective windowed smoothing: the model analyses each
-    ``window``-step window, sliding by ``stride`` between consecutive
-    windows.
+    Retrospective windowed smoothing: each call processes ``stride``
+    consecutive ``window``-step windows back to back, analysing each one
+    once all of its observations are in.
 
     Args:
         forward: Forward model.
         obs_op: Observation operator.
         model: Vardax Layer 2 model exposing ``.as_analysis_step()``.
         window: Number of forecast steps per smoother window.
-        stride: Step between consecutive window starts.
+        stride: Number of consecutive windows processed per call (the
+            windows are adjacent, not overlapping; this mirrors
+            ``pipekit_cycle.SmootherCycle``).
         obs_source: Optional observation loader.
 
     Returns:

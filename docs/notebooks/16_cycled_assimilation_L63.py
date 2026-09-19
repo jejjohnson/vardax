@@ -368,6 +368,9 @@ def _window_analysis(x_b, y, sigma_b):
 
 def run_windows(sigma_b):
     step = WindowFourDVar(sigma_b=sigma_b, trace=[])
+    # In pipekit_cycle, ``stride`` is the number of consecutive windows one call
+    # processes (each ``window`` steps long, back to back), not a step offset:
+    # N_CYCLES // W windows of W steps cover all N_CYCLES observation times.
     smoother = pc.SmootherCycle(forward_model=forward, obs_op=MaskedIdentity(), analysis_step=step,
                                 window=W, stride=N_CYCLES // W, obs_source=obs_source)
     smoother(x_init, pc.DAState(t=0.0, cycle_count=0, obs_err_cov=SIGMA_OBS**2 * jnp.eye(3)))

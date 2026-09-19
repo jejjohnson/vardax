@@ -290,7 +290,10 @@ def oracle_solve(y):
 @jax.jit
 def amortized_solve(y):
     """Mean trajectory and diagonal variance from the amortized model, in physical units."""
-    batch = Batch1D(input=(y - MU * mask) / SD, mask=jnp.broadcast_to(mask, y.shape))
+    # Multiply by the mask before standardising so that, when this map is
+    # differentiated, perturbations of unobserved entries cannot reach the
+    # encoder (they are identically zero in training and carry no information).
+    batch = Batch1D(input=(y * mask - MU * mask) / SD, mask=jnp.broadcast_to(mask, y.shape))
     mean = jax.vmap(lambda ctx: model.head.map_estimate(ctx))(jax.vmap(model.encoder)(batch.input, batch.mask))
     log_var = jax.vmap(lambda ctx: model.head.mlp_log_var(ctx).reshape(T_WIN, 3))(jax.vmap(model.encoder)(batch.input, batch.mask))
     return unstandardise(mean), jnp.exp(log_var) * SD**2
@@ -479,7 +482,7 @@ def sample_prior(key):
 
 
 def sample_posterior(y, key, n):
-    batch = Batch1D(input=(y - MU * mask)[None] / SD, mask=mask[None])
+    batch = Batch1D(input=(y * mask - MU * mask)[None] / SD, mask=mask[None])
     return unstandardise(model.sample(batch, key, n)[0])
 
 
