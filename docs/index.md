@@ -4,18 +4,17 @@
 
 *Formerly `fourdvarjax` — renamed to `vardax`.*
 
-!!! warning "Status — v0.4.0 design reference (forward-looking)"
-    These docs describe the **target API** of vardax after the equinox
-    migration roadmap (Epics 0–13, see
-    [boundaries](design/boundaries.md)). The shipped package
-    implements 4DVarNet only (single learned method, built on Flax
-    NNX); the seven-method DA hierarchy plus pipekit-cycle protocol
-    satisfaction is the design target. References to
-    `vardax.models.*`, `vardax.obs_operators.*`, `vardax.adjoints.*`,
-    the `pipekit_cycle` protocols, `tests/test_pipekit_protocols.py`,
-    and `vardax._src.utils.validation` describe the design target —
-    they are not yet runnable against the current package. Code
-    snippets are design pseudocode showing intended call sites.
+!!! info "Status"
+    All seven analysis methods ship and all seven satisfy
+    `pipekit_cycle.AnalysisStep` via `.as_analysis_step()`. Every public
+    symbol is re-exported at the top level, so import them from the
+    package root (`import vardax as vdx; vdx.StrongFourDVar`) — the
+    `vardax.adjoints`, `vardax.amortized` and `vardax.cycle` submodules
+    are also bound, but there is no `vardax.models` or
+    `vardax.obs_operators` module. Chapters covering parts of the
+    roadmap that are still design-only say so in place; see
+    [boundaries](design/boundaries.md) for what vardax will and will not
+    own.
     *(The package was previously published as `fourdvarjax` v0.1.x;
     `vardax` is now the canonical name.)*
 
@@ -77,11 +76,10 @@ vardax is not yet on PyPI; install from the checkout.
 ```python
 import gaussx as gx
 import lineax as lx
-from vardax.models import OptimalInterpolation
-from vardax.obs_operators import LinearObs
+import vardax as vdx
 
-model = OptimalInterpolation(
-    obs_op=LinearObs(H_mat=along_track_op),
+model = vdx.OptimalInterpolation(
+    obs_op=vdx.LinearObs(H_mat=along_track_op),
     prior_mean=climatology_ssh,
     prior_cov_op=gx.MaternLinearOperator(coords, length_scale=100.0, sigma=0.1),
     obs_cov_op=lx.DiagonalLinearOperator(altika_variances),
@@ -96,16 +94,15 @@ posterior = model.posterior(batch)
 
 ```python
 import diffrax as dfx
-from vardax.models import IncrementalFourDVar
-from vardax import IncrementalConfig
+import vardax as vdx
 
-model = IncrementalFourDVar(
+model = vdx.IncrementalFourDVar(
     forward=somax_model,
-    obs_op=AveragingKernel(A=A, x_a=xa, h=h),
+    obs_op=vdx.AveragingKernel(A=A, x_a=xa, h=h),
     prior_mean=x_b,
     prior_cov_op=gx.MaternLinearOperator(coords, length_scale=10.0, sigma=0.1),
     obs_cov_op=lx.DiagonalLinearOperator(obs_uncertainty),
-    config=IncrementalConfig(n_outer=3, n_inner=20, cvt=True),
+    config=vdx.IncrementalConfig(n_outer=3, n_inner=20, cvt=True),
     forward_adjoint=dfx.BacksolveAdjoint(),    # constant memory through dynamics
 )
 
@@ -123,7 +120,7 @@ import pipekit_cycle as pc
 
 da_cycle = pc.DACycle(
     forward_model=somax_model,
-    obs_op=AveragingKernel(...),
+    obs_op=vdx.AveragingKernel(...),
     analysis_step=model.as_analysis_step(),   # any of the seven
     obs_source=satellite_loader,
     n_steps=n_assimilation_windows,
@@ -140,10 +137,13 @@ changes.
 
 This site has two main sections:
 
-- **[Mathematical Reference](01_problem_setting.md)** — 17 chapters
+- **[Mathematical Reference](01_problem_setting.md)** — 21 chapters
   covering the Bayesian foundation (1–3), each of the seven analysis
-  methods (4–10), cross-cutting concerns (11–14), and end-to-end
-  examples on Lorenz / SSH / methane (15–17).
+  methods (4–10), cross-cutting concerns (11–14), end-to-end examples
+  on Lorenz, SSH, methane and latent-space DA (15–18), then physical
+  models, uncertainty quantification and OceanBench (19–21).
+- **[Tutorials](notebooks/index.md)** — 17 executable walkthroughs on
+  Lorenz-63 and Lorenz-96, run at documentation build time.
 - **[Design Docs](design/README.md)** — architecture, API contracts,
   ecosystem boundaries, and the decision log (D1–D16). The "why"
   behind the "what".
