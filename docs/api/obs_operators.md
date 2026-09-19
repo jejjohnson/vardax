@@ -21,7 +21,7 @@ of retrieval products such as atmospheric-composition column averages.
     options:
       show_root_heading: false
       show_root_toc_entry: false
-      members: [LinearObs, MaskedIdentity, AveragingKernel]
+      members: [LinearObs, MaskedIdentity, AveragingKernel, InterpObs, interp_obs_from_coords]
 
 ## Multi-instrument fusion
 

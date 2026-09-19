@@ -4,18 +4,19 @@
 
 *Formerly `fourdvarjax` — renamed to `vardax`.*
 
-!!! warning "Status — v0.4.0 design reference (forward-looking)"
-    These docs describe the **target API** of vardax after the equinox
-    migration roadmap (Epics 0–13, see
-    [boundaries](design/boundaries.md)). The shipped package
-    implements 4DVarNet only (single learned method, built on Flax
-    NNX); the seven-method DA hierarchy plus pipekit-cycle protocol
-    satisfaction is the design target. References to
-    `vardax.models.*`, `vardax.obs_operators.*`, `vardax.adjoints.*`,
-    the `pipekit_cycle` protocols, `tests/test_pipekit_protocols.py`,
-    and `vardax._src.utils.validation` describe the design target —
-    they are not yet runnable against the current package. Code
-    snippets are design pseudocode showing intended call sites.
+!!! info "Status"
+    All seven analysis methods ship and all seven satisfy
+    `pipekit_cycle.AnalysisStep` via `.as_analysis_step()`. Import them
+    from the package root (`import vardax as vdx; vdx.StrongFourDVar`):
+    there is no `vardax.models` or `vardax.obs_operators` module. The
+    `vardax.adjoints`, `vardax.amortized` and `vardax.cycle` submodules
+    are bound too, and a few symbols live only there — `AbstractAdjoint`
+    is `vardax.adjoints.AbstractAdjoint`, not `vardax.AbstractAdjoint`.
+    Individual components may still be stubs where a chapter says so
+    (the flow and score heads of
+    [amortized inference](10_amortized_inference.md) are the current
+    ones); see [boundaries](design/boundaries.md) for what vardax will
+    and will not own.
     *(The package was previously published as `fourdvarjax` v0.1.x;
     `vardax` is now the canonical name.)*
 
@@ -29,8 +30,8 @@ implementations:
 | `ThreeDVar` | 3D variational, nonlinear $H$ | Snapshot inversion |
 | `StrongFourDVar` | Strong-constraint 4DVar, control = $x_0$ | Multi-time, exact dynamics |
 | `WeakFourDVar` | Weak-constraint 4DVar, control = $(x_0, \boldsymbol{\eta})$ | Multi-time, model error active |
-| `IncrementalFourDVar` | GN outer + CG inner + CVT | Operational fast path |
-| `FourDVarNet` | Learned $\varphi_\theta$ + learned $\Phi_\phi$ | Learned variant of 4DVar |
+| `IncrementalFourDVar` | Gauss–Newton outer + CG inner | Operational fast path |
+| `FourDVarNet1D` / `FourDVarNet2D` | Learned $\varphi_\theta$ + learned $\Phi_\phi$ | Learned variant of 4DVar |
 | `AmortizedPosterior` | Direct $q_\phi(x \mid y)$ head | Real-time / many-event regimes |
 
 Gradients through dynamics and the inner minimiser are composed via
@@ -45,10 +46,10 @@ subclass targeting upstream contribution.
 Every analysis method in vardax is a special case of
 
 $$
-x^* = \underset{x,\,\boldsymbol{\eta}}{\arg\min}\;
-  \underbrace{\tfrac{1}{2}\|x - x_b\|^2_{B^{-1}}}_{\text{background term}}
-  + \underbrace{\tfrac{1}{2}\sum_{t=0}^{T} \|y_t - H_t(M_t(x; \boldsymbol{\eta}))\|^2_{R_t^{-1}}}_{\text{observation term}}
-  \;[\,+\;\underbrace{\tfrac{1}{2}\sum_{t=1}^{T} \|\eta_t\|^2_{Q_t^{-1}}}_{\text{model-error term}}\,].
+x^* = \underset{x, \boldsymbol{\eta}}{\arg\min} \quad
+\underbrace{\tfrac{1}{2} \Vert x - x_b \Vert^2_{B^{-1}}}_{\text{background term}} +
+\underbrace{\tfrac{1}{2}\sum_{t=0}^{T} \Vert y_t - H_t(M_t(x; \boldsymbol{\eta})) \Vert^2_{R_t^{-1}}}_{\text{observation term}}
+\quad \Big[ + \underbrace{\tfrac{1}{2}\sum_{t=1}^{T} \Vert \eta_t \Vert^2_{Q_t^{-1}}}_{\text{model-error term}} \Big].
 $$
 
 Different methods specialise differently:
@@ -57,7 +58,7 @@ Different methods specialise differently:
 - $T = 0$ + nonlinear $H$ → `ThreeDVar`
 - $T > 0$, model-error term absent → `StrongFourDVar` / `IncrementalFourDVar`
 - $T > 0$, model-error term active → `WeakFourDVar`
-- Learned $\varphi_\theta$ replacing $\|x - x_b\|^2_{B^{-1}}$ + learned inner solver → `FourDVarNet`
+- Learned $\varphi_\theta$ replacing $\Vert x - x_b \Vert^2_{B^{-1}}$ + learned inner solver → `FourDVarNet1D` / `FourDVarNet2D`
 - Direct posterior head $q_\phi(x \mid y)$ → `AmortizedPosterior`
 
 See the [Problem Setting](01_problem_setting.md) chapter for the full derivation.
@@ -74,43 +75,77 @@ vardax is not yet on PyPI; install from the checkout.
 
 ## Quickstart — Optimal Interpolation
 
-```python
-import gaussx as gx
-import lineax as lx
-from vardax.models import OptimalInterpolation
-from vardax.obs_operators import LinearObs
+A single forward pass: no iteration, no convergence criterion. The analysis
+is the $B$/$R$-weighted combination of background and observations, so it
+beats both.
 
-model = OptimalInterpolation(
-    obs_op=LinearObs(H_mat=along_track_op),
-    prior_mean=climatology_ssh,
-    prior_cov_op=gx.MaternLinearOperator(coords, length_scale=100.0, sigma=0.1),
-    obs_cov_op=lx.DiagonalLinearOperator(altika_variances),
+```python
+import jax, jax.numpy as jnp, lineax as lx
+import vardax as vdx
+
+N = 64
+truth = jnp.sin(jnp.linspace(0.0, 6.0, N))[None]  # (1, N)
+x_b = jnp.zeros((1, N))  # flat background
+y = truth + 0.3 * jax.random.normal(jax.random.PRNGKey(1), (1, N))
+
+
+def pd(shape, var):
+    op = lx.DiagonalLinearOperator(jnp.full(shape, var))
+    return lx.TaggedLinearOperator(op, lx.positive_semidefinite_tag)
+
+
+oi = vdx.OptimalInterpolation(
+    obs_op=vdx.MaskedIdentity(),
+    prior_mean=x_b,
+    prior_cov_op=pd((1, N), 1.0),  # B
+    obs_cov_op=pd((1, N), 0.3**2),  # R
 )
 
-# Single forward pass — no iteration, no convergence criterion
-x_star = model(batch)
-posterior = model.posterior(batch)
+batch = vdx.Batch1D(input=y[None], mask=jnp.ones((1, 1, N)), target=truth[None])
+analysis = oi(batch)[0]
+# RMS error: background 0.72, observations 0.33, analysis 0.31
 ```
 
-## Quickstart — Incremental 4DVar with control-variable transform
+For a correlated background, pass any `lineax` operator — a dense kernel
+matrix, or a structured operator from
+[`gaussx`](https://github.com/jejjohnson/gaussx) — in place of the diagonal
+one. Posterior covariance is a separate concern, handled by the
+[posterior adapters](13_posterior_covariance.md) rather than a method on
+the model.
+
+## Quickstart — Incremental 4DVar
+
+Gauss–Newton outer loops around a conjugate-gradient inner solve, on a
+window of Lorenz-63 observed every other step.
 
 ```python
-import diffrax as dfx
-from vardax.models import IncrementalFourDVar
-from vardax import IncrementalConfig
+import diffrax as dfx, jax, jax.numpy as jnp, lineax as lx
+import vardax as vdx
 
-model = IncrementalFourDVar(
-    forward=somax_model,
-    obs_op=AveragingKernel(A=A, x_a=xa, h=h),
+prior = vdx.DynTrajectory(
+    model=vdx.Lorenz63(sigma=10.0, rho=28.0, beta=8.0 / 3.0),
+    adjoint=dfx.DirectAdjoint(),  # the inner solve needs jvp as well as vjp
+)
+_, states = vdx.simulate_lorenz63(
+    jax.random.PRNGKey(0), dt=0.01, n_steps=2000, n_burn_in=1000
+)
+xs = states[500 : 500 + 5 * 21 : 5]
+mask = jnp.zeros((21, 3)).at[::2].set(1.0)
+y = xs + 0.5 * jax.random.normal(jax.random.PRNGKey(3), xs.shape)
+x_b = xs[0] + jnp.array([1.5, -1.5, 1.5])
+
+model = vdx.IncrementalFourDVar(
+    forward=prior.as_forward_model(dt=0.05),
+    obs_op=vdx.MaskedIdentity(),
     prior_mean=x_b,
-    prior_cov_op=gx.MaternLinearOperator(coords, length_scale=10.0, sigma=0.1),
-    obs_cov_op=lx.DiagonalLinearOperator(obs_uncertainty),
-    config=IncrementalConfig(n_outer=3, n_inner=20, cvt=True),
-    forward_adjoint=dfx.BacksolveAdjoint(),    # constant memory through dynamics
+    prior_cov_op=pd((3,), 4.0),  # B, using pd() from the block above
+    obs_cov_op=pd((3,), 0.25),  # R
+    config=vdx.IncrementalConfig(n_outer=3, n_inner=20),
 )
 
-x_star = model(batch)
-posterior = model.posterior(batch)
+batch = vdx.Batch1D(input=(y * mask)[None], mask=mask[None], target=xs[None])
+x_star = model(batch)[0]
+# background error 2.60 → analysis error 0.84
 ```
 
 ## Cycling any model through `pipekit_cycle.DACycle`
@@ -123,8 +158,8 @@ import pipekit_cycle as pc
 
 da_cycle = pc.DACycle(
     forward_model=somax_model,
-    obs_op=AveragingKernel(...),
-    analysis_step=model.as_analysis_step(),   # any of the seven
+    obs_op=vdx.AveragingKernel(...),
+    analysis_step=model.as_analysis_step(),  # any of the seven
     obs_source=satellite_loader,
     n_steps=n_assimilation_windows,
 )
@@ -132,18 +167,29 @@ da_cycle = pc.DACycle(
 result, final_state = da_cycle(initial_state, pc.DAState(t=0.0, cycle_count=0))
 ```
 
-Swap `OptimalInterpolation` for `IncrementalFourDVar` for `FourDVarNet`
+Swap `OptimalInterpolation` for `IncrementalFourDVar` for `FourDVarNet1D`
 by changing the `analysis_step` slot. Nothing else in the pipeline
 changes.
+
+What each method's built-in adapter does with the forecast differs,
+though, and the shapes have to line up: the 4DVar adapters re-solve
+against the background the model was constructed with and expect a
+batched observation window, so a cycle that uses each forecast as the
+next background supplies a small custom `AnalysisStep`. Notebook
+[16](notebooks/16_cycled_assimilation_L63.py) shows that pattern
+end to end.
 
 ## Documentation
 
 This site has two main sections:
 
-- **[Mathematical Reference](01_problem_setting.md)** — 17 chapters
+- **[Mathematical Reference](01_problem_setting.md)** — 21 chapters
   covering the Bayesian foundation (1–3), each of the seven analysis
-  methods (4–10), cross-cutting concerns (11–14), and end-to-end
-  examples on Lorenz / SSH / methane (15–17).
+  methods (4–10), cross-cutting concerns (11–14), end-to-end examples
+  on Lorenz, SSH, methane and latent-space DA (15–18), then physical
+  models, uncertainty quantification and OceanBench (19–21).
+- **[Tutorials](notebooks/index.md)** — 17 executable walkthroughs on
+  Lorenz-63 and Lorenz-96, run at documentation build time.
 - **[Design Docs](design/README.md)** — architecture, API contracts,
   ecosystem boundaries, and the decision log (D1–D16). The "why"
   behind the "what".

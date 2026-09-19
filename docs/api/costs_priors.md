@@ -54,6 +54,19 @@ adapts the wrapped ODE to `pipekit_cycle.ForwardModel`.
       show_root_toc_entry: false
       members: [DynamicalPrior, DynIncrements, DynTrajectory]
 
+## Reduced bases
+
+Control-variable transforms: a `ReducedBasis` parameterises the analysis
+increment in a lower-dimensional space, so the inner solve runs over basis
+coefficients rather than grid points. The constructors build the common
+families; `CompositeBasis` concatenates several.
+
+::: vardax
+    options:
+      show_root_heading: false
+      show_root_toc_entry: false
+      members: [LinearBasis, CompositeBasis, linear_basis, composite_basis, eof_basis, fourier_basis, rbf_basis, wavelet_basis]
+
 ## 4DVarNet inner-loop solvers
 
 The unrolled (and fixed-point) inner loop of 4DVarNet, exposed as pure
