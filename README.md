@@ -83,7 +83,12 @@ cd vardax
 make install          # uv sync --all-extras + pre-commit hooks
 ```
 
-To depend on it from another uv project:
+To depend on it from another uv project, map vardax's own git dependencies
+too. uv does not read a dependency's `[tool.uv.sources]`, so a consumer sees
+plain `gaussx`, `geonnax`, `pipekit` and `pipekit-cycle` requirements and
+tries its indexes: three of those are not on PyPI, and `pipekit` there is an
+unrelated project, so without these mappings the install resolves wrongly or
+not at all.
 
 ```toml
 [project]
@@ -91,7 +96,14 @@ dependencies = ["vardax"]
 
 [tool.uv.sources]
 vardax = { git = "https://github.com/jejjohnson/vardax" }
+gaussx = { git = "https://github.com/jejjohnson/gaussx", rev = "cd6264c" }
+geonnax = { git = "https://github.com/jejjohnson/geonnax", rev = "5318173" }
+pipekit = { git = "https://github.com/jejjohnson/pipekit", subdirectory = "packages/pipekit" }
+pipekit-cycle = { git = "https://github.com/jejjohnson/pipekit", subdirectory = "packages/pipekit-cycle" }
 ```
+
+Add the matching entries for `pipekit-jax`, `pipekit-experiment` or
+`pipekit-train` if you enable the `persist` or `train` extras.
 
 Requires Python ≥ 3.12, < 3.14. Extras: `data`, `viz`, `exp`, `jlab`,
 `examples`, `persist`, `train`, `all`.
@@ -214,8 +226,11 @@ committed snapshots.
   concerns (11–14), worked examples on Lorenz, sea-surface height, methane
   and latent-space DA (15–18), then physical models, uncertainty
   quantification and OceanBench (19–21).
-- **[API reference](https://jejjohnson.github.io/vardax/api/)** — every public symbol, grouped by
-  seam, generated from the docstrings.
+- **[API reference](https://jejjohnson.github.io/vardax/api/)** — every symbol vardax
+  exports, grouped by seam and generated from the docstrings. The two it
+  re-exports from optimistix, `ImplicitAdjoint` and
+  `RecursiveCheckpointAdjoint`, are described there and linked upstream
+  rather than regenerated.
 - **[Design docs](https://jejjohnson.github.io/vardax/design/README/)** — architecture, ownership
   boundaries, the decision log, and the pipekit composition story.
 

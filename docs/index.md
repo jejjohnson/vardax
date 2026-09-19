@@ -31,7 +31,7 @@ implementations:
 | `StrongFourDVar` | Strong-constraint 4DVar, control = $x_0$ | Multi-time, exact dynamics |
 | `WeakFourDVar` | Weak-constraint 4DVar, control = $(x_0, \boldsymbol{\eta})$ | Multi-time, model error active |
 | `IncrementalFourDVar` | Gauss–Newton outer + CG inner | Operational fast path |
-| `FourDVarNet` | Learned $\varphi_\theta$ + learned $\Phi_\phi$ | Learned variant of 4DVar |
+| `FourDVarNet1D` / `FourDVarNet2D` | Learned $\varphi_\theta$ + learned $\Phi_\phi$ | Learned variant of 4DVar |
 | `AmortizedPosterior` | Direct $q_\phi(x \mid y)$ head | Real-time / many-event regimes |
 
 Gradients through dynamics and the inner minimiser are composed via
@@ -58,7 +58,7 @@ Different methods specialise differently:
 - $T = 0$ + nonlinear $H$ → `ThreeDVar`
 - $T > 0$, model-error term absent → `StrongFourDVar` / `IncrementalFourDVar`
 - $T > 0$, model-error term active → `WeakFourDVar`
-- Learned $\varphi_\theta$ replacing $\Vert x - x_b \Vert^2_{B^{-1}}$ + learned inner solver → `FourDVarNet`
+- Learned $\varphi_\theta$ replacing $\Vert x - x_b \Vert^2_{B^{-1}}$ + learned inner solver → `FourDVarNet1D` / `FourDVarNet2D`
 - Direct posterior head $q_\phi(x \mid y)$ → `AmortizedPosterior`
 
 See the [Problem Setting](01_problem_setting.md) chapter for the full derivation.
@@ -167,7 +167,7 @@ da_cycle = pc.DACycle(
 result, final_state = da_cycle(initial_state, pc.DAState(t=0.0, cycle_count=0))
 ```
 
-Swap `OptimalInterpolation` for `IncrementalFourDVar` for `FourDVarNet`
+Swap `OptimalInterpolation` for `IncrementalFourDVar` for `FourDVarNet1D`
 by changing the `analysis_step` slot. Nothing else in the pipeline
 changes.
 
