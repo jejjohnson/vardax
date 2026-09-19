@@ -44,10 +44,10 @@ subclass targeting upstream contribution.
 Every analysis method in vardax is a special case of
 
 $$
-x^* = \underset{x,\,\boldsymbol{\eta}}{\arg\min}\;
-\underbrace{\tfrac{1}{2}\|x - x_b\|^2_{B^{-1}}}_{\text{background term}} +
-\underbrace{\tfrac{1}{2}\sum_{t=0}^{T} \|y_t - H_t(M_t(x; \boldsymbol{\eta}))\|^2_{R_t^{-1}}}_{\text{observation term}}
-\;[\,+\;\underbrace{\tfrac{1}{2}\sum_{t=1}^{T} \|\eta_t\|^2_{Q_t^{-1}}}_{\text{model-error term}}\,].
+x^* = \underset{x, \boldsymbol{\eta}}{\arg\min} \quad
+\underbrace{\tfrac{1}{2} \Vert x - x_b \Vert^2_{B^{-1}}}_{\text{background term}} +
+\underbrace{\tfrac{1}{2}\sum_{t=0}^{T} \Vert y_t - H_t(M_t(x; \boldsymbol{\eta})) \Vert^2_{R_t^{-1}}}_{\text{observation term}}
+\quad \Big[ + \underbrace{\tfrac{1}{2}\sum_{t=1}^{T} \Vert \eta_t \Vert^2_{Q_t^{-1}}}_{\text{model-error term}} \Big].
 $$
 
 Different methods specialise differently:
@@ -56,7 +56,7 @@ Different methods specialise differently:
 - $T = 0$ + nonlinear $H$ → `ThreeDVar`
 - $T > 0$, model-error term absent → `StrongFourDVar` / `IncrementalFourDVar`
 - $T > 0$, model-error term active → `WeakFourDVar`
-- Learned $\varphi_\theta$ replacing $\|x - x_b\|^2_{B^{-1}}$ + learned inner solver → `FourDVarNet`
+- Learned $\varphi_\theta$ replacing $\Vert x - x_b \Vert^2_{B^{-1}}$ + learned inner solver → `FourDVarNet`
 - Direct posterior head $q_\phi(x \mid y)$ → `AmortizedPosterior`
 
 See the [Problem Setting](01_problem_setting.md) chapter for the full derivation.
