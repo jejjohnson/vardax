@@ -37,9 +37,13 @@
 # \end{aligned}
 # $$
 #
-# The fast variables evolve $c$ times faster and are $b$ times smaller;
-# they stand in for everything a model of the slow variables does not
-# resolve (convection, sub-grid turbulence, cloud microphysics). Chapter
+# The fast variables form a single cyclic chain around the whole ring,
+# $y_{J+1,k} = y_{1,k+1}$ (Lorenz 1996), so a fast wave can travel from one
+# slow sector into the next; the code keeps them as one flat vector for
+# that reason, and the coupling sums each sector's $J$ entries. They
+# evolve $c$ times faster and are $b$ times smaller, and stand in for
+# everything a model of the slow variables does not resolve (convection,
+# sub-grid turbulence, cloud microphysics). Chapter
 # [19](../19_physical_models.md) introduces the system; here we use
 # Wilks' parameters $K = 8$, $J = 32$, $F = 20$, $h = 1$, $b = c = 10$.
 #
@@ -169,6 +173,7 @@ keep = save_ts >= T_BURN
 x_full, y_full = sol.ys[keep, :K], sol.ys[keep, K:]
 U_full = coupling_term(y_full)  # (n_t, K)
 n_t = x_full.shape[0]
+n_train = int(0.8 * n_t)  # everything after this index is held out
 print(f"{n_t} saved slow states over {n_t * DT:.0f} time units; x std {float(jnp.std(x_full)):.2f}, coupling std {float(jnp.std(U_full)):.2f}")
 
 fig, axes = plt.subplots(3, 1, figsize=(10, 6), sharex=True)
@@ -189,8 +194,10 @@ plt.show()
 # %% [markdown]
 # ## 2. Offline closures: polynomial and neural
 #
-# The scatter of $U_k$ against $x_k$, pooled over sites and times, is the
-# whole offline dataset. It has a clear mean curve — the conditional
+# The scatter of $U_k$ against $x_k$, pooled over sites and over the
+# first 80 % of the simulation in time, is the whole offline dataset; the
+# last 20 % is held out for the forecast and assimilation experiments
+# below, for the offline closures as much as for the online one. It has a clear mean curve — the conditional
 # expectation $U^\star$ — and a wide spread around it, the irreducible
 # residual. We fit two closures to it:
 #
@@ -208,8 +215,8 @@ plt.show()
 # ReLU-like units, extrapolates roughly linearly and needs no such guard.
 
 # %%
-x_pool = x_full.reshape(-1)
-U_pool = U_full.reshape(-1)
+x_pool = x_full[:n_train].reshape(-1)
+U_pool = U_full[:n_train].reshape(-1)
 poly_coef = np.polyfit(np.asarray(x_pool), np.asarray(U_pool), deg=4)
 X_LO, X_HI = float(x_pool.min()), float(x_pool.max())
 
@@ -282,9 +289,9 @@ plt.show()
 # into the closure weights, exactly as they flowed into $(\sigma, \rho,
 # \beta)$ in notebook 09 — the parameter is now a network.
 #
-# The windows are drawn from the first 80 % of the simulation; the
-# forecast and assimilation experiments below use the last 20 %, so
-# nothing is scored on data it was trained on.
+# The windows are drawn from the same first 80 % of the simulation as the
+# offline pools; the forecast and assimilation experiments below use the
+# last 20 %, so nothing is scored on data it was trained on.
 
 # %%
 def l96_rhs(x):
@@ -309,7 +316,6 @@ model_none = DynTrajectory(model=no_closure_rhs, **ode_kwargs)
 model_poly = DynTrajectory(model=poly_rhs, **ode_kwargs)
 
 TAU = 10
-n_train = int(0.8 * n_t)
 ts_win = jnp.arange(TAU + 1) * DT
 starts_train = jnp.arange(0, n_train - TAU, 5)
 windows_train = jax.vmap(lambda s: jax.lax.dynamic_slice_in_dim(x_full, s, TAU + 1))(starts_train)  # (n_win, TAU+1, K)

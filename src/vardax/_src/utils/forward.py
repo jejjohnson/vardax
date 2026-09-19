@@ -73,8 +73,11 @@ class SoftBoundedForward(eqx.Module):
     def _confine(self, state: Array) -> Array:
         b = self.bound
         a = jnp.abs(state)
-        soft = jnp.where(a <= b, a, b + b * jnp.tanh((a - b) / b))
-        return jnp.sign(state) * soft
+        # The in-box branch returns ``state`` itself (not ``sign * abs``) so the
+        # gradient is exactly one everywhere inside, including at zero, where
+        # ``jnp.sign`` would otherwise zero it.
+        outside = jnp.sign(state) * (b + b * jnp.tanh((a - b) / b))
+        return jnp.where(a <= b, state, outside)
 
     def step(self, state: Array, dt: float) -> Array:
         """Advance ``state`` by ``dt`` with confinement before and after."""

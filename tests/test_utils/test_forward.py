@@ -33,6 +33,13 @@ def test_confined_outside_box():
     assert float(out[1]) < float(fwd.step(jnp.array([25.0]), 0.5)[0]) < 20.0
 
 
+def test_identity_gradient_inside_box_including_zero():
+    fwd = SoftBoundedForward(Identity(), bound=10.0)
+    x = jnp.array([0.0, -0.0, 2.5, -9.0])
+    jac = jax.jacfwd(lambda v: fwd.step(v, 0.5))(x)
+    assert jnp.allclose(jac, jnp.eye(4))
+
+
 def test_gradient_nonzero_outside_box():
     fwd = SoftBoundedForward(Identity(), bound=10.0)
     g = jax.grad(lambda x: jnp.sum(fwd.step(x, 0.5)))(jnp.array([25.0, -40.0]))

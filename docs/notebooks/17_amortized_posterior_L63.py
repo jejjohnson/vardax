@@ -469,7 +469,8 @@ plt.show()
 # ## 6. Gate 3 — simulation-based calibration
 #
 # The same SBC as in notebook 14, now with samples from the amortized
-# Gaussian. The prior draws are test windows the network never trained
+# Gaussian (99 samples, so that the 100 possible ranks fill ten bins
+# evenly). The prior draws are test windows the network never trained
 # on.
 
 # %%
@@ -482,7 +483,7 @@ def sample_posterior(y, key, n):
     return unstandardise(model.sample(batch, key, n)[0])
 
 
-N_RUNS, N_SAMPLES = 300, 100
+N_RUNS, N_SAMPLES = 300, 99  # 100 possible ranks, so ten bins of ten
 ranks = simulation_based_calibration(sample_posterior, sample_prior, observe,
                                      key=jax.random.PRNGKey(5), n_runs=N_RUNS, n_samples=N_SAMPLES)
 n_bins = 10

@@ -53,15 +53,17 @@
 #
 # $$
 # \nabla^2 J = B^{-1} + G'^{\top} \mathcal{R}^{-1} G'
-#   \;+\; \sum_t \big(\nabla^2 G_t\big)^{\top} \mathcal{R}^{-1} r_t,
+#   \;-\; \sum_i \big(\mathcal{R}^{-1} r\big)_i \, \nabla^2 G_i ,
 # $$
 #
-# where $\mathcal{R} = \mathrm{blockdiag}(R, \ldots, R)$ and
-# $r_t = m_t \odot (y_t - H M_t(x_0^*))$ are the residuals at the
-# solution. The first two terms are the **Gauss–Newton** Hessian; the
-# third weights the model's second derivatives by the residuals and is
-# dropped in the Gauss–Newton approximation, on the grounds that at a good
-# fit the residuals are small and of random sign. Notebook
+# where $\mathcal{R} = \mathrm{blockdiag}(R, \ldots, R)$,
+# $r = y - G(x_0^*)$ is the vector of masked residuals at the solution,
+# and $\nabla^2 G_i$ is the Hessian of its $i$-th component (the minus
+# sign is because $r$ decreases when $G$ increases). The first two terms
+# are the **Gauss–Newton** Hessian; the third weights the model's second
+# derivatives by the residuals and is dropped in the Gauss–Newton
+# approximation, on the grounds that at a good fit the residuals are
+# small and of random sign. Notebook
 # [09](09_param_estimation_L63.py) met the same split as the Fisher
 # information versus the realised curvature. Section 2 measures how much
 # the dropped term matters here.
@@ -499,9 +501,10 @@ plt.show()
 # The library gate, with posterior samples drawn from the Laplace Gaussian
 # via a Cholesky factor. The rank statistic is the $L^2$ norm of the state
 # (the function reduces to a scalar so that one histogram summarises the
-# vector case); a calibrated posterior gives uniform ranks. The shaded
-# band is the 99 % interval a uniform histogram of this size would stay
-# within. Note what this test can and cannot see: a handful of tail
+# vector case); a calibrated posterior gives uniform ranks on
+# $\{0, \ldots, n\}$. With $n = 99$ samples there are 100 possible ranks,
+# which ten bins split evenly; the shaded band is the 99 % interval a
+# uniform histogram of this size would stay within. Note what this test can and cannot see: a handful of tail
 # failures in one component barely move a norm-based rank histogram of a
 # hundred runs, so a pass here is necessary, not sufficient — which is
 # why the gates of chapter 14 are three, not one.
@@ -520,7 +523,7 @@ def sample_posterior(y, key, n):
     return x0 + jax.random.normal(key, (n, 3)) @ L.T
 
 
-N_RUNS_SBC, N_SAMPLES = 100, 100
+N_RUNS_SBC, N_SAMPLES = 100, 99  # 100 possible ranks, so ten bins of ten
 ranks = simulation_based_calibration(
     sample_posterior, sample_prior, simulate_obs,
     key=jax.random.PRNGKey(4), n_runs=N_RUNS_SBC, n_samples=N_SAMPLES,
