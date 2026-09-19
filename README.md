@@ -56,12 +56,12 @@ All seven ship today, and all seven satisfy
 
 Each is a specialisation of one cost:
 
-$$
+```math
 x^* = \underset{x,\,\boldsymbol{\eta}}{\arg\min}\;
-  \underbrace{\tfrac{1}{2}\|x - x_b\|^2_{B^{-1}}}_{\text{background}}
-  + \underbrace{\tfrac{1}{2}\sum_{t=0}^{T} \|y_t - H_t(M_t(x; \boldsymbol{\eta}))\|^2_{R_t^{-1}}}_{\text{observations}}
-  \;\Big[+\;\underbrace{\tfrac{1}{2}\sum_{t=1}^{T} \|\eta_t\|^2_{Q_t^{-1}}}_{\text{model error}}\Big].
-$$
+\underbrace{\tfrac{1}{2}\|x - x_b\|^2_{B^{-1}}}_{\text{background}} +
+\underbrace{\tfrac{1}{2}\sum_{t=0}^{T} \|y_t - H_t(M_t(x; \boldsymbol{\eta}))\|^2_{R_t^{-1}}}_{\text{observations}}
+\;\Big[+\;\underbrace{\tfrac{1}{2}\sum_{t=1}^{T} \|\eta_t\|^2_{Q_t^{-1}}}_{\text{model error}}\Big].
+```
 
 Which terms are active, and how the minimisation proceeds (closed form,
 iterative, learned, amortized), is the only thing that differs. The
