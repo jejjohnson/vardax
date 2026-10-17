@@ -30,6 +30,7 @@ import lineax as lx
 import optimistix as optx
 
 from vardax._src._types import Batch1D
+from vardax._src.models._analysis_step import analyse_forecast
 
 
 class ThreeDVar(eqx.Module):
@@ -101,46 +102,56 @@ class ThreeDVar(eqx.Module):
         def _one(
             input_i: Float[Array, "T N"], mask_i: Float[Array, "T N"]
         ) -> Float[Array, "T N"]:
-            def cost(x: Float[Array, "T N"], _args: Any) -> Float[Array, ""]:
-                # Background term — apply B^{-1} via lineax solve.
-                dx = x - self.prior_mean
-                B_inv_dx = lx.linear_solve(
-                    self.prior_cov_op,
-                    dx,
-                    solver=lx.CG(atol=1e-6, rtol=1e-6),
-                ).value
-                j_bg = 0.5 * jnp.sum(dx * B_inv_dx)
-                # Observation term — apply R^{-1} via lineax solve.
-                # Mask predictions AND observations symmetrically: for
-                # obs_ops that don't take a `mask` kwarg (e.g.
-                # LinearObs), unmasked predictions at missing entries
-                # would otherwise penalise the analysis there.
-                y_pred = (
-                    self.obs_op(x, mask=mask_i)
-                    if _accepts_mask(self.obs_op)
-                    else self.obs_op(x)
-                )
-                residual = mask_i * (input_i - y_pred)
-                R_inv_r = lx.linear_solve(
-                    self.obs_cov_op,
-                    residual,
-                    solver=lx.CG(atol=1e-6, rtol=1e-6),
-                ).value
-                j_obs = 0.5 * jnp.sum(residual * R_inv_r)
-                return j_bg + j_obs
-
-            result = optx.minimise(
-                fn=cost,
-                solver=self.minimiser,
-                y0=self.prior_mean,
-                args=None,
-                max_steps=self.max_steps,
-                adjoint=self.minimiser_adjoint,
-                throw=False,
+            return self._analyse(
+                self.prior_mean, input_i, mask_i, self.obs_op, self.obs_cov_op
             )
-            return result.value
 
         return jax.vmap(_one)(batch.input, batch.mask)
+
+    def _analyse(
+        self,
+        x_b: Float[Array, "T N"],
+        input_i: Float[Array, "T N"],
+        mask_i: Float[Array, "T N"],
+        obs_op: Any,
+        obs_cov_op: lx.AbstractLinearOperator,
+    ) -> Float[Array, "T N"]:
+        """Minimise the 3D-Var cost of one sample around the background ``x_b``."""
+
+        def cost(x: Float[Array, "T N"], _args: Any) -> Float[Array, ""]:
+            # Background term — apply B^{-1} via lineax solve.
+            dx = x - x_b
+            B_inv_dx = lx.linear_solve(
+                self.prior_cov_op,
+                dx,
+                solver=lx.CG(atol=1e-6, rtol=1e-6),
+            ).value
+            j_bg = 0.5 * jnp.sum(dx * B_inv_dx)
+            # Observation term — apply R^{-1} via lineax solve.
+            # Mask predictions AND observations symmetrically: for
+            # obs_ops that don't take a `mask` kwarg (e.g.
+            # LinearObs), unmasked predictions at missing entries
+            # would otherwise penalise the analysis there.
+            y_pred = obs_op(x, mask=mask_i) if _accepts_mask(obs_op) else obs_op(x)
+            residual = mask_i * (input_i - y_pred)
+            R_inv_r = lx.linear_solve(
+                obs_cov_op,
+                residual,
+                solver=lx.CG(atol=1e-6, rtol=1e-6),
+            ).value
+            j_obs = 0.5 * jnp.sum(residual * R_inv_r)
+            return j_bg + j_obs
+
+        result = optx.minimise(
+            fn=cost,
+            solver=self.minimiser,
+            y0=x_b,
+            args=None,
+            max_steps=self.max_steps,
+            adjoint=self.minimiser_adjoint,
+            throw=False,
+        )
+        return result.value
 
     def as_analysis_step(self) -> _ThreeDVarAnalysisStep:
         """Adapt to ``pipekit_cycle.AnalysisStep`` (Decision D8)."""
@@ -157,7 +168,21 @@ def _accepts_mask(obs_op: Any) -> bool:
 
 
 class _ThreeDVarAnalysisStep(eqx.Module):
-    """``pipekit_cycle.AnalysisStep`` adapter for ``ThreeDVar``."""
+    r"""``pipekit_cycle.AnalysisStep`` adapter for ``ThreeDVar``.
+
+    Minimises the 3D-Var cost around the forecast,
+    $J(x) = \tfrac12 \|x - x_b\|^2_{B^{-1}} + \tfrac12 \|y - H(x)\|^2_{R^{-1}}$
+    with $x_b$ = ``forecast`` (also the starting point of the
+    minimiser). ``B`` is the model's ``prior_cov_op``; ``H`` is ``obs_op``
+    and ``R`` is ``obs_err_cov`` when given, else the model's ``obs_op`` /
+    ``obs_cov_op``. The model's ``prior_mean`` is not used.
+
+    ``forecast`` is one state shaped like ``prior_mean`` or a batch of
+    them, ``(B, T, N)``, and ``obs`` is batched the same way; ``NaN``
+    observations are missing. ``obs_err_cov`` may be ``None``, a
+    ``lineax.AbstractLinearOperator`` on one observation sample, or a
+    scalar / array of error variances (a diagonal $R$).
+    """
 
     model: ThreeDVar
 
@@ -169,7 +194,13 @@ class _ThreeDVarAnalysisStep(eqx.Module):
         obs_op: Any,
         obs_err_cov: Any,
     ) -> Float[Array, ...]:
-        mask = jnp.where(jnp.isfinite(obs), 1.0, 0.0)
-        obs_clean = jnp.nan_to_num(obs)
-        batch = Batch1D(input=obs_clean, mask=mask, target=None)
-        return self.model(batch)
+        return analyse_forecast(
+            self.model._analyse,
+            state_shape=self.model.prior_mean.shape,
+            default_obs_op=self.model.obs_op,
+            default_obs_cov_op=self.model.obs_cov_op,
+            forecast=forecast,
+            obs=obs,
+            obs_op=obs_op,
+            obs_err_cov=obs_err_cov,
+        )
