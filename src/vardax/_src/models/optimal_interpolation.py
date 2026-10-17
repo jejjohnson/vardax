@@ -25,11 +25,11 @@ from typing import Any
 
 import equinox as eqx
 import jax
-import jax.numpy as jnp
 from jaxtyping import Array, Float
 import lineax as lx
 
 from vardax._src._types import Batch1D
+from vardax._src.models._analysis_step import analyse_forecast
 
 
 class OptimalInterpolation(eqx.Module):
@@ -83,43 +83,51 @@ class OptimalInterpolation(eqx.Module):
         def _one(
             input_i: Float[Array, "T N"], mask_i: Float[Array, "T N"]
         ) -> Float[Array, "T N"]:
-            # The effective observation operator is mask ⊙ H(·) — apply the
-            # mask both to the predicted obs (innovation) AND to the
-            # tangent-linear used to assemble (H B H^T + R). Without the
-            # mask in `linearize`, missing entries are treated as
-            # zero-innovation observations and bias the analysis whenever
-            # B couples observed and missing components.
-            def masked_obs(x: Float[Array, "T N"]) -> Float[Array, "T N"]:
-                raw = (
-                    self.obs_op(x, mask=mask_i)
-                    if _accepts_mask(self.obs_op)
-                    else self.obs_op(x)
-                )
-                return mask_i * raw
-
-            y_pred = masked_obs(self.prior_mean)
-            innovation = (input_i * mask_i) - y_pred
-
-            # Build (H B H^T + R) as a composed lineax operator. We
-            # tag it positive-semidefinite so lineax.CG accepts it
-            # (the composition itself doesn't carry the tag).
-            H = lx.JacobianLinearOperator(
-                lambda x, _args=None: masked_obs(x), self.prior_mean
+            return self._analyse(
+                self.prior_mean, input_i, mask_i, self.obs_op, self.obs_cov_op
             )
-            inner_raw = H @ self.prior_cov_op @ H.transpose() + self.obs_cov_op
-            inner_op = lx.TaggedLinearOperator(inner_raw, lx.positive_semidefinite_tag)
-
-            solver = lx.CG(
-                atol=self.cg_atol,
-                rtol=self.cg_rtol,
-                max_steps=self.cg_max_steps,
-            )
-            v = lx.linear_solve(inner_op, innovation, solver=solver).value
-
-            # x_star = x_b + B H^T v
-            return self.prior_mean + self.prior_cov_op.mv(H.transpose().mv(v))
 
         return jax.vmap(_one)(batch.input, batch.mask)
+
+    def _analyse(
+        self,
+        x_b: Float[Array, "T N"],
+        input_i: Float[Array, "T N"],
+        mask_i: Float[Array, "T N"],
+        obs_op: Any,
+        obs_cov_op: lx.AbstractLinearOperator,
+    ) -> Float[Array, "T N"]:
+        """BLUE analysis of one sample around the background ``x_b``."""
+
+        # The effective observation operator is mask ⊙ H(·) — apply the
+        # mask both to the predicted obs (innovation) AND to the
+        # tangent-linear used to assemble (H B H^T + R). Without the
+        # mask in `linearize`, missing entries are treated as
+        # zero-innovation observations and bias the analysis whenever
+        # B couples observed and missing components.
+        def masked_obs(x: Float[Array, "T N"]) -> Float[Array, "T N"]:
+            raw = obs_op(x, mask=mask_i) if _accepts_mask(obs_op) else obs_op(x)
+            return mask_i * raw
+
+        y_pred = masked_obs(x_b)
+        innovation = (input_i * mask_i) - y_pred
+
+        # Build (H B H^T + R) as a composed lineax operator. We
+        # tag it positive-semidefinite so lineax.CG accepts it
+        # (the composition itself doesn't carry the tag).
+        H = lx.JacobianLinearOperator(lambda x, _args=None: masked_obs(x), x_b)
+        inner_raw = H @ self.prior_cov_op @ H.transpose() + obs_cov_op
+        inner_op = lx.TaggedLinearOperator(inner_raw, lx.positive_semidefinite_tag)
+
+        solver = lx.CG(
+            atol=self.cg_atol,
+            rtol=self.cg_rtol,
+            max_steps=self.cg_max_steps,
+        )
+        v = lx.linear_solve(inner_op, innovation, solver=solver).value
+
+        # x_star = x_b + B H^T v
+        return x_b + self.prior_cov_op.mv(H.transpose().mv(v))
 
     def as_analysis_step(self) -> _OIAnalysisStep:
         """Adapt to ``pipekit_cycle.AnalysisStep`` (Decision D8)."""
@@ -141,7 +149,22 @@ def _accepts_mask(obs_op: Any) -> bool:
 
 
 class _OIAnalysisStep(eqx.Module):
-    """``pipekit_cycle.AnalysisStep`` adapter for ``OptimalInterpolation``."""
+    r"""``pipekit_cycle.AnalysisStep`` adapter for ``OptimalInterpolation``.
+
+    Returns the BLUE analysis around the forecast,
+    $x_a = x_b + B H^\top (H B H^\top + R)^{-1} (y - H x_b)$ with
+    $x_b$ = ``forecast``. ``B`` is the model's ``prior_cov_op``; ``H`` is
+    ``obs_op`` and ``R`` is ``obs_err_cov`` when given, else the model's
+    ``obs_op`` / ``obs_cov_op``. The model's ``prior_mean`` is not used.
+
+    ``forecast`` is one state shaped like ``prior_mean`` or a batch of
+    them, ``(B, T, N)``, and ``obs`` is batched the same way; ``NaN``
+    observations are missing. ``obs_err_cov`` may be ``None``, a
+    ``lineax.AbstractLinearOperator`` on one observation sample, or a
+    scalar / array of error variances (a diagonal $R$). ``H`` is
+    linearised at the forecast, so a nonlinear ``obs_op`` gives a single
+    linearised (extended-Kalman) update.
+    """
 
     model: OptimalInterpolation
 
@@ -153,7 +176,13 @@ class _OIAnalysisStep(eqx.Module):
         obs_op: Any,
         obs_err_cov: Any,
     ) -> Float[Array, ...]:
-        mask = jnp.where(jnp.isfinite(obs), 1.0, 0.0)
-        obs_clean = jnp.nan_to_num(obs)
-        batch = Batch1D(input=obs_clean, mask=mask, target=None)
-        return self.model(batch)
+        return analyse_forecast(
+            self.model._analyse,
+            state_shape=self.model.prior_mean.shape,
+            default_obs_op=self.model.obs_op,
+            default_obs_cov_op=self.model.obs_cov_op,
+            forecast=forecast,
+            obs=obs,
+            obs_op=obs_op,
+            obs_err_cov=obs_err_cov,
+        )

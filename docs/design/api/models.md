@@ -372,7 +372,11 @@ def analysis_fn(forecast, obs, *, obs_op, obs_err_cov) -> analysis: ...
 ```
 
 The adapter shells the model's `__call__` to match the pipekit-cycle
-analysis signature. Use it in `pipekit_cycle.DACycle`:
+analysis signature. The `OptimalInterpolation` and `ThreeDVar` adapters
+analyse around `forecast` (the background $x_b$, not the model's
+`prior_mean`) and use the cycle's `obs_op` and `obs_err_cov` ($H$ and $R$;
+`None` falls back to the model's own), keeping the model's $B$. Use it in
+`pipekit_cycle.DACycle`:
 
 ```python
 import pipekit_cycle as pc
