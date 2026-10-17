@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.10](https://github.com/jejjohnson/vardax/compare/v0.1.9...v0.1.10) (2026-10-17)
+
+
+### Bug Fixes
+
+* **cycle:** analyse around the forecast in the OI and 3D-Var analysis steps ([#77](https://github.com/jejjohnson/vardax/issues/77)) ([623fe69](https://github.com/jejjohnson/vardax/commit/623fe690efb332c03913213a271acf90c09f838b))
+
 ## [0.1.9](https://github.com/jejjohnson/vardax/compare/v0.1.8...v0.1.9) (2026-07-25)
 
 
