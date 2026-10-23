@@ -261,6 +261,10 @@ def test_initial_condition_uses_t0():
     grid = jnp.linspace(-1, 1, 5)[:, None]
     direct = result.evaluate(jnp.concatenate([jnp.full((5, 1), 0.25), grid], -1))
     assert jnp.allclose(result.initial_condition(grid), direct)
+    # An integer grid must not truncate t0 = 0.25 to 0.
+    ints = jnp.arange(-1, 2)[:, None]
+    direct = result.evaluate(jnp.stack([jnp.full(3, 0.25), jnp.arange(-1.0, 2.0)], -1))
+    assert jnp.allclose(result.initial_condition(ints), direct)
 
 
 # ---------------------------------------------------------------------------

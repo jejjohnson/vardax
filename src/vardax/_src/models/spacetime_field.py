@@ -98,6 +98,9 @@ class SpaceTimeFieldResult(eqx.Module):
         grid = jnp.asarray(grid)
         if grid.ndim != 2:
             raise ValueError(f"grid must be 2-D (N, D); got shape {grid.shape}.")
+        if not jnp.issubdtype(grid.dtype, jnp.inexact):
+            # An integer grid would truncate t0 in the time column.
+            grid = grid.astype(jnp.result_type(float))
         time = jnp.full((grid.shape[0], 1), self.t0, dtype=grid.dtype)
         return _evaluate(self.field, jnp.concatenate([time, grid], axis=-1))
 
