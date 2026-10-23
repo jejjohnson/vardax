@@ -47,4 +47,4 @@ recurrent-state containers of the ConvLSTM gradient modulators.
     options:
       show_root_heading: false
       show_root_toc_entry: false
-      members: [Batch1D, Batch2D, Batch2DMultivar, LSTMState1D, LSTMState2D]
+      members: [Batch1D, Batch2D, Batch2DMultivar, PointObsBatch, LSTMState1D, LSTMState2D]

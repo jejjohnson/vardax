@@ -22,6 +22,7 @@ biases.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 import equinox as eqx
@@ -31,8 +32,13 @@ from jaxtyping import Array, Float
 import lineax as lx
 import optimistix as optx
 
-from vardax._src._types import Batch1D
+from vardax._src._types import Batch1D, PointObsBatch
 from vardax._src.minimisers import minimise
+from vardax._src.obs_operators.point import (
+    grid_point_obs_cost,
+    map_point_batch,
+    window_steps,
+)
 from vardax._src.protocols import Minimiser, StateParameterization
 
 
@@ -144,14 +150,34 @@ class WeakFourDVar(eqx.Module):
 
     def __call__(
         self,
-        batch: Batch1D,
+        batch: Batch1D | PointObsBatch,
     ) -> tuple[Float[Array, "B N"], Float[Array, "B T N"]]:
         """Weak-4DVar analysis.
 
         Returns ``(x_0_star, eta_star)`` — the analysis initial state
         and the per-step model-error trajectory (one row per
         timestep, total ``T``).
+
+        A [`PointObsBatch`][vardax.PointObsBatch] needs
+        ``obs_op=GridPointObs(...)``: observation $i$ is compared with the
+        trajectory state at ``time_index[i]`` over a window of ``n_times``
+        states (so ``T = n_times - 1``), with error variance
+        $\\sigma_i^2$ (``obs_cov_op`` is not used).
         """
+        N = self.prior_mean.shape[0]
+        if isinstance(batch, PointObsBatch):
+            n_steps = window_steps(batch)
+
+            def _one_points(b: PointObsBatch):
+                def traj_obs_cost(
+                    trajectory: Float[Array, "T_plus_1 N"],
+                ) -> Float[Array, ""]:
+                    return grid_point_obs_cost(self.obs_op, trajectory, b)
+
+                return self._solve(traj_obs_cost, n_steps, N)
+
+            return map_point_batch(_one_points, batch)
+
         # T_plus_1 timesteps in the batch ⇒ T model-error steps.
         T_plus_1 = batch.input.shape[1]
         T = T_plus_1 - 1
@@ -160,24 +186,9 @@ class WeakFourDVar(eqx.Module):
         def _one(
             input_i: Float[Array, "T_plus_1 N"], mask_i: Float[Array, "T_plus_1 N"]
         ):
-            def model_and_obs_cost(
-                x_0: Float[Array, N],
-                etas: Float[Array, "T N"],
+            def traj_obs_cost(
+                trajectory: Float[Array, "T_plus_1 N"],
             ) -> Float[Array, ""]:
-                # Model-error term
-                def _eta_cost(eta_t):
-                    Q_inv_eta = lx.linear_solve(
-                        self.model_err_cov_op,
-                        eta_t,
-                        solver=lx.CG(atol=1e-6, rtol=1e-6),
-                    ).value
-                    return 0.5 * jnp.sum(eta_t * Q_inv_eta)
-
-                j_eta = jnp.sum(jax.vmap(_eta_cost)(etas))
-
-                # Observation term
-                trajectory = self._rollout_with_error(x_0, etas)
-
                 def _per_step(x_t, y_t, m_t):
                     y_pred = (
                         self.obs_op(x_t, mask=m_t)
@@ -193,64 +204,92 @@ class WeakFourDVar(eqx.Module):
                     return 0.5 * jnp.sum(residual * R_inv_r)
 
                 per_step_costs = jax.vmap(_per_step)(trajectory, input_i, mask_i)
-                j_obs = jnp.sum(per_step_costs)
+                return jnp.sum(per_step_costs)
 
-                return j_obs + j_eta
-
-            # Initial guess: x_0 at the background, etas at zero.
-            init_etas = jnp.zeros((T, N))
-
-            param = self.parameterization
-            if param is not None:
-                # Control (θ, η); x_0 = ψ(θ) and pen(θ) replaces the B term.
-                def decode(theta: Any) -> Float[Array, N]:
-                    return param.decode(theta).reshape(self.prior_mean.shape)
-
-                def param_cost(control: Any, _args: Any) -> Float[Array, ""]:
-                    theta, etas = control
-                    return param.penalty(theta) + model_and_obs_cost(
-                        decode(theta), etas
-                    )
-
-                theta_star, eta_star = minimise(
-                    self.minimiser,
-                    param_cost,
-                    (param.init_control(), init_etas),
-                    adjoint=self.minimiser_adjoint,
-                    max_steps=self.max_steps,
-                )
-                return decode(theta_star), eta_star
-
-            def cost(
-                control: Float[Array, "T_plus_1 N"], _args: Any
-            ) -> Float[Array, ""]:
-                x_0 = control[0]
-                etas = control[1:]
-
-                # Background term
-                dx = x_0 - self.prior_mean
-                B_inv_dx = lx.linear_solve(
-                    self.prior_cov_op,
-                    dx,
-                    solver=lx.CG(atol=1e-6, rtol=1e-6),
-                ).value
-                j_bg = 0.5 * jnp.sum(dx * B_inv_dx)
-                return j_bg + model_and_obs_cost(x_0, etas)
-
-            y0 = jnp.concatenate([self.prior_mean[None, :], init_etas], axis=0)
-
-            x_star = minimise(
-                self.minimiser,
-                cost,
-                y0,
-                adjoint=self.minimiser_adjoint,
-                max_steps=self.max_steps,
-            )
-            control_star = x_star
-            return control_star[0], control_star[1:]
+            return self._solve(traj_obs_cost, T, N)
 
         x0_star, eta_star = jax.vmap(_one)(batch.input, batch.mask)
         return x0_star, eta_star
+
+    def _solve(
+        self,
+        traj_obs_cost: Callable[[Array], Array],
+        T: int,
+        N: int,
+    ) -> tuple[Float[Array, " N"], Float[Array, "T N"]]:
+        """Minimise over $(x_0, \\eta)$ (or $(\\theta, \\eta)$) for one sample."""
+
+        def model_and_obs_cost(
+            x_0: Float[Array, " N"],
+            etas: Float[Array, "T N"],
+        ) -> Float[Array, ""]:
+            # Model-error term
+            def _eta_cost(eta_t):
+                Q_inv_eta = lx.linear_solve(
+                    self.model_err_cov_op,
+                    eta_t,
+                    solver=lx.CG(atol=1e-6, rtol=1e-6),
+                ).value
+                return 0.5 * jnp.sum(eta_t * Q_inv_eta)
+
+            # A one-state window has no model-error steps (vmap over an
+            # empty axis would trip lineax's CG on a zero-size operand).
+            j_eta = (
+                jnp.sum(jax.vmap(_eta_cost)(etas))
+                if etas.shape[0] > 0
+                else jnp.zeros((), dtype=x_0.dtype)
+            )
+
+            # Observation term
+            j_obs = traj_obs_cost(self._rollout_with_error(x_0, etas))
+            return j_obs + j_eta
+
+        # Initial guess: x_0 at the background, etas at zero.
+        init_etas = jnp.zeros((T, N))
+
+        param = self.parameterization
+        if param is not None:
+            # Control (θ, η); x_0 = ψ(θ) and pen(θ) replaces the B term.
+            def decode(theta: Any) -> Float[Array, " N"]:
+                return param.decode(theta).reshape(self.prior_mean.shape)
+
+            def param_cost(control: Any, _args: Any) -> Float[Array, ""]:
+                theta, etas = control
+                return param.penalty(theta) + model_and_obs_cost(decode(theta), etas)
+
+            theta_star, eta_star = minimise(
+                self.minimiser,
+                param_cost,
+                (param.init_control(), init_etas),
+                adjoint=self.minimiser_adjoint,
+                max_steps=self.max_steps,
+            )
+            return decode(theta_star), eta_star
+
+        def cost(control: Float[Array, "T_plus_1 N"], _args: Any) -> Float[Array, ""]:
+            x_0 = control[0]
+            etas = control[1:]
+
+            # Background term
+            dx = x_0 - self.prior_mean
+            B_inv_dx = lx.linear_solve(
+                self.prior_cov_op,
+                dx,
+                solver=lx.CG(atol=1e-6, rtol=1e-6),
+            ).value
+            j_bg = 0.5 * jnp.sum(dx * B_inv_dx)
+            return j_bg + model_and_obs_cost(x_0, etas)
+
+        y0 = jnp.concatenate([self.prior_mean[None, :], init_etas], axis=0)
+
+        control_star = minimise(
+            self.minimiser,
+            cost,
+            y0,
+            adjoint=self.minimiser_adjoint,
+            max_steps=self.max_steps,
+        )
+        return control_star[0], control_star[1:]
 
     def as_analysis_step(self) -> _WeakFourDVarAnalysisStep:
         return _WeakFourDVarAnalysisStep(self)

@@ -26,6 +26,7 @@ $\tfrac12 \lVert x_0 - x_b \rVert^2_{B^{-1}}$.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 import equinox as eqx
@@ -126,10 +127,14 @@ class NeuralFieldParameterization(eqx.Module):
         self.coords = coords
         self.weight_decay = weight_decay
 
+    def as_field(self, theta: PyTree[Array]) -> Callable[[Array], Array]:
+        """The field with parameters ``theta``, as a callable ``s -> (C,)``."""
+        static = eqx.filter(self.field, eqx.is_inexact_array, inverse=True)
+        return eqx.combine(theta, static)
+
     def decode(self, theta: PyTree[Array], t: float | None = None) -> Array:
         """Evaluate the field with parameters ``theta`` on the grid."""
-        static = eqx.filter(self.field, eqx.is_inexact_array, inverse=True)
-        field = eqx.combine(theta, static)
+        field = self.as_field(theta)
         coords = self.coords
         if t is not None:
             time = jnp.full((coords.shape[0], 1), t, dtype=coords.dtype)
