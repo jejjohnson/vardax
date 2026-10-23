@@ -12,6 +12,8 @@ Classical methods:
   control = x_0
 - [`WeakFourDVar`][vardax.WeakFourDVar] — weak-constraint 4DVar,
   control = (x_0, η)
+- [`SpaceTimeFieldVar`][vardax.SpaceTimeFieldVar] — neural-field 4DVar,
+  control = the weights of one space-time field (no rollout, no B)
 
 Learned methods live alongside in ``vardax._src.model`` (the
 ``FourDVarNet*`` classes). They satisfy the same protocol contract.
@@ -26,6 +28,7 @@ from __future__ import annotations
 from .incremental_4dvar import Incremental4DVar
 from .incremental_fourdvar import IncrementalConfig, IncrementalFourDVar
 from .optimal_interpolation import OptimalInterpolation
+from .spacetime_field import SpaceTimeFieldResult, SpaceTimeFieldVar
 from .strong_fourdvar import StrongFourDVar
 from .threedvar import ThreeDVar
 from .weak_fourdvar import WeakFourDVar
@@ -35,6 +38,8 @@ __all__ = [
     "IncrementalConfig",
     "IncrementalFourDVar",
     "OptimalInterpolation",
+    "SpaceTimeFieldResult",
+    "SpaceTimeFieldVar",
     "StrongFourDVar",
     "ThreeDVar",
     "WeakFourDVar",
