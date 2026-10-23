@@ -24,6 +24,31 @@ implements.
       show_root_toc_entry: false
       members: [variational_cost, variational_cost_grad, obs_cost_1d, obs_cost_2d, prior_cost, decomposed_loss, strong_variational_cost, background_cost]
 
+## Physics residual penalty
+
+`ResidualPenalty` adds a PDE as a weak constraint on a continuous field
+(a neural field, or any differentiable callable of one point): the
+residual $\mathcal N[f]$ is evaluated by autodiff at collocation points,
+fixed or redrawn from a key on every call, and scored as
+$\frac{\lambda}{2 N_c}\sum_j \lVert \mathcal N[f](c_j) \rVert^2$.
+Residuals are plain callables `(field, s) -> (R,)` built on
+`geonnax.diffops`; vardax ships two references in `vardax.examples`,
+2-D advection–diffusion and 2-D incompressible Navier–Stokes in
+vorticity form (the field gives the streamfunction $\psi$, with
+$u = \nabla^\perp\psi$ and $\omega = \Delta\psi$).
+
+::: vardax
+    options:
+      show_root_heading: false
+      show_root_toc_entry: false
+      members: [ResidualPenalty]
+
+::: vardax.examples
+    options:
+      show_root_heading: false
+      show_root_toc_entry: false
+      members: [advection_diffusion_2d, navier_stokes_vorticity_2d]
+
 ## Priors
 
 Implementations of the [`Prior`](protocols.md) Protocol. `IdentityPrior`
