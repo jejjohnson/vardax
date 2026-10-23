@@ -63,6 +63,11 @@ from vardax._src.grad_mod import (
     ConvLSTMGradMod1D,
     ConvLSTMGradMod2D,
 )
+from vardax._src.minimisers import (
+    MinimiseResult,
+    OptaxMinimiser,
+    OptimistixMinimiser,
+)
 from vardax._src.model import (
     FourDVarNet1D,
     FourDVarNet2D,
@@ -234,6 +239,10 @@ __all__ = [
     "OneStepAdjoint",
     "to_optimistix_adjoint",
     "RecursiveCheckpointAdjoint",
+    # Minimisers (issue #85)
+    "MinimiseResult",
+    "OptaxMinimiser",
+    "OptimistixMinimiser",
     # Solver
     "SolverState1D",
     "SolverState2D",

@@ -49,6 +49,8 @@ import lineax as lx
 import optimistix as optx
 
 from vardax._src._types import Batch1D
+from vardax._src.minimisers import minimise
+from vardax._src.protocols import Minimiser
 
 
 class Incremental4DVar(eqx.Module):
@@ -67,11 +69,14 @@ class Incremental4DVar(eqx.Module):
             the coefficient vector ``X`` (shape ``(basis.nbasis,)``)
             and ``B^{-1}`` is replaced by ``basis.prior_inv``.
         minimiser: ``optimistix.AbstractMinimiser`` for the outer
-            optimisation. Default ``optx.BFGS(rtol=1e-6, atol=1e-6)``.
+            optimisation (default ``optx.BFGS(rtol=1e-6, atol=1e-6)``), or
+            a [`Minimiser`][vardax.Minimiser] such as
+            [`OptaxMinimiser`][vardax.OptaxMinimiser].
         minimiser_adjoint: ``optimistix.AbstractAdjoint`` for
             differentiating through the minimum. Default
             ``optx.ImplicitAdjoint``.
-        max_steps: Iteration cap on the outer solver.
+        max_steps: Iteration cap on the outer solver when ``minimiser``
+            is an ``optimistix`` solver; a vardax `Minimiser` keeps its own.
     """
 
     forward: Any
@@ -80,7 +85,7 @@ class Incremental4DVar(eqx.Module):
     prior_cov_op: lx.AbstractLinearOperator
     obs_cov_op: lx.AbstractLinearOperator
     basis: Any
-    minimiser: optx.AbstractMinimiser = eqx.field(static=True)
+    minimiser: optx.AbstractMinimiser | Minimiser = eqx.field(static=True)
     minimiser_adjoint: optx.AbstractAdjoint = eqx.field(static=True)
     max_steps: int = eqx.field(static=True, default=200)
 
@@ -93,7 +98,7 @@ class Incremental4DVar(eqx.Module):
         obs_cov_op: lx.AbstractLinearOperator,
         *,
         basis: Any = None,
-        minimiser: optx.AbstractMinimiser | None = None,
+        minimiser: optx.AbstractMinimiser | Minimiser | None = None,
         minimiser_adjoint: optx.AbstractAdjoint | None = None,
         max_steps: int = 200,
     ) -> None:
@@ -188,18 +193,16 @@ class Incremental4DVar(eqx.Module):
 
                 y0 = jnp.zeros((self.basis.nbasis,), dtype=self.prior_mean.dtype)
 
-            result = optx.minimise(
-                fn=cost,
-                solver=self.minimiser,
-                y0=y0,
-                args=None,
-                max_steps=self.max_steps,
+            x_star = minimise(
+                self.minimiser,
+                cost,
+                y0,
                 adjoint=self.minimiser_adjoint,
-                throw=False,
+                max_steps=self.max_steps,
             )
             if self.basis is None:
-                return result.value
-            return self.prior_mean + self.basis.operg(0.0, result.value).reshape(
+                return x_star
+            return self.prior_mean + self.basis.operg(0.0, x_star).reshape(
                 self.prior_mean.shape
             )
 

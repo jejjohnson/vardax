@@ -63,6 +63,41 @@ Two adjoint slots, two purposes:
   (e.g., for training hyperparameters of $B$). `ImplicitAdjoint` is
   exact at the optimum with $O(1)$ memory.
 
+## Large controls: first-order minimisers
+
+`minimiser=` takes an `optimistix.AbstractMinimiser` (the default is
+`optx.BFGS(rtol=1e-6, atol=1e-6)`) or any [`Minimiser`](api/protocols.md):
+a callable `minimiser(cost_fn, x0, batch) -> x_star` over a pytree
+control. BFGS keeps a dense inverse-Hessian estimate, which is not viable
+when the control is $10^5$ network weights. `OptaxMinimiser` runs a
+first-order `optax` optimiser instead, in a `jax.lax.while_loop`, and
+stops at `max_steps`, at a gradient norm below `gtol`, at a step below
+`atol + rtol·‖x‖`, or after `patience` steps whose cost is worse than the
+best by more than round-off. (There is no relative cost-change test: next
+to a large irreducible misfit the cost change rounds to zero in float32
+long before $x$ converges.) An optional `polish` optimiser (e.g.
+`optax.lbfgs()`), with its own tight tolerances, finishes from there:
+
+```python
+import optax
+import vardax
+
+minimiser = vardax.OptaxMinimiser(
+    optimizer=optax.adam(1e-3), max_steps=5000, gtol=1e-6, patience=200,
+    polish=optax.lbfgs(), polish_steps=200,
+)
+model = vardax.StrongFourDVar(..., minimiser=minimiser)
+result = minimiser.run(cost_fn, theta0, batch)   # value, cost, grad_norm, num_steps
+```
+
+`minimiser_adjoint` still applies. Its default, `ImplicitAdjoint`, is
+exact only at a stationary point, $\nabla J(x^\star) = 0$, which a
+first-order optimiser stopped early does not guarantee: `OptaxMinimiser`
+reports $\lVert \nabla J(x^\star) \rVert_2$ in `MinimiseResult.grad_norm`;
+check it before trusting gradients through the analysis. `result.cost`
+is differentiable (envelope theorem). `OptimistixMinimiser()` is the default made explicit
+and returns exactly what the default model returns.
+
 ## The adjoint problem
 
 The gradient computation reads "integrate the trajectory forward,
@@ -93,7 +128,7 @@ Inputs:
    forward                   — pipekit_cycle.ForwardModel (M_t)
    obs_op                    — pipekit_cycle.ObservationOperator (H_t)
    batch                     — observations y_t for t = 0, …, T
-   minimiser                 — optimistix.AbstractMinimiser
+   minimiser                 — optimistix.AbstractMinimiser or vardax.Minimiser
    minimiser_adjoint         — optimistix.AbstractAdjoint
    forward_adjoint           — diffrax.AbstractAdjoint
 

@@ -92,6 +92,22 @@ families; `CompositeBasis` concatenates several.
       show_root_toc_entry: false
       members: [LinearBasis, CompositeBasis, linear_basis, composite_basis, eof_basis, fourier_basis, rbf_basis, wavelet_basis]
 
+## Minimisers
+
+Implementations of the [`Minimiser`](protocols.md) protocol, accepted as
+`minimiser=` by `ThreeDVar`, `StrongFourDVar`, `WeakFourDVar` and
+`Incremental4DVar`. `OptimistixMinimiser` wraps an optimistix solver
+(the models' default, BFGS); `OptaxMinimiser` runs a first-order optax
+optimiser with early stopping for controls too large for BFGS, and
+reports the final gradient norm the implicit adjoint relies on. Both
+return a `MinimiseResult` from `run`.
+
+::: vardax
+    options:
+      show_root_heading: false
+      show_root_toc_entry: false
+      members: [OptaxMinimiser, OptimistixMinimiser, MinimiseResult]
+
 ## 4DVarNet inner-loop solvers
 
 The unrolled (and fixed-point) inner loop of 4DVarNet, exposed as pure
