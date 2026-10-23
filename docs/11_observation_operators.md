@@ -226,6 +226,80 @@ are the operational pattern.
 
 This is not yet shipped in vardax; the design is documented for Epic 9.
 
+## Scattered point observations
+
+Along-track altimetry, drifters and station networks deliver observations
+at scattered coordinates and times, not on the state grid. Scattering them
+into a mostly-`NaN` grid would discard their positions and force one $R$
+for all times. A `PointObsBatch` carries them as they are, padded to a
+fixed count $n_\text{obs}$ so shapes stay static under `jit`:
+
+| Field | Shape | Meaning |
+|---|---|---|
+| `coords` | `(N_obs, D)` | $s_i$, e.g. `(x,)`, `(y, x)` or `(lon, lat, t)` |
+| `values` | `(N_obs,)` | $y_i$ |
+| `sigma` | `(N_obs,)` | per-observation error std $\sigma_i$ |
+| `valid` | `(N_obs,)` | $m_i$, `False` on padding |
+| `time_index` | `(N_obs,)` or `None` | window step $\tau_i$ for gridded-state models |
+| `n_times` | static `int` | states in the window (rollout steps + 1) |
+
+The observation cost is
+
+$$
+J_o = \tfrac{1}{2} \sum_i m_i \,
+      \frac{\big(y_i - \mathcal H(x)(s_i, t_i)\big)^2}{\sigma_i^2}.
+$$
+
+Padding rows contribute exactly zero value **and** zero gradient.
+`point_obs_cost` masks the whitened residual with `jnp.where` *before*
+squaring, and first replaces the padding's coordinates, values and
+$\sigma$ with finite placeholders. Multiplying by $m_i$ after squaring
+would not be enough: $0 \cdot \text{NaN} = \text{NaN}$ in the gradient of
+a padding row whose value or $\sigma = 0$ is garbage.
+
+Two operators evaluate $\mathcal H(x)$ at the points:
+
+- **`GridPointObs(grid_axes)`**: for a gridded state. The state has a
+  leading time axis, either a 4D-Var trajectory $(x_0, \dots, x_T)$ or a
+  3D-Var state `(T, N)`. Observation $i$ reads $x_{\tau_i}$ and
+  interpolates it linearly (bilinearly on a 2-D grid) at $s_i$, clamped at
+  the grid edge. This is `InterpObs`'s `order=1` stencil, computed at call
+  time so that the coordinates may be traced.
+- **`FieldPointObs()`**: for a state that is a callable field
+  $f(s)$, such as a neural field. It returns $\hat y_i = f(s_i)$ and
+  passes all `D` columns to the field, a time column included.
+
+`ThreeDVar`, `StrongFourDVar`, `WeakFourDVar`, `Incremental4DVar` and
+`IncrementalFourDVar` choose their path from the batch type. A
+`PointObsBatch` needs `obs_op=GridPointObs(...)`, and the per-observation
+$\sigma_i$ replaces `obs_cov_op`, which must be `None` (or an identity
+operator; anything else raises `ValueError` rather than being silently
+ignored). 4D-Var models compare observation $i$
+with the trajectory state at step $\tau_i$, so $\mathcal H_t$ and $R_t$
+can change from step to step. `ThreeDVar` also accepts `FieldPointObs`
+together with a `NeuralFieldParameterization`, which evaluates the field
+at the observation coordinates without a grid. A leading batch axis on
+the batch's arrays is optional.
+
+```python
+import vardax
+
+batch = vardax.PointObsBatch(
+    coords=track_xy, values=ssh, sigma=ssh_err, valid=valid,
+    time_index=step_of_obs, n_times=T + 1,
+)
+model = vardax.StrongFourDVar(
+    forward=qg_model, obs_op=vardax.GridPointObs((y_axis, x_axis)),
+    prior_mean=x_b, prior_cov_op=B_op, obs_cov_op=None,
+)
+x0_star = model(batch)
+```
+
+When the points cover every grid cell, the point cost equals the masked
+grid cost with $R = \mathrm{diag}(\sigma^2)$. The analyses then agree, and
+the linear-Gaussian agreement with `OptimalInterpolation` holds for point
+batches too (`tests/test_point_observations.py`).
+
 ## Adjoint test
 
 Every observation operator's `linearize()` must pass the adjoint test:

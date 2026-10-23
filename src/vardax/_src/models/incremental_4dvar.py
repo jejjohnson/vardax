@@ -39,6 +39,7 @@ References:
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 import equinox as eqx
@@ -48,8 +49,14 @@ from jaxtyping import Array, Float
 import lineax as lx
 import optimistix as optx
 
-from vardax._src._types import Batch1D
+from vardax._src._types import Batch1D, PointObsBatch
 from vardax._src.minimisers import minimise
+from vardax._src.obs_operators.point import (
+    check_point_obs_cov,
+    grid_point_obs_cost,
+    map_point_batch,
+    window_steps,
+)
 from vardax._src.protocols import Minimiser, StateParameterization
 
 
@@ -141,8 +148,28 @@ class Incremental4DVar(eqx.Module):
         _, trajectory = jax.lax.scan(step_fn, x_0, None, length=n_steps)
         return jnp.concatenate([x_0[None, :], trajectory], axis=0)
 
-    def __call__(self, batch: Batch1D) -> Float[Array, "B N"]:
-        """Reduced-basis 4DVar analysis: minimise over ``x_0`` (or ``X``)."""
+    def __call__(self, batch: Batch1D | PointObsBatch) -> Float[Array, "B N"]:
+        """Reduced-basis 4DVar analysis: minimise over ``x_0`` (or ``X``).
+
+        A [`PointObsBatch`][vardax.PointObsBatch] needs
+        ``obs_op=GridPointObs(...)``: observation $i$ is compared with the
+        trajectory state at ``time_index[i]`` over a window of ``n_times``
+        states, with error variance $\\sigma_i^2$ (``obs_cov_op`` must
+        be ``None`` or an identity, else ``ValueError``).
+        """
+        if isinstance(batch, PointObsBatch):
+            check_point_obs_cov(self.obs_cov_op)
+            n_steps = window_steps(batch)
+
+            def _one_points(b: PointObsBatch) -> Float[Array, " N"]:
+                def _obs_cost(
+                    trajectory: Float[Array, "T_plus_1 N"],
+                ) -> Float[Array, ""]:
+                    return grid_point_obs_cost(self.obs_op, trajectory, b)
+
+                return self._solve(_obs_cost, n_steps)
+
+            return map_point_batch(_one_points, batch)
 
         T = batch.input.shape[1] - 1
 
@@ -183,57 +210,59 @@ class Incremental4DVar(eqx.Module):
                 per_step_costs = jax.vmap(_per_step)(trajectory, input_i, mask_i)
                 return jnp.sum(per_step_costs)
 
-            param = self.parameterization
-            if self.basis is not None:
-                # The reduced-basis path, unchanged; it equals
-                # LinearParameterization(basis, prior_mean) mathematically.
-                def cost(X: Float[Array, " M"], _args: Any) -> Float[Array, ""]:
-                    j_bg = 0.5 * jnp.sum(X * self.basis.prior_inv(X))
-                    x_0 = self.prior_mean + self.basis.operg(0.0, X).reshape(
-                        self.prior_mean.shape
-                    )
-                    return j_bg + _obs_cost(self._rollout(x_0, n_steps=T))
-
-                y0 = jnp.zeros((self.basis.nbasis,), dtype=self.prior_mean.dtype)
-            elif param is not None:
-
-                def cost(theta: Any, _args: Any) -> Float[Array, ""]:
-                    x_0 = param.decode(theta).reshape(self.prior_mean.shape)
-                    return param.penalty(theta) + _obs_cost(
-                        self._rollout(x_0, n_steps=T)
-                    )
-
-                y0 = param.init_control()
-            else:
-
-                def cost(x_0: Float[Array, " N"], _args: Any) -> Float[Array, ""]:
-                    dx = x_0 - self.prior_mean
-                    B_inv_dx = lx.linear_solve(
-                        self.prior_cov_op,
-                        dx,
-                        solver=lx.CG(atol=1e-6, rtol=1e-6),
-                    ).value
-                    j_bg = 0.5 * jnp.sum(dx * B_inv_dx)
-                    return j_bg + _obs_cost(self._rollout(x_0, n_steps=T))
-
-                y0 = self.prior_mean
-
-            x_star = minimise(
-                self.minimiser,
-                cost,
-                y0,
-                adjoint=self.minimiser_adjoint,
-                max_steps=self.max_steps,
-            )
-            if self.basis is not None:
-                return self.prior_mean + self.basis.operg(0.0, x_star).reshape(
-                    self.prior_mean.shape
-                )
-            if param is not None:
-                return param.decode(x_star).reshape(self.prior_mean.shape)
-            return x_star
+            return self._solve(_obs_cost, T)
 
         return jax.vmap(_one)(batch.input, batch.mask)
+
+    def _solve(self, _obs_cost: Callable[[Array], Array], T: int) -> Float[Array, " N"]:
+        """Minimise background (or penalty) plus the trajectory ``_obs_cost``."""
+        param = self.parameterization
+        if self.basis is not None:
+            # The reduced-basis path, unchanged; it equals
+            # LinearParameterization(basis, prior_mean) mathematically.
+            def cost(X: Float[Array, " M"], _args: Any) -> Float[Array, ""]:
+                j_bg = 0.5 * jnp.sum(X * self.basis.prior_inv(X))
+                x_0 = self.prior_mean + self.basis.operg(0.0, X).reshape(
+                    self.prior_mean.shape
+                )
+                return j_bg + _obs_cost(self._rollout(x_0, n_steps=T))
+
+            y0 = jnp.zeros((self.basis.nbasis,), dtype=self.prior_mean.dtype)
+        elif param is not None:
+
+            def cost(theta: Any, _args: Any) -> Float[Array, ""]:
+                x_0 = param.decode(theta).reshape(self.prior_mean.shape)
+                return param.penalty(theta) + _obs_cost(self._rollout(x_0, n_steps=T))
+
+            y0 = param.init_control()
+        else:
+
+            def cost(x_0: Float[Array, " N"], _args: Any) -> Float[Array, ""]:
+                dx = x_0 - self.prior_mean
+                B_inv_dx = lx.linear_solve(
+                    self.prior_cov_op,
+                    dx,
+                    solver=lx.CG(atol=1e-6, rtol=1e-6),
+                ).value
+                j_bg = 0.5 * jnp.sum(dx * B_inv_dx)
+                return j_bg + _obs_cost(self._rollout(x_0, n_steps=T))
+
+            y0 = self.prior_mean
+
+        x_star = minimise(
+            self.minimiser,
+            cost,
+            y0,
+            adjoint=self.minimiser_adjoint,
+            max_steps=self.max_steps,
+        )
+        if self.basis is not None:
+            return self.prior_mean + self.basis.operg(0.0, x_star).reshape(
+                self.prior_mean.shape
+            )
+        if param is not None:
+            return param.decode(x_star).reshape(self.prior_mean.shape)
+        return x_star
 
     def as_analysis_step(self) -> _Incremental4DVarAnalysisStep:
         """Adapt to ``pipekit_cycle.AnalysisStep`` (Decision D8)."""

@@ -32,7 +32,14 @@ import jax.numpy as jnp
 from jaxtyping import Array, Float
 import lineax as lx
 
-from vardax._src._types import Batch1D
+from vardax._src._types import Batch1D, PointObsBatch
+from vardax._src.obs_operators.point import (
+    check_point_obs_cov,
+    map_point_batch,
+    require_grid_point_obs,
+    whitened_residual,
+    window_steps,
+)
 
 
 class IncrementalConfig(eqx.Module):
@@ -132,8 +139,20 @@ class IncrementalFourDVar(eqx.Module):
         _, trajectory = jax.lax.scan(step_fn, x_0, None, length=n_steps)
         return jnp.concatenate([x_0[None, :], trajectory], axis=0)
 
-    def __call__(self, batch: Batch1D) -> Float[Array, "B N"]:
-        """Incremental-4DVar analysis: GN outer + CG inner."""
+    def __call__(self, batch: Batch1D | PointObsBatch) -> Float[Array, "B N"]:
+        """Incremental-4DVar analysis: GN outer + CG inner.
+
+        A [`PointObsBatch`][vardax.PointObsBatch] needs
+        ``obs_op=GridPointObs(...)``: observation $i$ is compared with the
+        trajectory state at ``time_index[i]`` over a window of ``n_times``
+        states, with error variance $\\sigma_i^2$ (``obs_cov_op`` must
+        be ``None`` or an identity, else ``ValueError``).
+        """
+        if isinstance(batch, PointObsBatch):
+            check_point_obs_cov(self.obs_cov_op)
+            n_steps = window_steps(batch)
+            return map_point_batch(lambda b: self._analyse_points(b, n_steps), batch)
+
         T = batch.input.shape[1] - 1
 
         def _one(input_i, mask_i):
@@ -238,6 +257,56 @@ class IncrementalFourDVar(eqx.Module):
             return x_b
 
         return jax.vmap(_one)(batch.input, batch.mask)
+
+    def _analyse_points(self, batch: PointObsBatch, T: int) -> Float[Array, " N"]:
+        r"""GN outer + CG inner on a point batch.
+
+        With the whitened, padding-masked residual
+        $r_i(x_0) = m_i (y_i - \mathcal H(M^{\tau_i}(x_0))(s_i)) / \sigma_i$,
+        the cost is $\tfrac12 \lVert x_0 - x_b \rVert^2_{B^{-1}} +
+        \tfrac12 \lVert r \rVert^2$ and the Gauss-Newton Hessian is
+        $B^{-1} + r'^\top r'$.
+        """
+        obs_op = require_grid_point_obs(self.obs_op)
+
+        def residual(x_0):
+            preds = obs_op(self._rollout(x_0, n_steps=T), batch)
+            return whitened_residual(preds, batch)
+
+        def b_inv(v):
+            return lx.linear_solve(
+                self.prior_cov_op, v, solver=lx.CG(atol=1e-6, rtol=1e-6)
+            ).value
+
+        def cost_full(x_0):
+            dx = x_0 - self.prior_mean
+            return 0.5 * jnp.sum(dx * b_inv(dx)) + 0.5 * jnp.sum(residual(x_0) ** 2)
+
+        x_b = self.prior_mean
+        for _ in range(self.config.n_outer):
+            _, jvp_fn = jax.linearize(residual, x_b)
+            _, vjp_fn = jax.vjp(residual, x_b)
+
+            def gn_hessian_matvec(v, _jvp_fn=jvp_fn, _vjp_fn=vjp_fn):
+                (jt_j_v,) = _vjp_fn(_jvp_fn(v))
+                return jt_j_v + b_inv(v)
+
+            gn_op = lx.FunctionLinearOperator(
+                gn_hessian_matvec,
+                jax.ShapeDtypeStruct(x_b.shape, x_b.dtype),
+                lx.positive_semidefinite_tag,
+            )
+            dx_star = lx.linear_solve(
+                gn_op,
+                -jax.grad(cost_full)(x_b),
+                solver=lx.CG(
+                    atol=self.config.cg_atol,
+                    rtol=self.config.cg_rtol,
+                    max_steps=self.config.n_inner,
+                ),
+            ).value
+            x_b = x_b + dx_star
+        return x_b
 
     def as_analysis_step(self) -> _IncrementalFourDVarAnalysisStep:
         return _IncrementalFourDVarAnalysisStep(self)

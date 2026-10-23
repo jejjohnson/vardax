@@ -20,6 +20,7 @@ is the user's; vardax provides a sensible default.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 import equinox as eqx
@@ -29,9 +30,17 @@ from jaxtyping import Array, Float
 import lineax as lx
 import optimistix as optx
 
-from vardax._src._types import Batch1D
+from vardax._src._types import Batch1D, PointObsBatch
 from vardax._src.minimisers import minimise
 from vardax._src.models._analysis_step import analyse_forecast
+from vardax._src.obs_operators.point import (
+    FieldPointObs,
+    check_point_obs_cov,
+    grid_point_obs_cost,
+    map_point_batch,
+    point_obs_cost,
+)
+from vardax._src.parameterization import NeuralFieldParameterization
 from vardax._src.protocols import Minimiser, StateParameterization
 
 
@@ -112,8 +121,23 @@ class ThreeDVar(eqx.Module):
         self.max_steps = max_steps
         self.parameterization = parameterization
 
-    def __call__(self, batch: Batch1D) -> Float[Array, "B T N"]:
-        """3DVar analysis for each sample in the batch."""
+    def __call__(self, batch: Batch1D | PointObsBatch) -> Float[Array, "B T N"]:
+        r"""3DVar analysis for each sample in the batch.
+
+        A [`PointObsBatch`][vardax.PointObsBatch] needs a point operator as
+        ``obs_op``: a [`GridPointObs`][vardax.GridPointObs] on the state
+        ``(T, N)`` (``time_index`` selects the row), or a
+        [`FieldPointObs`][vardax.FieldPointObs] with a
+        [`NeuralFieldParameterization`][vardax.NeuralFieldParameterization],
+        which evaluates the field at the coordinates directly. The error
+        variances are the batch's $\sigma_i^2$; ``obs_cov_op`` must be
+        ``None`` or an identity (``ValueError`` otherwise).
+        """
+        if isinstance(batch, PointObsBatch):
+            check_point_obs_cov(self.obs_cov_op)
+            return map_point_batch(
+                lambda b: self._analyse_points(self.prior_mean, b), batch
+            )
 
         def _one(
             input_i: Float[Array, "T N"], mask_i: Float[Array, "T N"]
@@ -149,6 +173,39 @@ class ThreeDVar(eqx.Module):
             ).value
             return 0.5 * jnp.sum(residual * R_inv_r)
 
+        return self._solve(x_b, obs_cost)
+
+    def _analyse_points(
+        self, x_b: Float[Array, "T N"], batch: PointObsBatch
+    ) -> Float[Array, "T N"]:
+        """Minimise the 3D-Var cost of one point-observation sample."""
+        if isinstance(self.obs_op, FieldPointObs):
+            param = self.parameterization
+            if not isinstance(param, NeuralFieldParameterization):
+                raise TypeError(
+                    "FieldPointObs evaluates a field: it needs "
+                    "parameterization=NeuralFieldParameterization(...)."
+                )
+            field_op = self.obs_op
+
+            def control_obs_cost(theta: Any) -> Float[Array, ""]:
+                return point_obs_cost(field_op(param.as_field(theta), batch), batch)
+
+            return self._solve(x_b, None, control_obs_cost=control_obs_cost)
+
+        def obs_cost(x: Float[Array, "T N"]) -> Float[Array, ""]:
+            return grid_point_obs_cost(self.obs_op, x, batch)
+
+        return self._solve(x_b, obs_cost)
+
+    def _solve(
+        self,
+        x_b: Float[Array, "T N"],
+        obs_cost: Callable[[Array], Array] | None,
+        *,
+        control_obs_cost: Callable[[Any], Array] | None = None,
+    ) -> Float[Array, "T N"]:
+        """Minimise background (or penalty) plus ``obs_cost`` from ``x_b``."""
         param = self.parameterization
         if param is not None:
             # J(θ) = pen(θ) + J_o(ψ(θ)): the penalty replaces the B term.
@@ -156,6 +213,9 @@ class ThreeDVar(eqx.Module):
                 return param.decode(theta).reshape(x_b.shape)
 
             def param_cost(theta: Any, _args: Any) -> Float[Array, ""]:
+                if control_obs_cost is not None:
+                    return param.penalty(theta) + control_obs_cost(theta)
+                assert obs_cost is not None
                 return param.penalty(theta) + obs_cost(decode(theta))
 
             theta_star = minimise(
@@ -176,6 +236,7 @@ class ThreeDVar(eqx.Module):
                 solver=lx.CG(atol=1e-6, rtol=1e-6),
             ).value
             j_bg = 0.5 * jnp.sum(dx * B_inv_dx)
+            assert obs_cost is not None
             return j_bg + obs_cost(x)
 
         x_star = minimise(

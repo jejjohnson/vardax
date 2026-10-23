@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, Float
+from jaxtyping import Array, Bool, Float, Int
 
 
 class Batch1D(eqx.Module):
@@ -53,6 +53,56 @@ class Batch2DMultivar(eqx.Module):
     input: Float[Array, "B T C H W"]
     mask: Float[Array, "B T C H W"]
     target: Float[Array, "B T C H W"] | None = None
+
+
+class PointObsBatch(eqx.Module):
+    r"""Scattered point observations, padded to a fixed count.
+
+    Observation $i$ has coordinates $s_i$, value $y_i$, error standard
+    deviation $\sigma_i$ and a validity flag $m_i$; padding rows have
+    ``valid=False`` and contribute exactly nothing to the cost or its
+    gradient, whatever their other fields hold (``NaN`` included). The
+    observation cost is
+    $J_o = \tfrac12 \sum_i m_i (y_i - \mathcal H(x)(s_i, t_i))^2 / \sigma_i^2$
+    ([`point_obs_cost`][vardax.point_obs_cost]).
+
+    Every array field may carry a leading batch axis ``B`` (``coords``
+    ``(B, N_obs, D)`` and so on); the models then return one analysis per
+    sample, and without it a single analysis.
+
+    Attributes:
+        coords: Coordinates ``(N_obs, D)``, e.g. ``(x,)``, ``(y, x)`` or
+            ``(lon, lat, t)``.
+        values: Observed values ``(N_obs,)``.
+        sigma: Per-observation error standard deviations ``(N_obs,)``.
+        valid: ``False`` on padding rows ``(N_obs,)``.
+        time_index: Window step of each observation ``(N_obs,)``, for
+            gridded-state models (the trajectory state it is compared
+            with). ``None``: every observation is at step 0.
+        n_times: Number of states in the assimilation window (rollout
+            steps + 1) for the 4D-Var models; required with
+            ``time_index``. Static. ``None`` means 1.
+
+    Examples:
+        >>> import jax.numpy as jnp, vardax
+        >>> batch = vardax.PointObsBatch(
+        ...     coords=jnp.array([[0.5], [2.0], [0.0]]),
+        ...     values=jnp.array([1.0, 2.0, 0.0]),
+        ...     sigma=jnp.ones(3),
+        ...     valid=jnp.array([True, True, False]),
+        ...     time_index=jnp.array([0, 3, 0]),
+        ...     n_times=4,
+        ... )
+        >>> batch.values.shape
+        (3,)
+    """
+
+    coords: Float[Array, "N_obs D"]
+    values: Float[Array, " N_obs"]
+    sigma: Float[Array, " N_obs"]
+    valid: Bool[Array, " N_obs"]
+    time_index: Int[Array, " N_obs"] | None = None
+    n_times: int | None = eqx.field(static=True, default=None)
 
 
 class LSTMState1D(eqx.Module):

@@ -24,6 +24,12 @@ Public surface:
   ``{instrument_id: InstrumentSpec}``
 - [`InstrumentSpec`][vardax.InstrumentSpec] —
   ``(obs_op, mask, R_op, id)`` tuple
+- [`GridPointObs`][vardax.GridPointObs] — gridded state or trajectory at
+  scattered, time-stamped points ([`PointObsBatch`][vardax.PointObsBatch])
+- [`FieldPointObs`][vardax.FieldPointObs] — a callable field at scattered
+  points
+- [`point_obs_cost`][vardax.point_obs_cost] — the masked,
+  $\sigma$-weighted cost of a point batch
 """
 
 from __future__ import annotations
@@ -37,9 +43,12 @@ from .multi_instrument import (
     InstrumentSpec,
     MultiInstrumentFusion,
 )
+from .point import FieldPointObs, GridPointObs, point_obs_cost
 
 __all__ = [
     "AveragingKernel",
+    "FieldPointObs",
+    "GridPointObs",
     "InstrumentRegistry",
     "InstrumentSpec",
     "InterpObs",
@@ -47,4 +56,5 @@ __all__ = [
     "MaskedIdentity",
     "MultiInstrumentFusion",
     "interp_obs_from_coords",
+    "point_obs_cost",
 ]

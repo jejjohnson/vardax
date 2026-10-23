@@ -19,6 +19,7 @@ adjoint=...)`` (per-step rollouts use plain reverse-mode autodiff).
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 import equinox as eqx
@@ -28,8 +29,14 @@ from jaxtyping import Array, Float
 import lineax as lx
 import optimistix as optx
 
-from vardax._src._types import Batch1D
+from vardax._src._types import Batch1D, PointObsBatch
 from vardax._src.minimisers import minimise
+from vardax._src.obs_operators.point import (
+    check_point_obs_cov,
+    grid_point_obs_cost,
+    map_point_batch,
+    window_steps,
+)
 from vardax._src.protocols import Minimiser, StateParameterization
 
 
@@ -136,8 +143,28 @@ class StrongFourDVar(eqx.Module):
         # Prepend x_0 so the trajectory has length T+1.
         return jnp.concatenate([x_0[None, :], trajectory], axis=0)
 
-    def __call__(self, batch: Batch1D) -> Float[Array, "B N"]:
-        """Strong-4DVar analysis: minimise over $x_0$."""
+    def __call__(self, batch: Batch1D | PointObsBatch) -> Float[Array, "B N"]:
+        """Strong-4DVar analysis: minimise over $x_0$.
+
+        A [`PointObsBatch`][vardax.PointObsBatch] needs
+        ``obs_op=GridPointObs(...)``: observation $i$ is compared with the
+        trajectory state $x_{\tau_i}$, $\tau_i$ = ``time_index[i]``, over a
+        window of ``n_times`` states, with error variance $\\sigma_i^2$
+        (``obs_cov_op`` must be ``None`` or an identity,
+        else ``ValueError``).
+        """
+        if isinstance(batch, PointObsBatch):
+            check_point_obs_cov(self.obs_cov_op)
+            n_steps = window_steps(batch)
+
+            def _one_points(b: PointObsBatch) -> Float[Array, N]:  # ty:ignore[unresolved-reference]
+                def obs_cost(x_0: Float[Array, N]) -> Float[Array, ""]:  # ty:ignore[unresolved-reference]
+                    trajectory = self._rollout(x_0, n_steps=n_steps)
+                    return grid_point_obs_cost(self.obs_op, trajectory, b)
+
+                return self._solve(obs_cost)
+
+            return map_point_batch(_one_points, batch)
 
         T = batch.input.shape[1] - 1  # rollout steps (input has T+1 timesteps)
 
@@ -166,44 +193,51 @@ class StrongFourDVar(eqx.Module):
                 per_step_costs = jax.vmap(_per_step)(trajectory, input_i, mask_i)
                 return jnp.sum(per_step_costs)
 
-            param = self.parameterization
-            if param is not None:
-                # x_0 = ψ(θ); J(θ) = pen(θ) + J_o(M(ψ(θ))).
-                def decode(theta: Any) -> Float[Array, N]:  # ty:ignore[unresolved-reference]
-                    return param.decode(theta).reshape(self.prior_mean.shape)
+            return self._solve(obs_cost)
 
-                def param_cost(theta: Any, _args: Any) -> Float[Array, ""]:
-                    return param.penalty(theta) + obs_cost(decode(theta))
+        return jax.vmap(_one)(batch.input, batch.mask)
 
-                theta_star = minimise(
-                    self.minimiser,
-                    param_cost,
-                    param.init_control(),
-                    adjoint=self.minimiser_adjoint,
-                    max_steps=self.max_steps,
-                )
-                return decode(theta_star)
+    def _solve(
+        self,
+        obs_cost: Callable[[Array], Array],
+    ) -> Float[Array, N]:  # ty:ignore[unresolved-reference]
+        """Minimise background (or penalty) plus ``obs_cost(x_0)``."""
+        param = self.parameterization
+        if param is not None:
+            # x_0 = ψ(θ); J(θ) = pen(θ) + J_o(M(ψ(θ))).
+            def decode(theta: Any) -> Float[Array, N]:  # ty:ignore[unresolved-reference]
+                return param.decode(theta).reshape(self.prior_mean.shape)
 
-            def cost(x_0: Float[Array, N], _args: Any) -> Float[Array, ""]:  # ty:ignore[unresolved-reference]
-                # Background term
-                dx = x_0 - self.prior_mean
-                B_inv_dx = lx.linear_solve(
-                    self.prior_cov_op,
-                    dx,
-                    solver=lx.CG(atol=1e-6, rtol=1e-6),
-                ).value
-                j_bg = 0.5 * jnp.sum(dx * B_inv_dx)
-                return j_bg + obs_cost(x_0)
+            def param_cost(theta: Any, _args: Any) -> Float[Array, ""]:
+                return param.penalty(theta) + obs_cost(decode(theta))
 
-            return minimise(
+            theta_star = minimise(
                 self.minimiser,
-                cost,
-                self.prior_mean,
+                param_cost,
+                param.init_control(),
                 adjoint=self.minimiser_adjoint,
                 max_steps=self.max_steps,
             )
+            return decode(theta_star)
 
-        return jax.vmap(_one)(batch.input, batch.mask)
+        def cost(x_0: Float[Array, N], _args: Any) -> Float[Array, ""]:  # ty:ignore[unresolved-reference]
+            # Background term
+            dx = x_0 - self.prior_mean
+            B_inv_dx = lx.linear_solve(
+                self.prior_cov_op,
+                dx,
+                solver=lx.CG(atol=1e-6, rtol=1e-6),
+            ).value
+            j_bg = 0.5 * jnp.sum(dx * B_inv_dx)
+            return j_bg + obs_cost(x_0)
+
+        return minimise(
+            self.minimiser,
+            cost,
+            self.prior_mean,
+            adjoint=self.minimiser_adjoint,
+            max_steps=self.max_steps,
+        )
 
     def as_analysis_step(self) -> _StrongFourDVarAnalysisStep:
         return _StrongFourDVarAnalysisStep(self)

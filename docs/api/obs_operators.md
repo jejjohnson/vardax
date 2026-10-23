@@ -23,6 +23,23 @@ of retrieval products such as atmospheric-composition column averages.
       show_root_toc_entry: false
       members: [LinearObs, MaskedIdentity, AveragingKernel, InterpObs, interp_obs_from_coords]
 
+## Scattered point observations
+
+Observations at arbitrary coordinates and times, carried by a
+[`PointObsBatch`](protocols.md) with per-observation $\sigma_i$ and a
+`valid` mask for padding. `GridPointObs` evaluates a gridded state or
+trajectory at the points (linear / bilinear in space, at each
+observation's `time_index`); `FieldPointObs` evaluates a callable field;
+`point_obs_cost` is the masked, $\sigma$-weighted cost, exactly zero in
+value and gradient on padding rows. The classical models dispatch on
+the batch type.
+
+::: vardax
+    options:
+      show_root_heading: false
+      show_root_toc_entry: false
+      members: [GridPointObs, FieldPointObs, point_obs_cost]
+
 ## Multi-instrument fusion
 
 Assimilating several instruments at once: each instrument is described by an

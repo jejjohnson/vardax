@@ -20,6 +20,7 @@ from vardax._src._types import (
     Batch2DMultivar,
     LSTMState1D,
     LSTMState2D,
+    PointObsBatch,
 )
 from vardax._src.adjoints import (
     ImplicitAdjoint,
@@ -83,6 +84,8 @@ from vardax._src.models import (
 )
 from vardax._src.obs_operators import (
     AveragingKernel,
+    FieldPointObs,
+    GridPointObs,
     InstrumentRegistry,
     InstrumentSpec,
     InterpObs,
@@ -90,6 +93,7 @@ from vardax._src.obs_operators import (
     MaskedIdentity,
     MultiInstrumentFusion,
     interp_obs_from_coords,
+    point_obs_cost,
 )
 from vardax._src.parameterization import (
     LinearParameterization,
@@ -178,6 +182,7 @@ __all__ = [
     "Batch2DMultivar",
     "LSTMState1D",
     "LSTMState2D",
+    "PointObsBatch",
     # Protocols (pipekit-cycle + vardax-specific)
     "AnalysisStep",
     "CostFunction",
@@ -211,6 +216,9 @@ __all__ = [
     "MaskedIdentity",
     "MultiInstrumentFusion",
     "interp_obs_from_coords",
+    "FieldPointObs",
+    "GridPointObs",
+    "point_obs_cost",
     # Posterior adapters (Decision D10)
     "EnsembleCovariance",
     "GaussNewtonHessian",
