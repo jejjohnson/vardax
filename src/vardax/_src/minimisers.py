@@ -194,8 +194,11 @@ class OptaxMinimiser(eqx.Module):
 
     - ``max_steps`` steps;
     - a small gradient, $\lVert g_k \rVert_2 \le \mathrm{gtol}$;
-    - a small step, $\lVert u_k \rVert_2 \le \mathrm{atol} +
-      \mathrm{rtol}\,\lVert \theta_k \rVert_2$;
+    - ``step_patience`` consecutive small steps,
+      $\lVert u_k \rVert_2 \le \mathrm{atol} +
+      \mathrm{rtol}\,\lVert \theta_k \rVert_2$ (one small step is not
+      enough: a learning-rate schedule starting at zero gives a zero first
+      update);
     - ``patience`` consecutive steps whose cost exceeds the lowest cost
       seen by more than float round-off.
 
@@ -204,14 +207,16 @@ class OptaxMinimiser(eqx.Module):
     before $\theta$ converges. For the same reason a step counts as an
     improvement when $J_k \le J_\text{best} + 8\,\varepsilon\,|J_\text{best}|$
     ($\varepsilon$ the machine epsilon of $J$), so a cost that is flat to
-    round-off does not exhaust the patience. The loop returns the most
-    recent iterate that improved in this sense.
+    round-off does not exhaust the patience. At a small gradient the loop
+    stops *before* applying the update, so stored momentum cannot carry a
+    stationary iterate away. It returns the best iterate seen: the lowest
+    cost, with ties within round-off broken by the smaller gradient norm.
 
     With ``polish``, a second loop of at most ``polish_steps`` steps of that
     optimiser (for example ``optax.lbfgs()``) starts from there, with its
     own, tight, tolerances (``polish_gtol``, ``polish_rtol``,
     ``polish_atol``, ``polish_patience``; by default it stops only on
-    ``polish_steps`` or an exactly zero step). The optimisers are called
+    ``polish_steps`` or ``step_patience`` exactly zero steps). The optimisers are called
     with the extra arguments ``value``, ``grad`` and ``value_fn``, so
     line-search optimisers such as ``optax.lbfgs`` work unchanged.
 
@@ -226,7 +231,8 @@ class OptaxMinimiser(eqx.Module):
         gtol: Gradient-norm tolerance of the main loop; ``0`` disables it.
         rtol: Relative step tolerance of the main loop.
         atol: Absolute step tolerance of the main loop; with ``rtol = atol
-            = 0`` only an exactly zero step stops the loop.
+            = 0`` only exactly zero steps stop the loop.
+        step_patience: Consecutive small steps needed to stop (both loops).
         patience: Steps without improvement before stopping; ``None``
             disables the test.
         polish: Optional second optimiser, run after the main loop.
@@ -263,6 +269,7 @@ class OptaxMinimiser(eqx.Module):
     gtol: float = eqx.field(static=True)
     rtol: float = eqx.field(static=True)
     atol: float = eqx.field(static=True)
+    step_patience: int = eqx.field(static=True)
     patience: int | None = eqx.field(static=True)
     polish: optax.GradientTransformation | None = eqx.field(static=True)
     polish_steps: int = eqx.field(static=True)
@@ -279,6 +286,7 @@ class OptaxMinimiser(eqx.Module):
         gtol: float = 1e-6,
         rtol: float = 0.0,
         atol: float = 0.0,
+        step_patience: int = 3,
         patience: int | None = 200,
         polish: optax.GradientTransformation | None = None,
         polish_steps: int = 200,
@@ -287,7 +295,11 @@ class OptaxMinimiser(eqx.Module):
         polish_atol: float = 0.0,
         polish_patience: int | None = None,
     ) -> None:
-        for name, steps in (("max_steps", max_steps), ("polish_steps", polish_steps)):
+        for name, steps in (
+            ("max_steps", max_steps),
+            ("polish_steps", polish_steps),
+            ("step_patience", step_patience),
+        ):
             if steps < 1:
                 raise ValueError(f"{name} must be >= 1, got {steps}.")
         for name, value in (
@@ -311,6 +323,7 @@ class OptaxMinimiser(eqx.Module):
         self.gtol = gtol
         self.rtol = rtol
         self.atol = atol
+        self.step_patience = step_patience
         self.patience = patience
         self.polish = polish
         self.polish_steps = polish_steps
@@ -370,22 +383,23 @@ class OptaxMinimiser(eqx.Module):
 
 
 def _cost_and_grad_norm(cost_fn, value, batch):
-    """$J(\\theta^\\star)$ (differentiable in the cost's parameters) and $\\lVert g \\rVert$.
+    """$J(\\theta^\\star)$ (differentiable to all orders) and $\\lVert g \\rVert$.
 
-    $\\theta^\\star$ enters through ``stop_gradient``: at a minimum
-    $\\partial J/\\partial\\theta = 0$, so the total derivative of $J^\\star$
-    is the partial one (envelope theorem), and this avoids
-    differentiating through the minimiser for the cost.
+    The cost is evaluated at ``value`` itself, which carries the adjoint's
+    derivative of $\\theta^\\star$: the first derivative is then the
+    envelope theorem's ($\\partial J/\\partial\\theta = 0$ at the minimum),
+    and higher derivatives keep the implicit dependence of $\\theta^\\star$
+    on the parameters. The gradient norm is a diagnostic and is detached.
     """
+    cost = cost_fn(value, batch)
     x_star = jax.lax.stop_gradient(value)
-    cost = cost_fn(x_star, batch)
     grad = jax.grad(cost_fn)(x_star, batch)
     return cost, jax.lax.stop_gradient(_tree_l2_norm(grad))
 
 
 def _optax_loop(fn, batch, x0, optimizer, max_steps, tols, patience, while_loop):
-    """One early-stopped optimisation loop; returns (iterate, steps taken)."""
-    gtol, rtol, atol = tols
+    """One early-stopped optimisation loop; returns (best iterate, steps taken)."""
+    gtol, rtol, atol, step_patience = tols
     optimizer = optax.with_extra_args_support(optimizer)
 
     def value_fn(x):
@@ -395,50 +409,81 @@ def _optax_loop(fn, batch, x0, optimizer, max_steps, tols, patience, while_loop)
     inf = jnp.asarray(jnp.inf, dtype=f_dtype)
     eps = jnp.finfo(f_dtype).eps
 
-    def improves(f, best_f):
-        # Not worse than the best by more than float round-off.
-        slack = jnp.where(jnp.isfinite(best_f), 8 * eps * jnp.abs(best_f), 0.0)
-        return f <= best_f + slack
+    def slack(ref):
+        return jnp.where(jnp.isfinite(ref), 8 * eps * jnp.abs(ref), 0.0)
+
+    def better(f, g_norm, best_f, best_g):
+        # Lower cost beyond round-off, or a tie within round-off broken by
+        # the gradient norm (closer to stationary).
+        s = slack(best_f)
+        return (f < best_f - s) | ((f <= best_f + s) & (g_norm <= best_g))
+
+    def select(take, a, b):
+        return jtu.tree_map(lambda u, v: jnp.where(take, u, v), a, b)
 
     def cond(carry):
-        step, _, _, _, _, since_best, converged = carry
+        step, _, _, _, _, _, _, since_best, _, converged = carry
         keep = (step < max_steps) & ~converged
         if patience is not None:
             keep = keep & (since_best < patience)
         return keep
 
     def body(carry):
-        step, x, opt_state, best_x, best_f, since_best, _ = carry
+        (step, x, opt_state, best_x, best_f, best_g, min_f, since_best, n_small, _) = (
+            carry
+        )
         f, g = jax.value_and_grad(fn)(x, batch)
+        g_norm = _tree_l2_norm(g)
+        take = better(f, g_norm, best_f, best_g)
+        best_x = select(take, x, best_x)
+        best_f = jnp.where(take, f, best_f)
+        best_g = jnp.where(take, g_norm, best_g)
+        # Patience: a step counts unless its cost is worse than the lowest
+        # seen by more than round-off.
+        since_best = jnp.where(f <= min_f + slack(min_f), 0, since_best + 1)
+        min_f = jnp.minimum(f, min_f)
+        small_grad = g_norm <= gtol
         updates, opt_state = optimizer.update(
             g, opt_state, x, value=f, grad=g, value_fn=value_fn
         )
-        x_new = optax.apply_updates(x, updates)
-        improved = improves(f, best_f)
-        best_x = jtu.tree_map(lambda a, b: jnp.where(improved, a, b), x, best_x)
-        best_f = jnp.minimum(f, best_f)
-        since_best = jnp.where(improved, 0, since_best + 1)
-        small_grad = _tree_l2_norm(g) <= gtol
         small_step = _tree_l2_norm(updates) <= atol + rtol * _tree_l2_norm(x)
-        converged = small_grad | small_step
-        return (step + 1, x_new, opt_state, best_x, best_f, since_best, converged)
+        n_small = jnp.where(small_step, n_small + 1, 0)
+        # A stationary iterate is final: do not apply the (momentum) update.
+        x_new = select(small_grad, x, optax.apply_updates(x, updates))
+        converged = small_grad | (n_small >= step_patience)
+        return (
+            step + 1,
+            x_new,
+            opt_state,
+            best_x,
+            best_f,
+            best_g,
+            min_f,
+            since_best,
+            n_small,
+            converged,
+        )
 
+    zero = jnp.asarray(0, dtype=jnp.int32)
     init = (
-        jnp.asarray(0, dtype=jnp.int32),
+        zero,
         x0,
         optimizer.init(x0),
         x0,
         inf,
-        jnp.asarray(0, dtype=jnp.int32),
+        inf,
+        inf,
+        zero,
+        zero,
         jnp.asarray(False),
     )
-    step, x_last, _, best_x, best_f, _, _ = while_loop(
+    step, x_last, _, best_x, best_f, best_g, *_ = while_loop(
         cond, body, init, max_steps=max_steps
     )
-    # The last update was never evaluated: keep it unless it is worse.
-    take_last = improves(fn(x_last, batch), best_f)
-    x_star = jtu.tree_map(lambda a, b: jnp.where(take_last, a, b), x_last, best_x)
-    return x_star, step
+    # The last iterate may not have been evaluated: keep it if it is better.
+    f_last, g_last = jax.value_and_grad(fn)(x_last, batch)
+    take_last = better(f_last, _tree_l2_norm(g_last), best_f, best_g)
+    return select(take_last, x_last, best_x), step
 
 
 def _optax_primal(inputs):
@@ -449,7 +494,7 @@ def _optax_primal(inputs):
         x0,
         minimiser.optimizer,
         minimiser.max_steps,
-        (minimiser.gtol, minimiser.rtol, minimiser.atol),
+        (minimiser.gtol, minimiser.rtol, minimiser.atol, minimiser.step_patience),
         minimiser.patience,
         while_loop,
     )
@@ -460,7 +505,12 @@ def _optax_primal(inputs):
             x,
             minimiser.polish,
             minimiser.polish_steps,
-            (minimiser.polish_gtol, minimiser.polish_rtol, minimiser.polish_atol),
+            (
+                minimiser.polish_gtol,
+                minimiser.polish_rtol,
+                minimiser.polish_atol,
+                minimiser.step_patience,
+            ),
             minimiser.polish_patience,
             while_loop,
         )
