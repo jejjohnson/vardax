@@ -29,6 +29,8 @@ import lineax as lx
 import optimistix as optx
 
 from vardax._src._types import Batch1D
+from vardax._src.minimisers import minimise
+from vardax._src.protocols import Minimiser
 
 
 class StrongFourDVar(eqx.Module):
@@ -43,13 +45,16 @@ class StrongFourDVar(eqx.Module):
         prior_cov_op: $B$.
         obs_cov_op: $R$.
         minimiser: ``optimistix.AbstractMinimiser`` for the outer
-            optimisation over $x_0$.
+            optimisation over $x_0$ (default ``optx.BFGS(rtol=1e-6,
+            atol=1e-6)``), or a [`Minimiser`][vardax.Minimiser] such as
+            [`OptaxMinimiser`][vardax.OptaxMinimiser] for a large control.
         minimiser_adjoint: ``optimistix.AbstractAdjoint`` for
             differentiating through the minimum.
         forward_adjoint: ``diffrax.AbstractAdjoint``-like — currently
             stored as a tag, threaded through if the forward delegates
             to ``diffrax``. Default ``None`` (use forward's own).
-        max_steps: Iteration cap on the outer solver.
+        max_steps: Iteration cap on the outer solver when ``minimiser``
+            is an ``optimistix`` solver; a vardax `Minimiser` keeps its own.
 
     Examples:
         Trivial dynamics ($M_t(x) = x$) and a single timestep reduce
@@ -80,7 +85,7 @@ class StrongFourDVar(eqx.Module):
     prior_mean: Float[Array, N]  # ty:ignore[unresolved-reference]
     prior_cov_op: lx.AbstractLinearOperator
     obs_cov_op: lx.AbstractLinearOperator
-    minimiser: optx.AbstractMinimiser = eqx.field(static=True)
+    minimiser: optx.AbstractMinimiser | Minimiser = eqx.field(static=True)
     minimiser_adjoint: optx.AbstractAdjoint = eqx.field(static=True)
     forward_adjoint: Any = eqx.field(static=True)
     max_steps: int = eqx.field(static=True, default=200)
@@ -92,7 +97,7 @@ class StrongFourDVar(eqx.Module):
         prior_mean: Float[Array, N],  # ty:ignore[unresolved-reference]
         prior_cov_op: lx.AbstractLinearOperator,
         obs_cov_op: lx.AbstractLinearOperator,
-        minimiser: optx.AbstractMinimiser | None = None,
+        minimiser: optx.AbstractMinimiser | Minimiser | None = None,
         minimiser_adjoint: optx.AbstractAdjoint | None = None,
         forward_adjoint: Any = None,
         max_steps: int = 200,
@@ -162,16 +167,13 @@ class StrongFourDVar(eqx.Module):
                 j_obs = jnp.sum(per_step_costs)
                 return j_bg + j_obs
 
-            result = optx.minimise(
-                fn=cost,
-                solver=self.minimiser,
-                y0=self.prior_mean,
-                args=None,
-                max_steps=self.max_steps,
+            return minimise(
+                self.minimiser,
+                cost,
+                self.prior_mean,
                 adjoint=self.minimiser_adjoint,
-                throw=False,
+                max_steps=self.max_steps,
             )
-            return result.value
 
         return jax.vmap(_one)(batch.input, batch.mask)
 

@@ -30,7 +30,9 @@ import lineax as lx
 import optimistix as optx
 
 from vardax._src._types import Batch1D
+from vardax._src.minimisers import minimise
 from vardax._src.models._analysis_step import analyse_forecast
+from vardax._src.protocols import Minimiser
 
 
 class ThreeDVar(eqx.Module):
@@ -42,13 +44,16 @@ class ThreeDVar(eqx.Module):
         prior_cov_op: $B$. ``lineax.AbstractLinearOperator``.
         obs_cov_op: $R$. ``lineax.AbstractLinearOperator``.
         minimiser: ``optimistix.AbstractMinimiser`` for the inner
-            iteration. Default ``optimistix.BFGS(rtol=1e-6, atol=1e-6)``.
+            iteration (default ``optimistix.BFGS(rtol=1e-6, atol=1e-6)``),
+            or a [`Minimiser`][vardax.Minimiser] such as
+            [`OptaxMinimiser`][vardax.OptaxMinimiser].
         minimiser_adjoint: ``optimistix.AbstractAdjoint`` for
             differentiating *through* the minimum (used only if the
             ``ThreeDVar`` analysis is itself nested inside a larger
             training loop). Default ``ImplicitAdjoint`` — exact at the
             optimum.
-        max_steps: Iteration cap on the inner solver.
+        max_steps: Iteration cap on the inner solver when ``minimiser``
+            is an ``optimistix`` solver; a vardax `Minimiser` keeps its own.
 
     Examples:
         With $B = R = I$, identity $H$ and everything observed, the
@@ -74,7 +79,7 @@ class ThreeDVar(eqx.Module):
     prior_mean: Float[Array, "T N"]
     prior_cov_op: lx.AbstractLinearOperator
     obs_cov_op: lx.AbstractLinearOperator
-    minimiser: optx.AbstractMinimiser = eqx.field(static=True)
+    minimiser: optx.AbstractMinimiser | Minimiser = eqx.field(static=True)
     minimiser_adjoint: optx.AbstractAdjoint = eqx.field(static=True)
     max_steps: int = eqx.field(static=True, default=200)
 
@@ -84,7 +89,7 @@ class ThreeDVar(eqx.Module):
         prior_mean: Float[Array, "T N"],
         prior_cov_op: lx.AbstractLinearOperator,
         obs_cov_op: lx.AbstractLinearOperator,
-        minimiser: optx.AbstractMinimiser | None = None,
+        minimiser: optx.AbstractMinimiser | Minimiser | None = None,
         minimiser_adjoint: optx.AbstractAdjoint | None = None,
         max_steps: int = 200,
     ) -> None:
@@ -142,16 +147,14 @@ class ThreeDVar(eqx.Module):
             j_obs = 0.5 * jnp.sum(residual * R_inv_r)
             return j_bg + j_obs
 
-        result = optx.minimise(
-            fn=cost,
-            solver=self.minimiser,
-            y0=x_b,
-            args=None,
-            max_steps=self.max_steps,
+        x_star = minimise(
+            self.minimiser,
+            cost,
+            x_b,
             adjoint=self.minimiser_adjoint,
-            throw=False,
+            max_steps=self.max_steps,
         )
-        return result.value
+        return x_star
 
     def as_analysis_step(self) -> _ThreeDVarAnalysisStep:
         """Adapt to ``pipekit_cycle.AnalysisStep`` (Decision D8)."""

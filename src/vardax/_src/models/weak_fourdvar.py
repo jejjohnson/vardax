@@ -32,6 +32,8 @@ import lineax as lx
 import optimistix as optx
 
 from vardax._src._types import Batch1D
+from vardax._src.minimisers import minimise
+from vardax._src.protocols import Minimiser
 
 
 class WeakFourDVar(eqx.Module):
@@ -84,7 +86,7 @@ class WeakFourDVar(eqx.Module):
     prior_cov_op: lx.AbstractLinearOperator
     obs_cov_op: lx.AbstractLinearOperator
     model_err_cov_op: lx.AbstractLinearOperator
-    minimiser: optx.AbstractMinimiser = eqx.field(static=True)
+    minimiser: optx.AbstractMinimiser | Minimiser = eqx.field(static=True)
     minimiser_adjoint: optx.AbstractAdjoint = eqx.field(static=True)
     max_steps: int = eqx.field(static=True, default=200)
 
@@ -96,7 +98,7 @@ class WeakFourDVar(eqx.Module):
         prior_cov_op: lx.AbstractLinearOperator,
         obs_cov_op: lx.AbstractLinearOperator,
         model_err_cov_op: lx.AbstractLinearOperator,
-        minimiser: optx.AbstractMinimiser | None = None,
+        minimiser: optx.AbstractMinimiser | Minimiser | None = None,
         minimiser_adjoint: optx.AbstractAdjoint | None = None,
         max_steps: int = 200,
     ) -> None:
@@ -201,16 +203,14 @@ class WeakFourDVar(eqx.Module):
             init_etas = jnp.zeros((T, N))
             y0 = jnp.concatenate([self.prior_mean[None, :], init_etas], axis=0)
 
-            result = optx.minimise(
-                fn=cost,
-                solver=self.minimiser,
-                y0=y0,
-                args=None,
-                max_steps=self.max_steps,
+            x_star = minimise(
+                self.minimiser,
+                cost,
+                y0,
                 adjoint=self.minimiser_adjoint,
-                throw=False,
+                max_steps=self.max_steps,
             )
-            control_star = result.value
+            control_star = x_star
             return control_star[0], control_star[1:]
 
         x0_star, eta_star = jax.vmap(_one)(batch.input, batch.mask)

@@ -13,9 +13,8 @@ vardax-specific protocols that ``pipekit-cycle`` doesn't name:
   $J: (x, \text{batch}) \mapsto \text{scalar}$
 - [`PosteriorAdapter`][vardax.PosteriorAdapter] — analysis output →
   [`Posterior`][vardax.Posterior]
-- [`Minimiser`][vardax.Minimiser] — wraps
-  ``optimistix.AbstractMinimiser`` over vardax's cost-function
-  interface
+- [`Minimiser`][vardax.Minimiser] — minimises a cost over any pytree
+  control (``optimistix`` solvers or first-order ``optax`` optimisers)
 - [`ReducedBasis`][vardax.ReducedBasis] —
   $X \mapsto \Phi(t) X$ reduced-basis control-vector operator
 
@@ -158,12 +157,15 @@ class PosteriorAdapter(Protocol):
 
 @runtime_checkable
 class Minimiser(Protocol):
-    """Wrapper protocol around ``optimistix.AbstractMinimiser``.
+    """Minimises a cost ``cost_fn(x, batch)`` from an initial guess.
 
     A `Minimiser` knows how to minimise a `CostFunction` from an
-    initial guess ``x0`` against a batch. Implementations adapt
-    optimistix solvers (GaussNewton, BFGS, NonlinearCG, …) to vardax's
-    cost-function calling convention.
+    initial guess ``x0`` (any pytree) against a batch. Implementations:
+    [`OptimistixMinimiser`][vardax.OptimistixMinimiser] (optimistix
+    solvers such as BFGS, GaussNewton, NonlinearCG) and
+    [`OptaxMinimiser`][vardax.OptaxMinimiser] (first-order optax
+    optimisers with early stopping, for large controls). The classical
+    models accept either as ``minimiser=``.
 
     Members:
         ``__call__(cost_fn, x0, batch) -> x_star``
