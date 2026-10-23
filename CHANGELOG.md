@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.1.10](https://github.com/jejjohnson/vardax/compare/v0.1.9...v0.1.10) (2026-10-23)
+
+
+### Features
+
+* **costs:** add ResidualPenalty and reference PDE residuals ([#90](https://github.com/jejjohnson/vardax/issues/90)) ([777d04a](https://github.com/jejjohnson/vardax/commit/777d04a693bf2d230b31ff77d360f45df67d26fb))
+* **models:** add SpaceTimeFieldVar, neural-field 4d-var after oh 2025 ([#93](https://github.com/jejjohnson/vardax/issues/93)) ([6566976](https://github.com/jejjohnson/vardax/commit/65669767857f63383fd976c06d53ee0be32a590b))
+* **obs:** add PointObsBatch, GridPointObs, FieldPointObs and point batches in the models ([#92](https://github.com/jejjohnson/vardax/issues/92)) ([f7bd3e5](https://github.com/jejjohnson/vardax/commit/f7bd3e5142af9645dd342558f65e8550644ce82b))
+* **protocols:** add StateParameterization and parameterization= on the models ([#91](https://github.com/jejjohnson/vardax/issues/91)) ([d7572d3](https://github.com/jejjohnson/vardax/commit/d7572d390bf1fd78b73ac62e1742d9a3acb91219))
+* **solvers:** add OptaxMinimiser and minimiser= on the classical models ([#89](https://github.com/jejjohnson/vardax/issues/89)) ([a36e32c](https://github.com/jejjohnson/vardax/commit/a36e32cad841b07500facc22d64117ebd149e6da))
+
+
+### Bug Fixes
+
+* **cycle:** analyse around the forecast in the OI and 3D-Var analysis steps ([#77](https://github.com/jejjohnson/vardax/issues/77)) ([623fe69](https://github.com/jejjohnson/vardax/commit/623fe690efb332c03913213a271acf90c09f838b))
+
 ## [0.1.9](https://github.com/jejjohnson/vardax/compare/v0.1.8...v0.1.9) (2026-07-25)
 
 
