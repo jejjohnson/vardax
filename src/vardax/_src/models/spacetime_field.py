@@ -34,6 +34,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 from jaxtyping import Array, Float, Int, PRNGKeyArray, PyTree
+import numpy as np
 
 from vardax._src._types import PointObsBatch
 from vardax._src.costs import ResidualPenalty
@@ -44,10 +45,8 @@ from vardax._src.parameterization import NeuralFieldParameterization
 
 def _evaluate(field: Any, coords: Float[Array, "N P"]) -> Array:
     """``field`` at every row of ``coords``; a single channel is squeezed."""
-    values = jax.vmap(field)(coords)
-    if values.ndim == 2 and values.shape[1] == 1:
-        return values[:, 0]
-    return values
+    param = NeuralFieldParameterization(field, coords, 0.0)
+    return param.decode(param.init_control())
 
 
 class SpaceTimeFieldResult(eqx.Module):
@@ -133,6 +132,22 @@ class SpaceTimeFieldVar(eqx.Module):
     `vardax.examples` expect. The observed quantity is the field's single
     output (`FieldPointObs`); a multi-channel field needs its own wrapper.
 
+    Scale of $\lambda$: the observation term is a *sum* over the
+    $N_\text{obs}$ valid observations, each weighted by $1/\sigma_k^2$,
+    while the residual term is a *mean* over the collocation points. A
+    unit change of the field everywhere moves the first by about
+    $N_\text{obs}/(2\sigma^2)$ and the second by about $\lambda/2$ times
+    the squared residual it causes, so $\lambda$ trades off against
+    $N_\text{obs}/(2\sigma^2)$ and must grow with it to keep the same
+    balance (the advection test uses $\lambda = 10^3$ for 100
+    observations with $\sigma = 0.05$, where
+    $N_\text{obs}/(2\sigma^2) = 2 \times 10^4$).
+
+    The fit runs in one ``eqx.filter_jit``-compiled function of the model,
+    the observations and the key, so repeated analyses with new
+    observations (or a new ``weight_decay`` or penalty weight, both array
+    leaves) of the same shapes do not recompile.
+
     The penalty's collocation points are fixed during a fit: a
     ``ResidualPenalty`` with a ``sampler`` draws them once, from ``key``,
     at the start of the analysis, so the cost the minimiser sees is
@@ -147,7 +162,8 @@ class SpaceTimeFieldVar(eqx.Module):
             control.
         residual: Optional [`ResidualPenalty`][vardax.ResidualPenalty]
             (the physics term); ``None`` fits the observations alone.
-        weight_decay: $\alpha \ge 0$.
+        weight_decay: $\alpha \ge 0$, stored as a 0-d array (a leaf: it
+            can be changed without recompiling and differentiated).
         minimiser: An [`OptaxMinimiser`][vardax.OptaxMinimiser] (the
             default, Adam with learning rate $10^{-3}$) or an
             [`OptimistixMinimiser`][vardax.OptimistixMinimiser].
@@ -190,7 +206,7 @@ class SpaceTimeFieldVar(eqx.Module):
 
     field: Any
     residual: ResidualPenalty | None
-    weight_decay: float = eqx.field(static=True)
+    weight_decay: Float[Array, ""] = eqx.field(converter=jnp.asarray)
     minimiser: OptaxMinimiser | OptimistixMinimiser = eqx.field(static=True)
     filter_spec: Any = eqx.field(static=True)
     t0: float = eqx.field(static=True)
@@ -199,13 +215,21 @@ class SpaceTimeFieldVar(eqx.Module):
         self,
         field: Any,
         residual: ResidualPenalty | None = None,
-        weight_decay: float = 0.0,
+        weight_decay: float | Float[Array, ""] = 0.0,
         minimiser: OptaxMinimiser | OptimistixMinimiser | None = None,
         *,
         filter_spec: Any = eqx.is_inexact_array,
         t0: float = 0.0,
     ) -> None:
-        if weight_decay < 0:
+        if jnp.ndim(weight_decay) != 0:
+            raise ValueError(
+                f"weight_decay must be a scalar; got shape {jnp.shape(weight_decay)}."
+            )
+        try:
+            negative = float(weight_decay) < 0
+        except jax.errors.ConcretizationTypeError:
+            negative = False  # built under a transform: the sign is not known
+        if negative:
             raise ValueError(f"weight_decay must be >= 0, got {weight_decay}.")
         if residual is not None and not isinstance(residual, ResidualPenalty):
             raise TypeError(
@@ -228,13 +252,14 @@ class SpaceTimeFieldVar(eqx.Module):
 
     @property
     def _parameterization(self) -> NeuralFieldParameterization:
-        # Only the control split, `as_field` and the weight decay are used:
-        # the space-time field is evaluated at the observation and
-        # collocation points, never on a grid, so the grid is empty.
+        # Only the control split, `as_field` and the penalty are used: the
+        # space-time field is evaluated at the observation and collocation
+        # points, never on a grid, so the grid is empty. The weight is 1
+        # (penalty ½‖θ‖²): alpha multiplies it in the cost, as an array leaf.
         return NeuralFieldParameterization(
             self.field,
             jnp.zeros((0, 1)),
-            self.weight_decay,
+            1.0,
             filter_spec=self.filter_spec,
         )
 
@@ -285,31 +310,7 @@ class SpaceTimeFieldVar(eqx.Module):
                 f"(N_obs,), got shape {obs.values.shape}; use eqx.filter_vmap "
                 "for a batch."
             )
-        param = self._parameterization
-        residual = self._fixed_residual(key)
-        field_obs = FieldPointObs()
-
-        def cost(
-            theta: PyTree[Array],
-            args: tuple[PointObsBatch, ResidualPenalty | None],
-        ) -> Float[Array, ""]:
-            batch, res = args
-            field = param.as_field(theta)
-            # ½ Σₖ mₖ (yₖ - f_θ(tₖ, sₖ))² / σₖ² + alpha/2 ‖θ‖²: ()
-            j = point_obs_cost(field_obs(field, batch), batch) + param.penalty(theta)
-            if res is not None:
-                # λ/(2 N_c) Σⱼ ‖N[f_θ](cⱼ)‖²: ()
-                j = j + res(field)
-            return j
-
-        out = self.minimiser.run(cost, param.init_control(), (obs, residual))
-        return SpaceTimeFieldResult(
-            field=param.as_field(out.value),
-            t0=self.t0,
-            cost=out.cost,
-            grad_norm=out.grad_norm,
-            num_steps=out.num_steps,
-        )
+        return _fit(self, obs, key)
 
     def ensemble(
         self,
@@ -369,36 +370,133 @@ class SpaceTimeFieldVar(eqx.Module):
         state a ``ForwardModel`` steps on; without one it returns the
         [`SpaceTimeFieldResult`][vardax.SpaceTimeFieldResult] itself.
 
+        The collocation points are drawn **once**, here, from ``key``,
+        and reused by every cycle. ``pipekit_cycle.DACycle`` passes no
+        time: the times are the first column of each cycle's
+        ``PointObsBatch``, so they must be **window-relative**, in the
+        same window $[t_0, t_1]$ every cycle as the collocation points.
+        The step checks that (when the times are concrete): $t_0$ and the
+        valid observation times must lie in the collocation points' time
+        range, widened by 10 % on each side for the gaps a random draw
+        leaves at the ends.
+
         Args:
             grid: Spatial points $s_j$ of the returned state, ``(N, D)``,
                 or ``None``.
-            key: Collocation key for a penalty with a ``sampler``; every
-                call of the step uses it.
+            key: Collocation key; required when the penalty has a
+                ``sampler``.
 
         Returns:
             The adapter.
+
+        Raises:
+            ValueError: If ``grid`` is not 2-D, the penalty has a sampler
+                and ``key`` is ``None``, or $t_0$ is outside the
+                collocation window.
         """
         if grid is not None:
             grid = jnp.asarray(grid)
             if grid.ndim != 2:
                 raise ValueError(f"grid must be 2-D (N, D); got shape {grid.shape}.")
-        return _SpaceTimeFieldAnalysisStep(self, grid, key)
+        if self.residual is not None and self.residual.sampler is not None:
+            if key is None:
+                raise ValueError(
+                    "The residual penalty has a sampler: pass key= to "
+                    "as_analysis_step to draw the collocation points, which "
+                    "every cycle then reuses."
+                )
+        model = eqx.tree_at(
+            lambda m: m.residual,
+            self,
+            self._fixed_residual(key),
+            is_leaf=lambda x: x is None,
+        )
+        window = _collocation_window(model.residual)
+        if window is not None and not window[0] <= self.t0 <= window[1]:
+            raise ValueError(
+                f"t0 = {self.t0} is outside the collocation time window "
+                f"[{window[0]:.4g}, {window[1]:.4g}]: the initial condition "
+                "would be unconstrained by the physics."
+            )
+        return _SpaceTimeFieldAnalysisStep(model, grid)
+
+
+def _collocation_window(residual: ResidualPenalty | None) -> tuple[float, float] | None:
+    """Time range of fixed collocation points, widened by 10 % each side."""
+    if residual is None or residual.collocation is None:
+        return None
+    try:
+        times = np.asarray(residual.collocation[:, 0])
+    except (jax.errors.TracerArrayConversionError, jax.errors.ConcretizationTypeError):
+        return None
+    lo, hi = float(times.min()), float(times.max())
+    pad = 0.1 * (hi - lo)
+    return lo - pad, hi + pad
+
+
+def _cost(
+    theta: PyTree[Array],
+    args: tuple[
+        NeuralFieldParameterization,
+        PointObsBatch,
+        ResidualPenalty | None,
+        Float[Array, ""],
+    ],
+) -> Float[Array, ""]:
+    """$J(\theta)$; every input is a pytree argument (no closure)."""
+    param, obs, residual, alpha = args
+    field = param.as_field(theta)
+    # ½ Σₖ mₖ (yₖ - f_θ(tₖ, sₖ))² / σₖ² + alpha ½‖θ‖²: ()
+    j = point_obs_cost(FieldPointObs()(field, obs), obs) + alpha * param.penalty(theta)
+    if residual is not None:
+        # λ/(2 N_c) Σⱼ ‖N[f_θ](cⱼ)‖²: ()
+        j = j + residual(field)
+    return j
+
+
+@eqx.filter_jit
+def _fit(
+    model: SpaceTimeFieldVar, obs: PointObsBatch, key: PRNGKeyArray | None
+) -> SpaceTimeFieldResult:
+    """Fit ``model`` to one sample: compiled once per model structure and shapes."""
+    param = model._parameterization
+    residual = model._fixed_residual(key)
+    out = model.minimiser.run(
+        _cost, param.init_control(), (param, obs, residual, model.weight_decay)
+    )
+    return SpaceTimeFieldResult(
+        field=param.as_field(out.value),
+        t0=model.t0,
+        cost=out.cost,
+        grad_norm=out.grad_norm,
+        num_steps=out.num_steps,
+    )
+
+
+@eqx.filter_jit
+def _fit_on_grid(
+    model: SpaceTimeFieldVar, obs: PointObsBatch, grid: Float[Array, "N D"]
+) -> Array:
+    r"""$u(t_0, \cdot)$ on ``grid`` of a fit with fixed collocation points."""
+    return _fit(model, obs, None).initial_condition(grid)
 
 
 class _SpaceTimeFieldAnalysisStep(eqx.Module):
     r"""``pipekit_cycle.AnalysisStep`` adapter for ``SpaceTimeFieldVar``.
 
-    ``obs`` is a [`PointObsBatch`][vardax.PointObsBatch] (one sample),
-    whose $\sigma_k$ are the observation errors: ``obs_err_cov`` must be
-    ``None`` and ``obs_op`` ``None`` or a `FieldPointObs`. There is no
+    ``obs`` is a [`PointObsBatch`][vardax.PointObsBatch] (one sample, with
+    window-relative times), whose $\sigma_k$ are the observation errors:
+    ``obs_err_cov`` must be ``None``. ``obs_op`` is not used: the field is
+    evaluated at the observation coordinates directly (``DACycle`` passes
+    its gridded $H$, which does not apply to a field). There is no
     background term, so ``forecast`` is not used in the cost; with a grid
     and a ``forecast``, the analysis $u(t_0, \cdot)$ on the grid is
-    reshaped to the forecast's shape.
+    reshaped to the forecast's shape. The model's collocation points are
+    already drawn and fixed.
     """
 
     model: SpaceTimeFieldVar
     grid: Float[Array, "N D"] | None
-    key: PRNGKeyArray | None
 
     def __call__(
         self,
@@ -408,20 +506,16 @@ class _SpaceTimeFieldAnalysisStep(eqx.Module):
         obs_op: Any = None,
         obs_err_cov: Any = None,
     ) -> Array | SpaceTimeFieldResult:
-        if obs_op is not None and not isinstance(obs_op, FieldPointObs):
-            raise TypeError(
-                "SpaceTimeFieldVar observes its field at the points: obs_op "
-                f"must be None or a FieldPointObs, not {type(obs_op).__name__}."
-            )
+        del obs_op  # the field is observed at the points (FieldPointObs)
         if obs_err_cov is not None:
             raise ValueError(
                 "A PointObsBatch carries its observation errors in sigma: "
                 "pass obs_err_cov=None."
             )
-        result = self.model(obs, key=self.key)
+        self._check_window(obs)
         if self.grid is None:
-            return result
-        xa = result.initial_condition(self.grid)
+            return self.model(obs)
+        xa = _fit_on_grid(self.model, obs, self.grid)
         if forecast is None:
             return xa
         forecast = jnp.asarray(forecast)
@@ -431,6 +525,27 @@ class _SpaceTimeFieldAnalysisStep(eqx.Module):
                 f"grid has {xa.size} values."
             )
         return xa.reshape(forecast.shape).astype(forecast.dtype)
+
+    def _check_window(self, obs: PointObsBatch) -> None:
+        """Valid observation times must lie in the collocation window."""
+        window = _collocation_window(self.model.residual)
+        if window is None or not isinstance(obs, PointObsBatch):
+            return
+        try:
+            times = np.asarray(obs.coords[..., 0])
+            valid = np.asarray(obs.valid, dtype=bool)
+        except (
+            jax.errors.TracerArrayConversionError,
+            jax.errors.ConcretizationTypeError,
+        ):
+            return
+        times = times[valid]
+        if times.size and (times.min() < window[0] or times.max() > window[1]):
+            raise ValueError(
+                f"Observation times span [{times.min():.4g}, {times.max():.4g}], "
+                f"outside the collocation window [{window[0]:.4g}, "
+                f"{window[1]:.4g}]: give each cycle window-relative times."
+            )
 
 
 __all__ = ["SpaceTimeFieldResult", "SpaceTimeFieldVar"]

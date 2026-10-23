@@ -107,6 +107,21 @@ gradient of the expected residual) would break all three, so it is left
 to a custom training loop; draw enough points to resolve the residual,
 or refit with fresh keys.
 
+In a cycle, `as_analysis_step(grid, key=key)` draws the points once, at
+construction, and every cycle reuses them. `pipekit_cycle.DACycle`
+passes no time, so each cycle's `PointObsBatch` must use
+**window-relative** times in the same window as the collocation points;
+the step refuses observation times (and a $t_0$) outside the collocation
+time range.
+
+### Choosing $\lambda$
+
+The observation term is a sum over $N_\text{obs}$ points weighted by
+$1/\sigma^2$, the residual term a mean over the collocation points, so
+$\lambda$ trades off against roughly $N_\text{obs}/(2\sigma^2)$ and has
+to grow with it. The 1-D advection test uses $\lambda = 10^3$ for 100
+observations with $\sigma = 0.05$ ($N_\text{obs}/(2\sigma^2) = 2\times10^4$).
+
 ### Uncertainty: a deep ensemble
 
 `ana.ensemble(obs, field_init, n_members, key=key)` refits from

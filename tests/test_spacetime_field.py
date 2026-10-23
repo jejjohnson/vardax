@@ -71,7 +71,7 @@ def _obs(n: int = 20, n_pad: int = 0, key=KEY, sigma: float = 0.1) -> PointObsBa
     return PointObsBatch(coords=coords, values=values, sigma=sig, valid=valid)
 
 
-def _linear_model(alpha: float = 1.0, residual=None) -> SpaceTimeFieldVar:
+def _linear_model(alpha: float | jax.Array = 1.0, residual=None) -> SpaceTimeFieldVar:
     field = _feature_field()
     return SpaceTimeFieldVar(
         field=field,
@@ -299,8 +299,10 @@ def test_analysis_step():
     assert step(None, obs, obs_op=FieldPointObs(), obs_err_cov=None).shape == (6,)
     with pytest.raises(ValueError, match="obs_err_cov"):
         step(None, obs, obs_op=None, obs_err_cov=jnp.ones(20))
-    with pytest.raises(TypeError, match="FieldPointObs"):
-        step(None, obs, obs_op=vardax.MaskedIdentity(), obs_err_cov=None)
+    # DACycle passes its gridded H: the step ignores it (the field is
+    # observed at the points), so the analysis is unchanged.
+    xa_h = step(None, obs, obs_op=vardax.MaskedIdentity(), obs_err_cov=None)
+    assert jnp.allclose(xa_h, expected)
     with pytest.raises(ValueError, match="analysis on the grid"):
         step(jnp.zeros(5), obs, obs_op=None, obs_err_cov=None)
     # Without a grid (as VarDACycle builds it) the step returns the field.
@@ -309,6 +311,96 @@ def test_analysis_step():
     out = bare(None, obs, obs_op=None, obs_err_cov=None)
     assert isinstance(out, SpaceTimeFieldResult)
     assert jnp.allclose(out.initial_condition(grid), expected)
+
+
+def test_analysis_step_collocation_window():
+    # The step draws the collocation points once, at construction, from the
+    # key; each cycle's observation times must fall in their time window.
+    pen = ResidualPenalty(_advection_1d(), None, 0.5, sampler=_sampler)
+    model = _linear_model(residual=pen)
+    with pytest.raises(ValueError, match="key"):
+        model.as_analysis_step(jnp.zeros((3, 1)))
+    step = model.as_analysis_step(jnp.zeros((3, 1)), key=KEY)
+    drawn = step.model.residual
+    assert drawn is not None and drawn.sampler is None
+    assert jnp.array_equal(drawn.collocation, _sampler(KEY))
+    obs = _obs()
+    # Same as a direct fit with the same key: the points are reused.
+    expected = model(obs, key=KEY).initial_condition(jnp.zeros((3, 1)))
+    assert jnp.allclose(step(None, obs), expected)
+    # Absolute times from a later window (t in [5, 6]) are refused.
+    late = eqx.tree_at(lambda o: o.coords, obs, obs.coords.at[:, 0].add(5.0))
+    with pytest.raises(ValueError, match="window-relative"):
+        step(None, late)
+    # Padding rows are not checked: a NaN or far-off time there is fine.
+    padded = _obs(n_pad=2)
+    assert step(None, padded).shape == (3,)
+    with pytest.raises(ValueError, match="t0"):
+        SpaceTimeFieldVar(
+            _feature_field(),
+            residual=pen,
+            minimiser=OptimistixMinimiser(),
+            filter_spec=_only_w(_feature_field()),
+            t0=3.0,
+        ).as_analysis_step(jnp.zeros((3, 1)), key=KEY)
+
+
+_TRACES: list[None] = []
+
+
+class CountingField(FeatureField):
+    """A `FeatureField` that records every time it is traced or run."""
+
+    def __call__(self, s):
+        _TRACES.append(None)
+        return super().__call__(s)
+
+
+def _counting_model(alpha=1.0) -> SpaceTimeFieldVar:
+    base = _feature_field()
+    field = CountingField(w=base.w, centres=base.centres)
+    return SpaceTimeFieldVar(
+        field=field,
+        weight_decay=alpha,
+        minimiser=OptimistixMinimiser(),
+        filter_spec=CountingField(w=True, centres=False),  # ty:ignore[invalid-argument-type]
+    )
+
+
+def test_fit_and_step_compile_once():
+    # The fit is one filter_jit-compiled function of (model, obs, key):
+    # new observations, or a new weight decay (an array leaf), reuse it.
+    # The field is only called while tracing, so the count stops growing.
+    model = _counting_model()
+    model(_obs(key=jax.random.PRNGKey(1)))
+    n = len(_TRACES)
+    assert n > 0
+    model(_obs(key=jax.random.PRNGKey(2)))
+    eqx.tree_at(lambda m: m.weight_decay, model, jnp.asarray(3.0))(_obs())
+    assert len(_TRACES) == n
+
+    step = model.as_analysis_step(jnp.zeros((4, 1)))
+    step(None, _obs(key=jax.random.PRNGKey(3)))
+    n = len(_TRACES)
+    step(None, _obs(key=jax.random.PRNGKey(4)))
+    step(jnp.zeros(4), _obs(key=jax.random.PRNGKey(5)))
+    assert len(_TRACES) == n
+
+
+def test_weight_decay_is_a_differentiable_leaf():
+    # An array weight decay is a leaf (no static-array warning, which the
+    # test config makes an error), and dJ*/d alpha = ½‖w*‖² by the envelope
+    # theorem (∂J/∂w = 0 at w*). BFGS leaves ‖∇J‖ ~ 1e-6, so rtol 1e-3.
+    obs = _obs()
+    model = _linear_model(alpha=jnp.asarray(2.0))
+    assert isinstance(model.weight_decay, jax.Array)
+
+    def cost(alpha):
+        return eqx.tree_at(lambda m: m.weight_decay, model, alpha)(obs).cost
+
+    g = jax.grad(cost)(jnp.asarray(2.0))
+    w = model(obs).field.w
+    assert jnp.allclose(g, 0.5 * jnp.sum(w**2), rtol=1e-3)
 
 
 # ---------------------------------------------------------------------------
@@ -320,6 +412,8 @@ def test_validation():
     field = _feature_field()
     with pytest.raises(ValueError, match="weight_decay"):
         SpaceTimeFieldVar(field, weight_decay=-1.0)
+    with pytest.raises(ValueError, match="scalar"):
+        SpaceTimeFieldVar(field, weight_decay=jnp.ones(2))
     with pytest.raises(TypeError, match="ResidualPenalty"):
         SpaceTimeFieldVar(field, residual=lambda f: 0.0)  # ty:ignore[invalid-argument-type]
     with pytest.raises(TypeError, match="minimiser"):
@@ -364,7 +458,7 @@ def _box_sampler(key):
     )
 
 
-def _advection_fit(seed: int, weight: float) -> jax.Array:
+def _advection_fit(seed: int, speed: float = C) -> jax.Array:
     """Relative L2 error of u(0, ·) recovered from observations at t >= 0.3."""
     k_obs, k_x, k_noise, k_init, k_col = jax.random.split(jax.random.PRNGKey(seed), 5)
     n, steps = 100, 4000
@@ -376,11 +470,7 @@ def _advection_fit(seed: int, weight: float) -> jax.Array:
         sigma=jnp.full(n, SIGMA),
         valid=jnp.ones(n, bool),
     )
-    residual = (
-        ResidualPenalty(_advection_1d(C), None, weight, sampler=_box_sampler)
-        if weight > 0
-        else None
-    )
+    residual = ResidualPenalty(_advection_1d(speed), None, 1e3, sampler=_box_sampler)
     model = SpaceTimeFieldVar(
         field=geonnax.SIREN.init(2, 32, 1, depth=3, key=k_init, first_omega=5.0),
         residual=residual,
@@ -401,18 +491,19 @@ def _advection_fit(seed: int, weight: float) -> jax.Array:
 
 
 @pytest.mark.slow
-@pytest.mark.parametrize("seed", [0, 1, 2])
+@pytest.mark.parametrize("seed", [6, 7, 8])
 def test_advection_recovers_initial_bump(seed):
     # No observation is earlier than t = 0.3, so u(0, ·) comes from the
     # physics carrying the later observations back along characteristics.
     # Calibration (seeds 0-5, 100 obs, sigma = 0.05, λ = 1e3): relative L2
     # errors 0.076, 0.068, 0.105, 0.101, 0.074, 0.158 (max 0.158); the bound
-    # 0.3 leaves ~1.9x headroom over the worst of six seeds. Without the
-    # residual (λ = 0) the errors are 2.25, 1.74, 2.72, 1.70, 1.04, 1.88:
-    # nothing tells the field how to extrapolate back in time.
-    err = _advection_fit(seed, weight=1e3)
-    assert float(err) < 0.3
-    assert float(err) < 0.5 * float(_advection_fit(seed, weight=0.0))
+    # 0.3 leaves ~1.9x headroom over the worst. Control: the same fit with
+    # the wrong speed c = -0.5 carries the bump the wrong way, errors
+    # 1.31, 1.37, 1.25, 1.16, 1.37, 1.57 (min 1.16); its bound 0.8 is ~1.45x
+    # below that. The test runs on held-out seeds 6-8, measured at 0.050,
+    # 0.102, 0.052 (right speed) and 1.19, 1.27, 1.30 (wrong speed).
+    assert float(_advection_fit(seed)) < 0.3
+    assert float(_advection_fit(seed, speed=-C)) > 0.8
 
 
 def _ensemble_spread(seed: int) -> tuple[float, float]:
@@ -443,13 +534,15 @@ def _ensemble_spread(seed: int) -> tuple[float, float]:
 
 
 @pytest.mark.slow
-@pytest.mark.parametrize("seed", [0, 1, 2])
+@pytest.mark.parametrize("seed", [6, 7, 8])
 def test_ensemble_spread_grows_away_from_observations(seed):
     # Observations only in |x| < 0.4; members agree there (spread within
     # the noise level) and diverge where the field is unconstrained.
     # Calibration (seeds 0-5, 8 members): near spread 0.018-0.039, far
     # spread 0.16-0.47, far/near ratio 8.6-15.8. Bounds: near < 2 sigma = 0.1
     # (2.6x the largest of six seeds), ratio > 4 (2.2x below the smallest).
+    # The test runs on held-out seeds 6-8, measured at near 0.023, 0.054,
+    # 0.038 and ratio 21.7, 8.6, 15.8.
     s_near, s_far = _ensemble_spread(seed)
     assert s_near < 2 * SIGMA
     assert s_far > 4 * s_near
