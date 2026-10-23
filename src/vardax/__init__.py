@@ -48,6 +48,7 @@ from vardax._src.basis import (
     wavelet_basis,
 )
 from vardax._src.costs import (
+    ResidualPenalty,
     background_cost,
     decomposed_loss,
     obs_cost_1d,
@@ -217,6 +218,7 @@ __all__ = [
     "LaplaceCovariance",
     "Posterior",
     # Costs
+    "ResidualPenalty",
     "background_cost",
     "decomposed_loss",
     "obs_cost_1d",
