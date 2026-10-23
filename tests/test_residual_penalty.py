@@ -5,6 +5,7 @@ from __future__ import annotations
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import numpy as np
 import pytest
 
 from vardax import ResidualPenalty
@@ -70,9 +71,15 @@ def test_collocation_must_be_2d():
         ResidualPenalty(lambda f, s: f(s), jnp.ones(3), weight=1.0)
 
 
-def test_negative_weight():
+@pytest.mark.parametrize("weight", [-1.0, np.float32(-1), jnp.asarray(-1.0)])
+def test_negative_weight(weight):
     with pytest.raises(ValueError, match="non-negative"):
-        ResidualPenalty(lambda f, s: f(s), jnp.ones((2, 3)), weight=-1.0)
+        ResidualPenalty(lambda f, s: f(s), jnp.ones((2, 3)), weight=weight)
+
+
+def test_weight_must_be_scalar():
+    with pytest.raises(ValueError, match="scalar"):
+        ResidualPenalty(lambda f, s: f(s), jnp.ones((2, 3)), weight=jnp.ones(2))
 
 
 def test_sampler_needs_key():
@@ -144,6 +151,28 @@ def test_jit_fixed_collocation():
     assert jnp.allclose(jax.jit(lambda: pen(field))(), eager, rtol=1e-5)
     # The penalty itself through filter_jit (callables stay static).
     assert jnp.allclose(eqx.filter_jit(lambda p, f: p(f))(pen, field), eager, rtol=1e-5)
+
+
+def test_weight_change_does_not_retrace():
+    # The weight is an array leaf: annealing it reuses one compiled function.
+    residual = lambda f, s: f(s)
+    pts = jnp.ones((4, 3))
+    traces = []
+
+    @eqx.filter_jit
+    def cost(pen):
+        traces.append(None)
+        return pen(lambda s: s)
+
+    values = [cost(ResidualPenalty(residual, pts, w)) for w in (0.1, 0.5, 2.0)]
+    assert len(traces) == 1
+    assert jnp.allclose(jnp.stack(values), 1.5 * jnp.array([0.1, 0.5, 2.0]))
+
+
+def test_plain_jit_with_penalty_argument():
+    # The callables are static fields, so the penalty is a valid jax.jit input.
+    pen = ResidualPenalty(lambda f, s: f(s), jnp.ones((4, 3)), 2.0)
+    assert jnp.allclose(jax.jit(lambda p: p(lambda s: s))(pen), 3.0)
 
 
 def test_jit_resampled_collocation():

@@ -49,6 +49,11 @@ def advection_diffusion_2d(
         velocity: Constant advecting velocity $(c_x, c_y)$.
         diffusivity: Diffusivity $\kappa \ge 0$.
 
+    The field must be twice differentiable in $(x, y)$ and once in $t$ at
+    every collocation point; a raw `jnp.sqrt` or `jnp.linalg.norm` that
+    vanishes there gives NaN derivatives, so guard it with the double-`where`
+    idiom.
+
     Returns:
         ``residual_fn(field, s) -> (1,)``, where ``s = (t, x, y)`` and the
         tracer is ``field(s)[0]``.
@@ -121,6 +126,11 @@ def navier_stokes_vorticity_2d(
     \Delta^2\psi$), computed by nested automatic differentiation; for a field
     that returns $(\omega, \psi)$ separately, add $\Delta\psi - \omega$ as a
     second residual instead.
+
+    The streamfunction must be four times differentiable in $(x, y)$ (and
+    $\Delta\psi$ once in $t$) at every collocation point; a raw `jnp.sqrt`
+    or `jnp.linalg.norm` that vanishes there gives NaN derivatives, so guard
+    it with the double-`where` idiom.
 
     Args:
         viscosity: Kinematic viscosity $\nu \ge 0$.

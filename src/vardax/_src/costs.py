@@ -327,13 +327,25 @@ class ResidualPenalty(eqx.Module):
     \lVert \mathcal N[f_\theta](c) \rVert^2$, so its gradient is a
     stochastic gradient of that expected penalty.
 
+    The field must be smooth enough for the derivatives the residual takes
+    (twice differentiable for advection–diffusion, four times for the
+    streamfunction form of Navier–Stokes) at every collocation point. A raw
+    `jnp.linalg.norm` or `jnp.sqrt` of a quantity that vanishes at a point
+    gives NaN gradients there; guard it with the double-`where` idiom
+    (`jnp.where(sq > 0, jnp.sqrt(jnp.where(sq > 0, sq, 1.0)), 0.0)`).
+
+    ``residual_fn`` and ``sampler`` are static fields, so they must be
+    hashable (functions and closures are); ``collocation`` and ``weight``
+    are array leaves, so changing the weight (e.g. annealing $\lambda$)
+    does not recompile a jitted cost.
+
     Attributes:
         residual_fn: ``(field, s) -> (R,)``, the residual $\mathcal N[f](s)$
             at one point ``s`` of shape ``(D,)``, where ``field`` maps
             ``(D,) -> (K,)``. A scalar return is treated as ``(1,)``.
         collocation: Fixed collocation points of shape ``(N_c, D)``. May be
             ``None`` when ``sampler`` is given.
-        weight: Penalty weight $\lambda \ge 0$.
+        weight: Penalty weight $\lambda \ge 0$, stored as a 0-d array.
         sampler: Optional ``key -> (N_c, D)``; when given, the points are
             resampled on every call and ``collocation`` is not used.
 
@@ -364,10 +376,12 @@ class ResidualPenalty(eqx.Module):
         True
     """
 
-    residual_fn: Callable[..., Float[Array, " R"]]
+    residual_fn: Callable[..., Float[Array, " R"]] = eqx.field(static=True)
     collocation: Float[Array, "N D"] | None
-    weight: float
-    sampler: Callable[[PRNGKeyArray], Float[Array, "N D"]] | None = None
+    weight: Float[Array, ""] = eqx.field(converter=jnp.asarray)
+    sampler: Callable[[PRNGKeyArray], Float[Array, "N D"]] | None = eqx.field(
+        static=True, default=None
+    )
 
     def __check_init__(self) -> None:
         if self.collocation is None and self.sampler is None:
@@ -377,8 +391,16 @@ class ResidualPenalty(eqx.Module):
                 "collocation must have shape (N_c, D); got shape "
                 f"{jnp.shape(self.collocation)}."
             )
-        if isinstance(self.weight, int | float) and self.weight < 0:
-            raise ValueError(f"weight must be non-negative; got {self.weight}.")
+        if jnp.ndim(self.weight) != 0:
+            raise ValueError(
+                f"weight must be a scalar; got shape {jnp.shape(self.weight)}."
+            )
+        try:
+            value = float(self.weight)
+        except jax.errors.ConcretizationTypeError:
+            return  # built under a transform: the sign is not known yet
+        if value < 0:
+            raise ValueError(f"weight must be non-negative; got {value}.")
 
     def __call__(
         self,
