@@ -5,9 +5,10 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
+import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, Float
+from jaxtyping import Array, Float, PRNGKeyArray
 
 from ._types import Batch1D
 
@@ -296,3 +297,144 @@ def strong_variational_cost(
     j_obs = jnp.mean((batch.mask * (traj - obs)) ** 2)
     j_bg = background_cost(x0, xb)
     return alpha_obs * j_obs + alpha_bg * j_bg
+
+
+# ---------------------------------------------------------------------------
+# Physics residual penalty (weak PDE constraint on a continuous field)
+# ---------------------------------------------------------------------------
+
+
+class ResidualPenalty(eqx.Module):
+    r"""PDE residual of a continuous field at collocation points, as a cost.
+
+    For a field $f_\theta$ (a callable of one point, e.g. a neural field),
+    a PDE operator $\mathcal N$ supplied as ``residual_fn`` and collocation
+    points $c_1, \dots, c_{N_c}$,
+
+    $$
+    J_{\text{res}}(\theta) = \frac{\lambda}{2 N_c} \sum_{j=1}^{N_c}
+        \big\lVert \mathcal N[f_\theta](c_j) \big\rVert^2 .
+    $$
+
+    Added to an observation cost it imposes the physics as a weak
+    constraint, without a time-stepping model. Residuals are callables built
+    on `geonnax.diffops` (see `vardax.examples` for advection–diffusion and
+    vorticity-form Navier–Stokes); vardax does not import a PDE library.
+
+    With a ``sampler``, the points are redrawn from a key on every call. If
+    each point is drawn from a distribution $p$, the resampled cost is an
+    unbiased estimate of $\tfrac{\lambda}{2}\,\mathbb E_{c \sim p}
+    \lVert \mathcal N[f_\theta](c) \rVert^2$, so its gradient is a
+    stochastic gradient of that expected penalty.
+
+    The field must be smooth enough for the derivatives the residual takes
+    (twice differentiable for advection–diffusion, four times for the
+    streamfunction form of Navier–Stokes) at every collocation point. A raw
+    `jnp.linalg.norm` or `jnp.sqrt` of a quantity that vanishes at a point
+    gives NaN gradients there; guard it with the double-`where` idiom
+    (`jnp.where(sq > 0, jnp.sqrt(jnp.where(sq > 0, sq, 1.0)), 0.0)`).
+
+    ``residual_fn`` and ``sampler`` are static fields, so they must be
+    hashable (functions and closures are); ``collocation`` and ``weight``
+    are array leaves, so changing the weight (e.g. annealing $\lambda$)
+    does not recompile a jitted cost.
+
+    Attributes:
+        residual_fn: ``(field, s) -> (R,)``, the residual $\mathcal N[f](s)$
+            at one point ``s`` of shape ``(D,)``, where ``field`` maps
+            ``(D,) -> (K,)``. A scalar return is treated as ``(1,)``.
+        collocation: Fixed collocation points of shape ``(N_c, D)``. May be
+            ``None`` when ``sampler`` is given.
+        weight: Penalty weight $\lambda \ge 0$, stored as a 0-d array.
+        sampler: Optional ``key -> (N_c, D)``; when given, the points are
+            resampled on every call and ``collocation`` is not used.
+
+    Examples:
+        A residual that is the field itself gives
+        $J = \tfrac{\lambda}{2} \lVert f \rVert^2$ for a constant field:
+
+        >>> import jax.numpy as jnp
+        >>> import vardax
+        >>> pen = vardax.ResidualPenalty(
+        ...     residual_fn=lambda f, s: f(s),
+        ...     collocation=jnp.zeros((5, 3)),
+        ...     weight=0.5,
+        ... )
+        >>> float(pen(lambda s: jnp.array([1.0, 2.0])))
+        1.25
+
+        With a sampler, pass a key on every call:
+
+        >>> import jax
+        >>> pen = vardax.ResidualPenalty(
+        ...     residual_fn=lambda f, s: f(s),
+        ...     collocation=None,
+        ...     weight=1.0,
+        ...     sampler=lambda key: jax.random.uniform(key, (64, 3)),
+        ... )
+        >>> float(pen(lambda s: s[:1], key=jax.random.PRNGKey(0))) > 0
+        True
+    """
+
+    residual_fn: Callable[..., Float[Array, " R"]] = eqx.field(static=True)
+    collocation: Float[Array, "N D"] | None
+    weight: Float[Array, ""] = eqx.field(converter=jnp.asarray)
+    sampler: Callable[[PRNGKeyArray], Float[Array, "N D"]] | None = eqx.field(
+        static=True, default=None
+    )
+
+    def __check_init__(self) -> None:
+        if self.collocation is None and self.sampler is None:
+            raise ValueError("ResidualPenalty needs collocation points or a sampler.")
+        if self.collocation is not None and jnp.ndim(self.collocation) != 2:
+            raise ValueError(
+                "collocation must have shape (N_c, D); got shape "
+                f"{jnp.shape(self.collocation)}."
+            )
+        if jnp.ndim(self.weight) != 0:
+            raise ValueError(
+                f"weight must be a scalar; got shape {jnp.shape(self.weight)}."
+            )
+        try:
+            value = float(self.weight)
+        except jax.errors.ConcretizationTypeError:
+            return  # built under a transform: the sign is not known yet
+        if value < 0:
+            raise ValueError(f"weight must be non-negative; got {value}.")
+
+    def __call__(
+        self,
+        field: Callable[[Float[Array, " D"]], Float[Array, " K"]],
+        *,
+        key: PRNGKeyArray | None = None,
+    ) -> Float[Array, ""]:
+        """Evaluate the penalty for ``field``.
+
+        Args:
+            field: The field, a callable of one point ``(D,) -> (K,)``.
+            key: PRNG key for the sampler. Required when ``sampler`` is set;
+                ignored otherwise.
+
+        Returns:
+            The scalar penalty $J_{\text{res}}$.
+
+        Raises:
+            ValueError: If a sampler is set and ``key`` is ``None``, or the
+                points are not of shape ``(N_c, D)``.
+        """
+        if self.sampler is not None:
+            if key is None:
+                raise ValueError("ResidualPenalty with a sampler needs a key.")
+            points = self.sampler(key)
+        else:
+            points = self.collocation
+        assert points is not None  # guaranteed by __check_init__
+        if points.ndim != 2:
+            raise ValueError(
+                f"collocation points must have shape (N_c, D); got {points.shape}."
+            )
+
+        # N[f](c_j) for every point: (N_c, R)
+        r = jax.vmap(lambda c: jnp.atleast_1d(self.residual_fn(field, c)))(points)
+        # J = λ/(2 N_c) Σⱼ ‖N[f](c_j)‖²: ()
+        return self.weight / (2 * points.shape[0]) * jnp.sum(r**2)
