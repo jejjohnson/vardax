@@ -117,7 +117,9 @@ identical to `Incremental4DVar(basis=...)`).
 coordinate network evaluated on the grid, with
 $\mathrm{pen}(\theta) = \tfrac{\alpha}{2}\lVert\theta\rVert^2$ and no $B$
 (the network's spectral bias is the prior); its weights are a control
-for `OptaxMinimiser`, not BFGS:
+for `OptaxMinimiser`, not BFGS. Frozen arrays inside the field (random
+Fourier frequencies read through `stop_gradient`) must be excluded from
+the control with `filter_spec=`, or the weight decay shrinks them:
 
 ```python
 import geonnax, optax, vardax

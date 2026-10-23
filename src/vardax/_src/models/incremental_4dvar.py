@@ -50,7 +50,6 @@ import optimistix as optx
 
 from vardax._src._types import Batch1D
 from vardax._src.minimisers import minimise
-from vardax._src.parameterization import LinearParameterization
 from vardax._src.protocols import Minimiser, StateParameterization
 
 
@@ -184,14 +183,28 @@ class Incremental4DVar(eqx.Module):
                 per_step_costs = jax.vmap(_per_step)(trajectory, input_i, mask_i)
                 return jnp.sum(per_step_costs)
 
-            # basis= is LinearParameterization around the current prior_mean
-            # (built here so a swapped prior_mean is honoured).
-            param = (
-                LinearParameterization(self.basis, self.prior_mean)
-                if self.basis is not None
-                else self.parameterization
-            )
-            if param is None:
+            param = self.parameterization
+            if self.basis is not None:
+                # The reduced-basis path, unchanged; it equals
+                # LinearParameterization(basis, prior_mean) mathematically.
+                def cost(X: Float[Array, " M"], _args: Any) -> Float[Array, ""]:
+                    j_bg = 0.5 * jnp.sum(X * self.basis.prior_inv(X))
+                    x_0 = self.prior_mean + self.basis.operg(0.0, X).reshape(
+                        self.prior_mean.shape
+                    )
+                    return j_bg + _obs_cost(self._rollout(x_0, n_steps=T))
+
+                y0 = jnp.zeros((self.basis.nbasis,), dtype=self.prior_mean.dtype)
+            elif param is not None:
+
+                def cost(theta: Any, _args: Any) -> Float[Array, ""]:
+                    x_0 = param.decode(theta).reshape(self.prior_mean.shape)
+                    return param.penalty(theta) + _obs_cost(
+                        self._rollout(x_0, n_steps=T)
+                    )
+
+                y0 = param.init_control()
+            else:
 
                 def cost(x_0: Float[Array, " N"], _args: Any) -> Float[Array, ""]:
                     dx = x_0 - self.prior_mean
@@ -204,15 +217,6 @@ class Incremental4DVar(eqx.Module):
                     return j_bg + _obs_cost(self._rollout(x_0, n_steps=T))
 
                 y0 = self.prior_mean
-            else:
-
-                def cost(theta: Any, _args: Any) -> Float[Array, ""]:
-                    x_0 = param.decode(theta).reshape(self.prior_mean.shape)
-                    return param.penalty(theta) + _obs_cost(
-                        self._rollout(x_0, n_steps=T)
-                    )
-
-                y0 = param.init_control()
 
             x_star = minimise(
                 self.minimiser,
@@ -221,9 +225,13 @@ class Incremental4DVar(eqx.Module):
                 adjoint=self.minimiser_adjoint,
                 max_steps=self.max_steps,
             )
-            if param is None:
-                return x_star
-            return param.decode(x_star).reshape(self.prior_mean.shape)
+            if self.basis is not None:
+                return self.prior_mean + self.basis.operg(0.0, x_star).reshape(
+                    self.prior_mean.shape
+                )
+            if param is not None:
+                return param.decode(x_star).reshape(self.prior_mean.shape)
+            return x_star
 
         return jax.vmap(_one)(batch.input, batch.mask)
 
