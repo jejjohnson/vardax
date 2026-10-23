@@ -33,7 +33,7 @@ import optimistix as optx
 
 from vardax._src._types import Batch1D
 from vardax._src.minimisers import minimise
-from vardax._src.protocols import Minimiser
+from vardax._src.protocols import Minimiser, StateParameterization
 
 
 class WeakFourDVar(eqx.Module):
@@ -53,6 +53,12 @@ class WeakFourDVar(eqx.Module):
         minimiser: As in [`StrongFourDVar`][vardax.StrongFourDVar].
         minimiser_adjoint: As in [`StrongFourDVar`][vardax.StrongFourDVar].
         max_steps: As in [`StrongFourDVar`][vardax.StrongFourDVar].
+        parameterization: Optional
+            [`StateParameterization`][vardax.StateParameterization] of the
+            initial state. When given, the control is $(\theta, \eta)$,
+            $x_0 = \psi(\theta)$ and $\mathrm{pen}(\theta)$ replaces the
+            background term (``prior_mean`` and ``prior_cov_op`` are not
+            used). Default ``None``: the control is $(x_0, \eta)$.
 
     Examples:
         Trivial dynamics and a single timestep: no model-error steps
@@ -89,6 +95,7 @@ class WeakFourDVar(eqx.Module):
     minimiser: optx.AbstractMinimiser | Minimiser = eqx.field(static=True)
     minimiser_adjoint: optx.AbstractAdjoint = eqx.field(static=True)
     max_steps: int = eqx.field(static=True, default=200)
+    parameterization: StateParameterization | None = None
 
     def __init__(
         self,
@@ -101,6 +108,7 @@ class WeakFourDVar(eqx.Module):
         minimiser: optx.AbstractMinimiser | Minimiser | None = None,
         minimiser_adjoint: optx.AbstractAdjoint | None = None,
         max_steps: int = 200,
+        parameterization: StateParameterization | None = None,
     ) -> None:
         self.forward = forward
         self.obs_op = obs_op
@@ -111,6 +119,7 @@ class WeakFourDVar(eqx.Module):
         self.minimiser = minimiser or optx.BFGS(rtol=1e-6, atol=1e-6)
         self.minimiser_adjoint = minimiser_adjoint or optx.ImplicitAdjoint()
         self.max_steps = max_steps
+        self.parameterization = parameterization
 
     def _rollout_with_error(
         self,
@@ -151,21 +160,10 @@ class WeakFourDVar(eqx.Module):
         def _one(
             input_i: Float[Array, "T_plus_1 N"], mask_i: Float[Array, "T_plus_1 N"]
         ):
-            def cost(
-                control: Float[Array, "T_plus_1 N"], _args: Any
+            def model_and_obs_cost(
+                x_0: Float[Array, N],
+                etas: Float[Array, "T N"],
             ) -> Float[Array, ""]:
-                x_0 = control[0]
-                etas = control[1:]
-
-                # Background term
-                dx = x_0 - self.prior_mean
-                B_inv_dx = lx.linear_solve(
-                    self.prior_cov_op,
-                    dx,
-                    solver=lx.CG(atol=1e-6, rtol=1e-6),
-                ).value
-                j_bg = 0.5 * jnp.sum(dx * B_inv_dx)
-
                 # Model-error term
                 def _eta_cost(eta_t):
                     Q_inv_eta = lx.linear_solve(
@@ -197,10 +195,48 @@ class WeakFourDVar(eqx.Module):
                 per_step_costs = jax.vmap(_per_step)(trajectory, input_i, mask_i)
                 j_obs = jnp.sum(per_step_costs)
 
-                return j_bg + j_obs + j_eta
+                return j_obs + j_eta
 
             # Initial guess: x_0 at the background, etas at zero.
             init_etas = jnp.zeros((T, N))
+
+            param = self.parameterization
+            if param is not None:
+                # Control (θ, η); x_0 = ψ(θ) and pen(θ) replaces the B term.
+                def decode(theta: Any) -> Float[Array, N]:
+                    return param.decode(theta).reshape(self.prior_mean.shape)
+
+                def param_cost(control: Any, _args: Any) -> Float[Array, ""]:
+                    theta, etas = control
+                    return param.penalty(theta) + model_and_obs_cost(
+                        decode(theta), etas
+                    )
+
+                theta_star, eta_star = minimise(
+                    self.minimiser,
+                    param_cost,
+                    (param.init_control(), init_etas),
+                    adjoint=self.minimiser_adjoint,
+                    max_steps=self.max_steps,
+                )
+                return decode(theta_star), eta_star
+
+            def cost(
+                control: Float[Array, "T_plus_1 N"], _args: Any
+            ) -> Float[Array, ""]:
+                x_0 = control[0]
+                etas = control[1:]
+
+                # Background term
+                dx = x_0 - self.prior_mean
+                B_inv_dx = lx.linear_solve(
+                    self.prior_cov_op,
+                    dx,
+                    solver=lx.CG(atol=1e-6, rtol=1e-6),
+                ).value
+                j_bg = 0.5 * jnp.sum(dx * B_inv_dx)
+                return j_bg + model_and_obs_cost(x_0, etas)
+
             y0 = jnp.concatenate([self.prior_mean[None, :], init_etas], axis=0)
 
             x_star = minimise(

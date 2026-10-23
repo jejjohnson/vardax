@@ -67,6 +67,22 @@ families; `CompositeBasis` concatenates several.
       show_root_toc_entry: false
       members: [LinearBasis, CompositeBasis, linear_basis, composite_basis, eof_basis, fourier_basis, rbf_basis, wavelet_basis]
 
+## State parameterizations
+
+Implementations of the [`StateParameterization`](protocols.md) protocol,
+accepted as `parameterization=` by `ThreeDVar`, `StrongFourDVar`,
+`WeakFourDVar` and `Incremental4DVar`: the control becomes any pytree
+$\theta$, the state $\psi(\theta)$, and $\mathrm{pen}(\theta)$ replaces
+the background term. `LinearParameterization` adapts any reduced basis
+($\psi(X) = x_b + \Phi X$); `NeuralFieldParameterization` makes the state
+a coordinate network on the grid, with weight decay as its penalty.
+
+::: vardax
+    options:
+      show_root_heading: false
+      show_root_toc_entry: false
+      members: [LinearParameterization, NeuralFieldParameterization]
+
 ## Minimisers
 
 Implementations of the [`Minimiser`](protocols.md) protocol, accepted as

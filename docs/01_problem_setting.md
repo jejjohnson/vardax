@@ -85,7 +85,7 @@ problem above:
 | **`ThreeDVar`** | Nonlinear $H$; $T = 0$ | `optimistix` minimiser |
 | **`StrongFourDVar`** | Multi-time; dynamics treated as exact | `optimistix` minimiser + `diffrax` adjoint |
 | **`WeakFourDVar`** | Multi-time; model error active | Same, augmented control |
-| **`IncrementalFourDVar`** | Operational fast path of `StrongFourDVar` | GN outer + CG inner + CVT |
+| **`IncrementalFourDVar`** | Operational fast path of `StrongFourDVar` | GN outer + CG inner |
 | **`FourDVarNet`** | Learned prior + learned grad modulator | Learned inner iteration |
 | **`AmortizedPosterior`** | Direct $q_\phi(x \mid y)$ head | Single forward pass |
 

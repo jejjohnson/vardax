@@ -32,7 +32,7 @@ import optimistix as optx
 from vardax._src._types import Batch1D
 from vardax._src.minimisers import minimise
 from vardax._src.models._analysis_step import analyse_forecast
-from vardax._src.protocols import Minimiser
+from vardax._src.protocols import Minimiser, StateParameterization
 
 
 class ThreeDVar(eqx.Module):
@@ -54,6 +54,14 @@ class ThreeDVar(eqx.Module):
             optimum.
         max_steps: Iteration cap on the inner solver when ``minimiser``
             is an ``optimistix`` solver; a vardax `Minimiser` keeps its own.
+        parameterization: Optional
+            [`StateParameterization`][vardax.StateParameterization]. When
+            given, the control is $\theta$, the state is
+            $\psi(\theta)$ (reshaped to ``prior_mean.shape``) and
+            $\mathrm{pen}(\theta)$ replaces the background term, so
+            ``prior_mean`` and ``prior_cov_op`` are not used — nor is the
+            ``forecast`` of the analysis-step adapter. Default ``None``:
+            the control is the state itself.
 
     Examples:
         With $B = R = I$, identity $H$ and everything observed, the
@@ -82,6 +90,7 @@ class ThreeDVar(eqx.Module):
     minimiser: optx.AbstractMinimiser | Minimiser = eqx.field(static=True)
     minimiser_adjoint: optx.AbstractAdjoint = eqx.field(static=True)
     max_steps: int = eqx.field(static=True, default=200)
+    parameterization: StateParameterization | None = None
 
     def __init__(
         self,
@@ -92,6 +101,7 @@ class ThreeDVar(eqx.Module):
         minimiser: optx.AbstractMinimiser | Minimiser | None = None,
         minimiser_adjoint: optx.AbstractAdjoint | None = None,
         max_steps: int = 200,
+        parameterization: StateParameterization | None = None,
     ) -> None:
         self.obs_op = obs_op
         self.prior_mean = prior_mean
@@ -100,6 +110,7 @@ class ThreeDVar(eqx.Module):
         self.minimiser = minimiser or optx.BFGS(rtol=1e-6, atol=1e-6)
         self.minimiser_adjoint = minimiser_adjoint or optx.ImplicitAdjoint()
         self.max_steps = max_steps
+        self.parameterization = parameterization
 
     def __call__(self, batch: Batch1D) -> Float[Array, "B T N"]:
         """3DVar analysis for each sample in the batch."""
@@ -123,15 +134,7 @@ class ThreeDVar(eqx.Module):
     ) -> Float[Array, "T N"]:
         """Minimise the 3D-Var cost of one sample around the background ``x_b``."""
 
-        def cost(x: Float[Array, "T N"], _args: Any) -> Float[Array, ""]:
-            # Background term — apply B^{-1} via lineax solve.
-            dx = x - x_b
-            B_inv_dx = lx.linear_solve(
-                self.prior_cov_op,
-                dx,
-                solver=lx.CG(atol=1e-6, rtol=1e-6),
-            ).value
-            j_bg = 0.5 * jnp.sum(dx * B_inv_dx)
+        def obs_cost(x: Float[Array, "T N"]) -> Float[Array, ""]:
             # Observation term — apply R^{-1} via lineax solve.
             # Mask predictions AND observations symmetrically: for
             # obs_ops that don't take a `mask` kwarg (e.g.
@@ -144,8 +147,36 @@ class ThreeDVar(eqx.Module):
                 residual,
                 solver=lx.CG(atol=1e-6, rtol=1e-6),
             ).value
-            j_obs = 0.5 * jnp.sum(residual * R_inv_r)
-            return j_bg + j_obs
+            return 0.5 * jnp.sum(residual * R_inv_r)
+
+        param = self.parameterization
+        if param is not None:
+            # J(θ) = pen(θ) + J_o(ψ(θ)): the penalty replaces the B term.
+            def decode(theta: Any) -> Float[Array, "T N"]:
+                return param.decode(theta).reshape(x_b.shape)
+
+            def param_cost(theta: Any, _args: Any) -> Float[Array, ""]:
+                return param.penalty(theta) + obs_cost(decode(theta))
+
+            theta_star = minimise(
+                self.minimiser,
+                param_cost,
+                param.init_control(),
+                adjoint=self.minimiser_adjoint,
+                max_steps=self.max_steps,
+            )
+            return decode(theta_star)
+
+        def cost(x: Float[Array, "T N"], _args: Any) -> Float[Array, ""]:
+            # Background term — apply B^{-1} via lineax solve.
+            dx = x - x_b
+            B_inv_dx = lx.linear_solve(
+                self.prior_cov_op,
+                dx,
+                solver=lx.CG(atol=1e-6, rtol=1e-6),
+            ).value
+            j_bg = 0.5 * jnp.sum(dx * B_inv_dx)
+            return j_bg + obs_cost(x)
 
         x_star = minimise(
             self.minimiser,

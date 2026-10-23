@@ -94,6 +94,37 @@ reports $\lVert \nabla J(x^\star) \rVert_2$ and warns when it exceeds
 `warn_grad_norm`. `OptimistixMinimiser()` is the default made explicit
 and returns exactly what the default model returns.
 
+## Parameterized initial states
+
+`parameterization=` takes any
+[`StateParameterization`](api/protocols.md): the control becomes a
+pytree $\theta$, the initial state $x_0 = \psi(\theta)$, and its
+penalty replaces the background term,
+
+$$
+J(\theta) = \mathrm{pen}(\theta)
+  + \tfrac{1}{2} \sum_t \lVert y_t - H_t(M^t(\psi(\theta)))\rVert^2_{R_t^{-1}}.
+$$
+
+`LinearParameterization(basis, x_b)` is the reduced-basis case
+($\psi(X) = x_b + \Phi X$, $\mathrm{pen}(X) = \tfrac12 X^\top Q^{-1} X$,
+identical to `Incremental4DVar(basis=...)`).
+`NeuralFieldParameterization(field, coords, weight_decay)` makes $x_0$ a
+coordinate network evaluated on the grid, with
+$\mathrm{pen}(\theta) = \tfrac{\alpha}{2}\lVert\theta\rVert^2$ and no $B$
+(the network's spectral bias is the prior); its weights are a control
+for `OptaxMinimiser`, not BFGS:
+
+```python
+import geonnax, optax, vardax
+
+siren = geonnax.SIREN.init(2, 32, 1, depth=3, key=key)   # (cos, sin) on the ring
+model = vardax.StrongFourDVar(
+    ..., parameterization=vardax.NeuralFieldParameterization(siren, coords, 1e-4),
+    minimiser=vardax.OptaxMinimiser(optax.adam(1e-3), max_steps=2000),
+)
+```
+
 ## The adjoint problem
 
 The gradient computation reads "integrate the trajectory forward,
@@ -235,8 +266,7 @@ Use `StrongFourDVar` when:
   `NonlinearCG` directly on the full nonlinear cost without the
   incremental machinery
 
-For production / operational 4DVar with structured priors and CVT
-preconditioning, use `IncrementalFourDVar` (chapter 8) instead — it's
+For production / operational 4DVar with structured priors, use `IncrementalFourDVar` (chapter 8) instead — it's
 the same problem, solved faster.
 
 If model error matters, use `WeakFourDVar` (chapter 7).
