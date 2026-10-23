@@ -30,7 +30,7 @@ import optimistix as optx
 
 from vardax._src._types import Batch1D
 from vardax._src.minimisers import minimise
-from vardax._src.protocols import Minimiser
+from vardax._src.protocols import Minimiser, StateParameterization
 
 
 class StrongFourDVar(eqx.Module):
@@ -55,6 +55,12 @@ class StrongFourDVar(eqx.Module):
             to ``diffrax``. Default ``None`` (use forward's own).
         max_steps: Iteration cap on the outer solver when ``minimiser``
             is an ``optimistix`` solver; a vardax `Minimiser` keeps its own.
+        parameterization: Optional
+            [`StateParameterization`][vardax.StateParameterization]. When
+            given, the control is $\theta$, $x_0 = \psi(\theta)$ (reshaped
+            to ``prior_mean.shape``) and $\mathrm{pen}(\theta)$ replaces
+            the background term, so ``prior_mean`` and ``prior_cov_op``
+            are not used. Default ``None``: the control is $x_0$.
 
     Examples:
         Trivial dynamics ($M_t(x) = x$) and a single timestep reduce
@@ -89,6 +95,7 @@ class StrongFourDVar(eqx.Module):
     minimiser_adjoint: optx.AbstractAdjoint = eqx.field(static=True)
     forward_adjoint: Any = eqx.field(static=True)
     max_steps: int = eqx.field(static=True, default=200)
+    parameterization: StateParameterization | None = None
 
     def __init__(
         self,
@@ -101,6 +108,7 @@ class StrongFourDVar(eqx.Module):
         minimiser_adjoint: optx.AbstractAdjoint | None = None,
         forward_adjoint: Any = None,
         max_steps: int = 200,
+        parameterization: StateParameterization | None = None,
     ) -> None:
         self.forward = forward
         self.obs_op = obs_op
@@ -111,6 +119,7 @@ class StrongFourDVar(eqx.Module):
         self.minimiser_adjoint = minimiser_adjoint or optx.ImplicitAdjoint()
         self.forward_adjoint = forward_adjoint
         self.max_steps = max_steps
+        self.parameterization = parameterization
 
     def _rollout(self, x_0: Float[Array, N], n_steps: int) -> Float[Array, "T N"]:  # ty:ignore[unresolved-reference]
         """Step the forward model ``n_steps`` times, returning the trajectory."""
@@ -135,16 +144,7 @@ class StrongFourDVar(eqx.Module):
         def _one(
             input_i: Float[Array, "T_plus_1 N"], mask_i: Float[Array, "T_plus_1 N"]
         ) -> Float[Array, N]:  # ty:ignore[unresolved-reference]
-            def cost(x_0: Float[Array, N], _args: Any) -> Float[Array, ""]:  # ty:ignore[unresolved-reference]
-                # Background term
-                dx = x_0 - self.prior_mean
-                B_inv_dx = lx.linear_solve(
-                    self.prior_cov_op,
-                    dx,
-                    solver=lx.CG(atol=1e-6, rtol=1e-6),
-                ).value
-                j_bg = 0.5 * jnp.sum(dx * B_inv_dx)
-
+            def obs_cost(x_0: Float[Array, N]) -> Float[Array, ""]:  # ty:ignore[unresolved-reference]
                 # Roll out the trajectory.
                 trajectory = self._rollout(x_0, n_steps=T)
 
@@ -164,8 +164,36 @@ class StrongFourDVar(eqx.Module):
                     return 0.5 * jnp.sum(residual * R_inv_r)
 
                 per_step_costs = jax.vmap(_per_step)(trajectory, input_i, mask_i)
-                j_obs = jnp.sum(per_step_costs)
-                return j_bg + j_obs
+                return jnp.sum(per_step_costs)
+
+            param = self.parameterization
+            if param is not None:
+                # x_0 = ψ(θ); J(θ) = pen(θ) + J_o(M(ψ(θ))).
+                def decode(theta: Any) -> Float[Array, N]:  # ty:ignore[unresolved-reference]
+                    return param.decode(theta).reshape(self.prior_mean.shape)
+
+                def param_cost(theta: Any, _args: Any) -> Float[Array, ""]:
+                    return param.penalty(theta) + obs_cost(decode(theta))
+
+                theta_star = minimise(
+                    self.minimiser,
+                    param_cost,
+                    param.init_control(),
+                    adjoint=self.minimiser_adjoint,
+                    max_steps=self.max_steps,
+                )
+                return decode(theta_star)
+
+            def cost(x_0: Float[Array, N], _args: Any) -> Float[Array, ""]:  # ty:ignore[unresolved-reference]
+                # Background term
+                dx = x_0 - self.prior_mean
+                B_inv_dx = lx.linear_solve(
+                    self.prior_cov_op,
+                    dx,
+                    solver=lx.CG(atol=1e-6, rtol=1e-6),
+                ).value
+                j_bg = 0.5 * jnp.sum(dx * B_inv_dx)
+                return j_bg + obs_cost(x_0)
 
             return minimise(
                 self.minimiser,

@@ -91,6 +91,10 @@ from vardax._src.obs_operators import (
     MultiInstrumentFusion,
     interp_obs_from_coords,
 )
+from vardax._src.parameterization import (
+    LinearParameterization,
+    NeuralFieldParameterization,
+)
 from vardax._src.posterior import (
     EnsembleCovariance,
     GaussianMarkLikelihood,
@@ -123,6 +127,7 @@ from vardax._src.protocols import (
     PosteriorAdapter,
     Prior,
     ReducedBasis,
+    StateParameterization,
     TemporalPrior,
 )
 from vardax._src.solver import (
@@ -183,7 +188,11 @@ __all__ = [
     "PosteriorAdapter",
     "Prior",
     "ReducedBasis",
+    "StateParameterization",
     "TemporalPrior",
+    # State parameterizations (issue #84)
+    "LinearParameterization",
+    "NeuralFieldParameterization",
     # Reduced bases (issue #49)
     "CompositeBasis",
     "LinearBasis",

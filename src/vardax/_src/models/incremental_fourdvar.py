@@ -1,26 +1,24 @@
-r"""Incremental 4DVar with control-variable transform (Decision D11).
+r"""Incremental 4DVar: Gauss-Newton outer, CG inner (Decision D11).
 
 The operational fast path of [`StrongFourDVar`][vardax.StrongFourDVar]:
 Gauss-Newton outer iterations on the full nonlinear cost, CG inner
-iterations on the linearised quadratic subproblem, with a
-control-variable transform $\chi = B^{-1/2}(\delta x)$ for
-preconditioning.
+iterations on the linearised quadratic subproblem.
 
 At each outer iteration around $x_b^{(k)}$:
 
 1. Linearise $M_t$ and $H_t$ (via ``jax.linearize``).
 2. Form the Gauss-Newton Hessian
    $J''_{GN} = B^{-1} + \sum_t (H'_t M'_t)^\top R_t^{-1} (H'_t M'_t)$.
-3. Solve $J''_{GN}\,\delta x^* = \text{rhs}$ via lineax CG
-   (in $\chi$-space if CVT enabled).
+3. Solve $J''_{GN}\,\delta x^* = \text{rhs}$ via lineax CG.
 4. Update $x_b^{(k+1)} = x_b^{(k)} + \delta x^*$.
 
-This implementation uses ``lineax.JacobianLinearOperator`` for
-$M'_t$, $H'_t$ (autodiff-derived) and ``lineax.CG``
-with positive-semidefinite tagging for the inner solve. The CVT is
-applied via ``gaussx.sqrt`` when ``cvt=True`` — gaussx returns the
-square-root operator for any positive-definite operator (Cholesky
-for dense, structured for Matérn / Kronecker).
+This implementation applies $M'_t$, $H'_t$ through ``jax.linearize`` /
+``jax.vjp`` (autodiff-derived, matrix-free) and solves the inner system
+with ``lineax.CG`` on a positive-semidefinite-tagged operator, in state
+space. There is no control-variable-transform option; for a
+reduced-basis or other reparameterised control use
+[`Incremental4DVar`][vardax.Incremental4DVar] with ``basis=`` or
+``parameterization=``.
 """
 
 from __future__ import annotations

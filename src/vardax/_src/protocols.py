@@ -17,6 +17,9 @@ vardax-specific protocols that ``pipekit-cycle`` doesn't name:
   control (``optimistix`` solvers or first-order ``optax`` optimisers)
 - [`ReducedBasis`][vardax.ReducedBasis] —
   $X \mapsto \Phi(t) X$ reduced-basis control-vector operator
+- [`StateParameterization`][vardax.StateParameterization] —
+  $\theta \mapsto \psi(\theta)$, a (possibly nonlinear) control-to-state
+  map with its own penalty
 
 All protocols are ``@runtime_checkable`` so ``isinstance(obj, Protocol)``
 works for structural conformance checking — used by
@@ -211,6 +214,37 @@ class ReducedBasis(Protocol):
     def nbasis(self) -> int: ...
 
 
+@runtime_checkable
+class StateParameterization(Protocol):
+    r"""Control-to-state map with its own penalty.
+
+    Generalises [`ReducedBasis`][vardax.ReducedBasis] from a linear
+    $x = x_b + \Phi X$ to any $x = \psi(\theta)$ with $\theta$ a pytree.
+    A model given ``parameterization=`` minimises over $\theta$, with
+    $\mathrm{pen}(\theta)$ in place of the background term:
+    $J(\theta) = \mathrm{pen}(\theta) + J_o(\psi(\theta))$.
+
+    Implementations: [`LinearParameterization`][vardax.LinearParameterization]
+    (adapts any `ReducedBasis`) and
+    [`NeuralFieldParameterization`][vardax.NeuralFieldParameterization]
+    (a coordinate network on the grid).
+
+    Members:
+        ``decode(theta, t=None) -> state`` — the state $\psi(\theta)$, at
+        time ``t`` for a time-dependent parameterization.
+        ``penalty(theta) -> scalar`` — $\mathrm{pen}(\theta)$, e.g.
+        $\tfrac12 X^\top Q^{-1} X$.
+        ``init_control(*, key=None) -> theta`` — the starting control;
+        ``key`` is for parameterizations whose start is random.
+    """
+
+    def decode(self, theta: Any, t: float | None = None) -> Float[Array, ...]: ...
+
+    def penalty(self, theta: Any) -> Float[Array, ""]: ...
+
+    def init_control(self, *, key: Any = None) -> Any: ...
+
+
 __all__ = [
     # Re-exports from pipekit-cycle
     "AnalysisStep",
@@ -223,5 +257,6 @@ __all__ = [
     "PosteriorAdapter",
     "Prior",
     "ReducedBasis",
+    "StateParameterization",
     "TemporalPrior",
 ]

@@ -60,6 +60,13 @@ sees a fresh tangent linearisation.
 
 ## Control-variable transform (CVT)
 
+!!! note
+    `IncrementalFourDVar` does not implement the CVT yet: its inner CG
+    solve runs in state space with no preconditioner. The section below
+    describes the method. To minimise over a transformed control today,
+    use `Incremental4DVar` with `basis=` (a reduced basis) or
+    `parameterization=` (any [`StateParameterization`](api/protocols.md)).
+
 The Hessian $\mathbf{H}_\text{GN}$ has condition number set by the
 prior covariance eigenvalues spread over the correlation length scales
 of $B$. For a Matérn $B$ on a 2D grid, this can be hundreds of orders
@@ -113,7 +120,7 @@ model = IncrementalFourDVar(
     prior_mean=x_b,
     prior_cov_op=gx.MaternLinearOperator(coords, length_scale=10.0, sigma=0.1),
     obs_cov_op=lx.DiagonalLinearOperator(obs_uncertainty),
-    config=IncrementalConfig(n_outer=3, n_inner=20, cvt=True),
+    config=IncrementalConfig(n_outer=3, n_inner=20),
 )
 x_star = model(batch)
 
@@ -126,7 +133,6 @@ posterior = model.posterior(batch)
 - `n_outer` — number of Gauss-Newton outer iterations (typical: 3)
 - `n_inner` — max CG iterations per outer (typical: 20–50)
 - `cg_atol`, `cg_rtol` — CG convergence tolerances
-- `cvt` — apply control-variable transform (default `True`)
 
 ## Algorithm
 
@@ -150,8 +156,8 @@ for k in range(config.n_outer):
     # 2. Compute innovations
     d = batch.y - H_lin(forward_trajectory(x, batch))
 
-    # 3. Inner solve via lineax.CG (in χ-space if config.cvt)
-    if config.cvt:
+    # 3. Inner solve via lineax.CG (χ-space shown; not implemented yet)
+    if use_cvt:
         B_half = B_op.half()
         # Solve  (I + B^{1/2} (H'M')ᵀ R⁻¹ (H'M') B^{1/2}) χ = B^{1/2} (H'M')ᵀ R⁻¹ d
         preconditioned_hessian = identity_op + B_half @ sum_t_hmrhm @ B_half
