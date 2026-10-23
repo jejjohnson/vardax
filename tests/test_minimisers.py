@@ -123,11 +123,33 @@ class TestOptaxMinimiser:
 
     def test_stops_on_step_size(self):
         # Same iteration, step ‖u_k‖ = ‖g_k‖ / 2 = √3 / 2^(k+1) ≤ 1e-3 first
-        # at k = 10, so 11 evaluations.
+        # at k = 10; step_patience = 3 needs k = 10, 11, 12, so 13 evaluations.
         result = OptaxMinimiser(optax.sgd(0.5), gtol=0.0, atol=1e-3, patience=None).run(
             lambda x, _: 0.5 * jnp.sum((x - 1.0) ** 2), jnp.zeros(3), None
         )
-        assert int(result.num_steps) == 11
+        assert int(result.num_steps) == 13
+
+    def test_momentum_does_not_leave_a_stationary_point(self):
+        # Codex P2: with J = x²/2 + 1e7 (costs tie in float32) heavy-ball SGD
+        # reaches x = 0 in one step; the stored momentum must not then carry
+        # it to -0.9. The stationary iterate wins the tie on gradient norm.
+        result = OptaxMinimiser(optax.sgd(1.0, momentum=0.9)).run(
+            lambda x, _: 0.5 * x**2 + 1e7, jnp.asarray(1.0), None
+        )
+        assert result.value == 0.0
+        assert result.grad_norm == 0.0
+
+    def test_zero_start_schedule_does_not_stop_at_once(self):
+        # Codex P2: a schedule starting at 0 makes the first update exactly
+        # zero; one small step must not stop the loop.
+        schedule = optax.linear_schedule(0.0, 0.1, 100)
+        result = OptaxMinimiser(optax.adam(schedule)).run(
+            lambda x, _: 0.5 * jnp.sum((x - 3.0) ** 2), jnp.zeros(2), None
+        )
+        assert int(result.num_steps) > 100
+        # Hessian I: ‖x - 3‖ ≤ ‖∇J‖ + round-off.
+        bound = float(result.grad_norm) + 8 * EPS * 3.0 * 2
+        assert jnp.linalg.norm(result.value - 3.0) <= bound
 
     def test_patience_and_lowest_cost_iterate(self):
         # SGD(3) on ½‖x‖² multiplies x by -2 each step, so the cost grows
@@ -236,6 +258,26 @@ class TestOptaxMinimiser:
         bound = float(run(b).grad_norm) / _LAMBDA_MIN + _ROUND
         assert jnp.linalg.norm(g - expected) <= bound
 
+    @pytest.mark.parametrize("which", ["optax", "optimistix"])
+    def test_cost_second_derivative(self, which):
+        # Codex P2: J*(b) = min_x x²/2 - bx = -b²/2, so dJ*/db = -b and
+        # d²J*/db² = -1; detaching x* gave 0. The first derivative is
+        # -x̂ (round-off of x̂ = b); the second is the IFT tangent dx*/db = 1,
+        # exact up to float32.
+        minimiser = (
+            OptaxMinimiser(optax.adam(1e-1), polish=optax.lbfgs())
+            if which == "optax"
+            else OptimistixMinimiser()
+        )
+
+        def j_star(b):
+            return minimiser.run(
+                lambda x, _: 0.5 * x**2 - b * x, jnp.asarray(0.0), None
+            ).cost
+
+        assert jnp.allclose(jax.grad(j_star)(2.0), -2.0, atol=1e-5)
+        assert jnp.allclose(jax.grad(jax.grad(j_star))(2.0), -1.0, atol=8 * EPS)
+
     def test_recursive_checkpoint_adjoint_gradient(self):
         # 50 fixed SGD(0.1) steps on J = ½(x - m)ᵀA(x - m): x_50 = m - (I -
         # 0.1A)^50 (m - x0), so dx_50/dm = I - (I - 0.1A)^50 exactly. The
@@ -268,6 +310,7 @@ class TestOptaxMinimiser:
             {"polish_steps": 0},
             {"polish_gtol": -1.0},
             {"polish_patience": 0},
+            {"step_patience": 0},
         ],
     )
     def test_validation(self, kwargs):
