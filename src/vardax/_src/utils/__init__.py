@@ -9,4 +9,5 @@ Submodules:
 - ``standardize`` — Mean/std standardization and inverse transform.
 - ``preprocessing`` — xarray → JAX conversion and train/test split.
 - ``viz`` — Visualization helpers (soft matplotlib dependency).
+- ``residuals`` — Reference PDE residuals for ``ResidualPenalty``.
 """
