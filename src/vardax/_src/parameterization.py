@@ -97,6 +97,18 @@ class NeuralFieldParameterization(eqx.Module):
             `geonnax.SIREN`. Its current parameters are the initial control.
         coords: Grid coordinates $s_j$, shape ``(N, D)``.
         weight_decay: $\alpha \ge 0$.
+        filter_spec: Which leaves of ``field`` are the control: an
+            ``equinox`` filter (a callable on leaves, or a pytree of bools
+            shaped like ``field``), used for both halves of the partition.
+            Default ``eqx.is_inexact_array``: every floating array.
+
+    Frozen arrays: geonnax (and equinox) keep fixed arrays — random Fourier
+    frequencies, precomputed tables — as ordinary leaves read through
+    ``jax.lax.stop_gradient``. The default filter would make them controls,
+    and the weight decay would shrink them to zero. Exclude them with
+    ``filter_spec``, e.g.
+    ``eqx.tree_at(lambda f: f.B, jax.tree.map(eqx.is_inexact_array, field), False)``;
+    they then stay fixed and outside the penalty.
 
     Examples:
         >>> import jax, jax.numpy as jnp, geonnax, vardax
@@ -114,9 +126,15 @@ class NeuralFieldParameterization(eqx.Module):
     field: eqx.Module
     coords: Float[Array, "N D"]
     weight_decay: float = eqx.field(static=True)
+    filter_spec: Any = eqx.field(static=True)
 
     def __init__(
-        self, field: eqx.Module, coords: Float[Array, "N D"], weight_decay: float
+        self,
+        field: eqx.Module,
+        coords: Float[Array, "N D"],
+        weight_decay: float,
+        *,
+        filter_spec: Any = eqx.is_inexact_array,
     ) -> None:
         coords = jnp.asarray(coords)
         if coords.ndim != 2:
@@ -126,10 +144,11 @@ class NeuralFieldParameterization(eqx.Module):
         self.field = field
         self.coords = coords
         self.weight_decay = weight_decay
+        self.filter_spec = filter_spec
 
     def as_field(self, theta: PyTree[Array]) -> Callable[[Array], Array]:
         """The field with parameters ``theta``, as a callable ``s -> (C,)``."""
-        static = eqx.filter(self.field, eqx.is_inexact_array, inverse=True)
+        static = eqx.filter(self.field, self.filter_spec, inverse=True)
         return eqx.combine(theta, static)
 
     def decode(self, theta: PyTree[Array], t: float | None = None) -> Array:
@@ -153,7 +172,7 @@ class NeuralFieldParameterization(eqx.Module):
     def init_control(self, *, key: PRNGKeyArray | None = None) -> PyTree[Array]:
         """Return the field's current parameters; ``key`` is unused."""
         del key
-        return eqx.filter(self.field, eqx.is_inexact_array)
+        return eqx.filter(self.field, self.filter_spec)
 
 
 __all__ = ["LinearParameterization", "NeuralFieldParameterization"]

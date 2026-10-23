@@ -22,17 +22,16 @@ Differentiating *through* the minimum uses an ``optimistix`` adjoint. The
 default, ``optimistix.ImplicitAdjoint``, applies the implicit function
 theorem at $\theta^\star$, which assumes stationarity,
 $\nabla J(\theta^\star) = 0$. A first-order optimiser stopped by a step
-budget or by patience does not guarantee it, so `OptaxMinimiser` reports
-the final gradient norm $\lVert \nabla J(\theta^\star) \rVert_2$ and warns
-when it exceeds ``warn_grad_norm``.
+budget or by patience does not guarantee it, so both minimisers report
+the final gradient norm $\lVert \nabla J(\theta^\star) \rVert_2$ in
+[`MinimiseResult`][vardax.MinimiseResult]; check it before trusting
+gradients through the minimum.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable
-import functools as ft
 from typing import Any
-import warnings
 
 import equinox as eqx
 import jax
@@ -85,11 +84,6 @@ def _close_over(
     ):
         raise ValueError("cost_fn must return a single floating-point scalar.")
     return fn
-
-
-def _value_and_grad_norm(fn, x, batch):
-    value, grad = jax.value_and_grad(fn)(x, batch)
-    return value, _tree_l2_norm(grad)
 
 
 class OptimistixMinimiser(eqx.Module):
@@ -166,13 +160,11 @@ class OptimistixMinimiser(eqx.Module):
             throw=self.throw,
         )
         value = solution.value
-        cost, grad_norm = _value_and_grad_norm(
-            cost_fn, jax.lax.stop_gradient(value), batch
-        )
+        cost, grad_norm = _cost_and_grad_norm(cost_fn, value, batch)
         return MinimiseResult(
             value=value,
-            cost=jax.lax.stop_gradient(cost),
-            grad_norm=jax.lax.stop_gradient(grad_norm),
+            cost=cost,
+            grad_norm=grad_norm,
             num_steps=solution.stats["num_steps"],
         )
 
@@ -197,37 +189,52 @@ class OptaxMinimiser(eqx.Module):
     r"""First-order minimisation with an ``optax`` optimiser.
 
     Iterates $\theta_{k+1} = \theta_k + u_k$, with $u_k$ the ``optimizer``
-    update from $\nabla J(\theta_k)$, inside a ``jax.lax.while_loop`` (so
-    the whole minimisation is ``jit``-able), and stops at the first of:
+    update from $g_k = \nabla J(\theta_k)$, inside a ``jax.lax.while_loop``
+    (so the whole minimisation is ``jit``-able), and stops at the first of:
 
     - ``max_steps`` steps;
-    - a relative cost change $|J_k - J_{k-1}| \le \mathrm{tol}\,|J_{k-1}|$;
-    - ``patience`` consecutive steps without a new lowest cost.
+    - a small gradient, $\lVert g_k \rVert_2 \le \mathrm{gtol}$;
+    - a small step, $\lVert u_k \rVert_2 \le \mathrm{atol} +
+      \mathrm{rtol}\,\lVert \theta_k \rVert_2$;
+    - ``patience`` consecutive steps whose cost exceeds the lowest cost
+      seen by more than float round-off.
 
-    It returns the iterate with the lowest cost seen. With ``polish``, a
-    second loop of at most ``polish_steps`` steps of that optimiser (for
-    example ``optax.lbfgs()``) starts from there, with the same stopping
-    rules. The optimisers are called with the extra arguments
-    ``value``, ``grad`` and ``value_fn``, so line-search optimisers such as
-    ``optax.lbfgs`` work unchanged.
+    There is deliberately no relative cost-change test: with a large
+    irreducible misfit, $J_k - J_{k-1}$ rounds to zero in float32 long
+    before $\theta$ converges. For the same reason a step counts as an
+    improvement when $J_k \le J_\text{best} + 8\,\varepsilon\,|J_\text{best}|$
+    ($\varepsilon$ the machine epsilon of $J$), so a cost that is flat to
+    round-off does not exhaust the patience. The loop returns the most
+    recent iterate that improved in this sense.
 
-    After the loop it computes $\lVert \nabla J(\theta^\star) \rVert_2$
-    and warns when it exceeds ``warn_grad_norm``: the implicit adjoint
-    used to differentiate through the minimum assumes
+    With ``polish``, a second loop of at most ``polish_steps`` steps of that
+    optimiser (for example ``optax.lbfgs()``) starts from there, with its
+    own, tight, tolerances (``polish_gtol``, ``polish_rtol``,
+    ``polish_atol``, ``polish_patience``; by default it stops only on
+    ``polish_steps`` or an exactly zero step). The optimisers are called
+    with the extra arguments ``value``, ``grad`` and ``value_fn``, so
+    line-search optimisers such as ``optax.lbfgs`` work unchanged.
+
+    The implicit adjoint used to differentiate through the minimum assumes
     $\nabla J(\theta^\star) = 0$, which a first-order optimiser stopped
-    early does not guarantee.
+    early does not guarantee: check
+    [`MinimiseResult.grad_norm`][vardax.MinimiseResult] from `run`.
 
     Attributes:
         optimizer: The ``optax.GradientTransformation`` of the main loop.
         max_steps: Step cap of the main loop.
-        tol: Relative cost-change tolerance; ``0`` disables the test.
+        gtol: Gradient-norm tolerance of the main loop; ``0`` disables it.
+        rtol: Relative step tolerance of the main loop.
+        atol: Absolute step tolerance of the main loop; with ``rtol = atol
+            = 0`` only an exactly zero step stops the loop.
         patience: Steps without improvement before stopping; ``None``
             disables the test.
         polish: Optional second optimiser, run after the main loop.
         polish_steps: Step cap of the polish loop.
-        warn_grad_norm: Warn when the final gradient norm exceeds this
-            (an absolute threshold, in the units of $\nabla J$); ``None``
-            disables the warning.
+        polish_gtol: As ``gtol``, for the polish loop.
+        polish_rtol: As ``rtol``, for the polish loop.
+        polish_atol: As ``atol``, for the polish loop.
+        polish_patience: As ``patience``, for the polish loop.
 
     Examples:
         Adam on $J(x) = \tfrac12 \lVert x - m \rVert^2$, polished by
@@ -241,9 +248,9 @@ class OptaxMinimiser(eqx.Module):
         >>> result = minimiser.run(
         ...     lambda x, m: 0.5 * jnp.sum((x - m) ** 2), jnp.zeros(3), m
         ... )
-        >>> bool(jnp.allclose(result.value, m, atol=1e-4))
+        >>> bool(jnp.allclose(result.value, m, atol=1e-5))
         True
-        >>> bool(result.grad_norm < 1e-4)
+        >>> bool(result.grad_norm < 1e-5)
         True
 
     References:
@@ -253,42 +260,64 @@ class OptaxMinimiser(eqx.Module):
 
     optimizer: optax.GradientTransformation = eqx.field(static=True)
     max_steps: int = eqx.field(static=True)
-    tol: float = eqx.field(static=True)
+    gtol: float = eqx.field(static=True)
+    rtol: float = eqx.field(static=True)
+    atol: float = eqx.field(static=True)
     patience: int | None = eqx.field(static=True)
     polish: optax.GradientTransformation | None = eqx.field(static=True)
     polish_steps: int = eqx.field(static=True)
-    warn_grad_norm: float | None = eqx.field(static=True)
+    polish_gtol: float = eqx.field(static=True)
+    polish_rtol: float = eqx.field(static=True)
+    polish_atol: float = eqx.field(static=True)
+    polish_patience: int | None = eqx.field(static=True)
 
     def __init__(
         self,
         optimizer: optax.GradientTransformation | None = None,
         *,
         max_steps: int = 5000,
-        tol: float = 1e-6,
+        gtol: float = 1e-6,
+        rtol: float = 0.0,
+        atol: float = 0.0,
         patience: int | None = 200,
         polish: optax.GradientTransformation | None = None,
         polish_steps: int = 200,
-        warn_grad_norm: float | None = 1e-3,
+        polish_gtol: float = 0.0,
+        polish_rtol: float = 0.0,
+        polish_atol: float = 0.0,
+        polish_patience: int | None = None,
     ) -> None:
-        if max_steps < 1:
-            raise ValueError(f"max_steps must be >= 1, got {max_steps}.")
-        if tol < 0:
-            raise ValueError(f"tol must be >= 0, got {tol}.")
-        if patience is not None and patience < 1:
-            raise ValueError(f"patience must be >= 1 or None, got {patience}.")
-        if polish_steps < 1:
-            raise ValueError(f"polish_steps must be >= 1, got {polish_steps}.")
-        if warn_grad_norm is not None and warn_grad_norm < 0:
-            raise ValueError(
-                f"warn_grad_norm must be >= 0 or None, got {warn_grad_norm}."
-            )
+        for name, steps in (("max_steps", max_steps), ("polish_steps", polish_steps)):
+            if steps < 1:
+                raise ValueError(f"{name} must be >= 1, got {steps}.")
+        for name, value in (
+            ("gtol", gtol),
+            ("rtol", rtol),
+            ("atol", atol),
+            ("polish_gtol", polish_gtol),
+            ("polish_rtol", polish_rtol),
+            ("polish_atol", polish_atol),
+        ):
+            if value < 0:
+                raise ValueError(f"{name} must be >= 0, got {value}.")
+        for name, value in (
+            ("patience", patience),
+            ("polish_patience", polish_patience),
+        ):
+            if value is not None and value < 1:
+                raise ValueError(f"{name} must be >= 1 or None, got {value}.")
         self.optimizer = optimizer if optimizer is not None else optax.adam(1e-3)
         self.max_steps = max_steps
-        self.tol = tol
+        self.gtol = gtol
+        self.rtol = rtol
+        self.atol = atol
         self.patience = patience
         self.polish = polish
         self.polish_steps = polish_steps
-        self.warn_grad_norm = warn_grad_norm
+        self.polish_gtol = polish_gtol
+        self.polish_rtol = polish_rtol
+        self.polish_atol = polish_atol
+        self.polish_patience = polish_patience
 
     def run(
         self,
@@ -299,6 +328,10 @@ class OptaxMinimiser(eqx.Module):
         adjoint: optx.AbstractAdjoint | None = None,
     ) -> MinimiseResult:
         """Minimise ``cost_fn(x, batch)`` from ``x0``, with diagnostics.
+
+        ``result.cost`` is differentiable: by the envelope theorem
+        $\\mathrm{d}J^\\star/\\mathrm{d}\\phi = \\partial J/\\partial\\phi$ at
+        $\\theta^\\star$ for any parameter $\\phi$ of the cost.
 
         Args:
             cost_fn: Scalar cost ``cost_fn(x, batch)``.
@@ -318,14 +351,10 @@ class OptaxMinimiser(eqx.Module):
         x0 = jtu.tree_map(jnp.asarray, x0)
         fn = _close_over(cost_fn, x0, batch)
         inputs = (fn, self, x0, batch)
-        value, (cost, grad_norm, num_steps) = (adjoint or optx.ImplicitAdjoint()).apply(
+        value, num_steps = (adjoint or optx.ImplicitAdjoint()).apply(
             _optax_primal, _optax_rewrite, inputs, frozenset()
         )
-        if self.warn_grad_norm is not None:
-            jax.debug.callback(
-                ft.partial(_warn_if_not_stationary, threshold=self.warn_grad_norm),
-                grad_norm,
-            )
+        cost, grad_norm = _cost_and_grad_norm(cost_fn, value, batch)
         return MinimiseResult(
             value=value, cost=cost, grad_norm=grad_norm, num_steps=num_steps
         )
@@ -340,21 +369,23 @@ class OptaxMinimiser(eqx.Module):
         return self.run(cost_fn, x0, batch).value
 
 
-def _warn_if_not_stationary(grad_norm: Any, *, threshold: float) -> None:
-    worst = float(jnp.max(jnp.asarray(grad_norm)))
-    if worst > threshold:
-        warnings.warn(
-            f"OptaxMinimiser stopped with gradient norm {worst:.3e} > "
-            f"warn_grad_norm={threshold:.1e}; the implicit adjoint assumes "
-            "a stationary point, so gradients through this minimum are "
-            "approximate. Raise max_steps / polish, or loosen warn_grad_norm.",
-            UserWarning,
-            stacklevel=2,
-        )
+def _cost_and_grad_norm(cost_fn, value, batch):
+    """$J(\\theta^\\star)$ (differentiable in the cost's parameters) and $\\lVert g \\rVert$.
+
+    $\\theta^\\star$ enters through ``stop_gradient``: at a minimum
+    $\\partial J/\\partial\\theta = 0$, so the total derivative of $J^\\star$
+    is the partial one (envelope theorem), and this avoids
+    differentiating through the minimiser for the cost.
+    """
+    x_star = jax.lax.stop_gradient(value)
+    cost = cost_fn(x_star, batch)
+    grad = jax.grad(cost_fn)(x_star, batch)
+    return cost, jax.lax.stop_gradient(_tree_l2_norm(grad))
 
 
-def _optax_loop(fn, batch, x0, optimizer, max_steps, tol, patience, while_loop):
-    """One early-stopped optimisation loop; returns (best x, steps taken)."""
+def _optax_loop(fn, batch, x0, optimizer, max_steps, tols, patience, while_loop):
+    """One early-stopped optimisation loop; returns (iterate, steps taken)."""
+    gtol, rtol, atol = tols
     optimizer = optax.with_extra_args_support(optimizer)
 
     def value_fn(x):
@@ -362,50 +393,50 @@ def _optax_loop(fn, batch, x0, optimizer, max_steps, tol, patience, while_loop):
 
     f_dtype = fn.out_struct.dtype
     inf = jnp.asarray(jnp.inf, dtype=f_dtype)
-    no_patience = patience is None
+    eps = jnp.finfo(f_dtype).eps
+
+    def improves(f, best_f):
+        # Not worse than the best by more than float round-off.
+        slack = jnp.where(jnp.isfinite(best_f), 8 * eps * jnp.abs(best_f), 0.0)
+        return f <= best_f + slack
 
     def cond(carry):
-        step, _, _, _, _, _, since_best, converged = carry
+        step, _, _, _, _, since_best, converged = carry
         keep = (step < max_steps) & ~converged
-        if not no_patience:
+        if patience is not None:
             keep = keep & (since_best < patience)
         return keep
 
     def body(carry):
-        step, x, opt_state, f_prev, best_x, best_f, since_best, _ = carry
+        step, x, opt_state, best_x, best_f, since_best, _ = carry
         f, g = jax.value_and_grad(fn)(x, batch)
         updates, opt_state = optimizer.update(
             g, opt_state, x, value=f, grad=g, value_fn=value_fn
         )
         x_new = optax.apply_updates(x, updates)
-        improved = f < best_f
+        improved = improves(f, best_f)
         best_x = jtu.tree_map(lambda a, b: jnp.where(improved, a, b), x, best_x)
-        best_f = jnp.where(improved, f, best_f)
+        best_f = jnp.minimum(f, best_f)
         since_best = jnp.where(improved, 0, since_best + 1)
-        # f_prev is +inf before the first evaluation: never converged there.
-        converged = (
-            jnp.isfinite(f_prev) & (jnp.abs(f - f_prev) <= tol * jnp.abs(f_prev))
-            if tol > 0
-            else jnp.asarray(False)
-        )
-        return (step + 1, x_new, opt_state, f, best_x, best_f, since_best, converged)
+        small_grad = _tree_l2_norm(g) <= gtol
+        small_step = _tree_l2_norm(updates) <= atol + rtol * _tree_l2_norm(x)
+        converged = small_grad | small_step
+        return (step + 1, x_new, opt_state, best_x, best_f, since_best, converged)
 
     init = (
         jnp.asarray(0, dtype=jnp.int32),
         x0,
         optimizer.init(x0),
-        inf,
         x0,
         inf,
         jnp.asarray(0, dtype=jnp.int32),
         jnp.asarray(False),
     )
-    step, x_last, _, _, best_x, best_f, _, _ = while_loop(
+    step, x_last, _, best_x, best_f, _, _ = while_loop(
         cond, body, init, max_steps=max_steps
     )
-    # The last update was never evaluated: keep it if it is the best.
-    f_last = fn(x_last, batch)
-    take_last = f_last <= best_f
+    # The last update was never evaluated: keep it unless it is worse.
+    take_last = improves(fn(x_last, batch), best_f)
     x_star = jtu.tree_map(lambda a, b: jnp.where(take_last, a, b), x_last, best_x)
     return x_star, step
 
@@ -418,7 +449,7 @@ def _optax_primal(inputs):
         x0,
         minimiser.optimizer,
         minimiser.max_steps,
-        minimiser.tol,
+        (minimiser.gtol, minimiser.rtol, minimiser.atol),
         minimiser.patience,
         while_loop,
     )
@@ -429,13 +460,12 @@ def _optax_primal(inputs):
             x,
             minimiser.polish,
             minimiser.polish_steps,
-            minimiser.tol,
-            minimiser.patience,
+            (minimiser.polish_gtol, minimiser.polish_rtol, minimiser.polish_atol),
+            minimiser.polish_patience,
             while_loop,
         )
         steps = steps + polish_steps
-    cost, grad_norm = _value_and_grad_norm(fn, x, batch)
-    return x, (cost, grad_norm, steps)
+    return x, steps
 
 
 def _optax_rewrite(root, _residual, inputs):

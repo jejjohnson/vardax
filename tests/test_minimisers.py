@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import warnings
-
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -38,9 +36,17 @@ def _quadratic(x, m):
     return 0.5 * d @ (_A @ d)
 
 
-def _quiet(**kwargs):
-    """An OptaxMinimiser that does not warn (for tests that check values)."""
-    return OptaxMinimiser(warn_grad_norm=None, **kwargs)
+EPS = float(jnp.finfo(jnp.float32).eps)
+_COND = 4.0  # condition number of _A
+# Float32 resolution of the minimiser: ∇J = A(x - m) is computed with an
+# error of a few eps·‖A‖‖x‖, so x is only determined to ~eps·cond(A)·‖x‖;
+# 8 covers the op count of the matvec and the norm.
+_ROUND = 8 * EPS * _COND * float(jnp.linalg.norm(_M))
+
+
+def _grad_bound(result):
+    """‖x - m‖ ≤ ‖∇J(x)‖ / λ_min (exact for this quadratic) + round-off."""
+    return float(result.grad_norm) / _LAMBDA_MIN + _ROUND
 
 
 class TestOptaxMinimiser:
@@ -49,27 +55,43 @@ class TestOptaxMinimiser:
         assert isinstance(OptimistixMinimiser(), Minimiser)
 
     def test_quadratic_converges_to_closed_form(self):
-        minimiser = _quiet(
-            optimizer=optax.adam(5e-2), max_steps=4000, tol=0.0, patience=None
+        minimiser = OptaxMinimiser(
+            optimizer=optax.adam(5e-2), max_steps=4000, gtol=1e-4, patience=None
         )
         result = minimiser.run(_quadratic, jnp.zeros(5), _M)
-        # For a quadratic with Hessian A ⪰ λ_min I the error is bounded
-        # by the gradient: ‖x - m‖ ≤ ‖A (x - m)‖ / λ_min = ‖∇J(x)‖ / λ_min.
-        # The 1e-5 is float32 round-off in ‖∇J‖ (|m| ~ 3, eps ~ 1.2e-7,
-        # times the condition number 4 and a few ops).
-        err = jnp.linalg.norm(result.value - _M)
-        assert err <= result.grad_norm / _LAMBDA_MIN + 1e-5
+        assert jnp.linalg.norm(result.value - _M) <= _grad_bound(result)
         assert result.grad_norm < 1e-3
         assert jnp.allclose(result.cost, _quadratic(result.value, _M))
+
+    def test_large_offset_does_not_stop_early(self):
+        # Regression: a relative cost-change stop fired after 2 steps here,
+        # because J - J_prev rounds to 0 next to a 1e7 offset (error 4.8).
+        m = jnp.full(10, 5.0)
+        result = OptaxMinimiser(optax.adam(1e-1)).run(
+            lambda x, _: 0.5 * jnp.sum((x - m) ** 2) + 1e7, jnp.zeros(10), None
+        )
+        assert int(result.num_steps) > 50
+        # Hessian I: ‖x - m‖ ≤ ‖∇J‖ + eps·‖m‖ round-off.
+        bound = float(result.grad_norm) + 8 * EPS * float(jnp.linalg.norm(m))
+        assert jnp.linalg.norm(result.value - m) <= bound
+        assert bound < 1e-4
 
     def test_lbfgs_polish_reaches_round_off(self):
         minimiser = OptaxMinimiser(
             optimizer=optax.adam(1e-1), max_steps=200, polish=optax.lbfgs()
         )
         result = minimiser.run(_quadratic, jnp.zeros(5), _M)
-        # L-BFGS on a 5-D quadratic converges to float32 round-off.
-        assert jnp.allclose(result.value, _M, atol=1e-4)
-        assert result.grad_norm < 1e-3
+        assert jnp.linalg.norm(result.value - _M) <= _grad_bound(result)
+        assert result.grad_norm < 1e-5
+
+    def test_polish_has_its_own_tight_tolerances(self):
+        # A loose main loop (gtol = 0.1) must not loosen the polish.
+        minimiser = OptaxMinimiser(
+            optimizer=optax.adam(1e-1), gtol=1e-1, polish=optax.lbfgs()
+        )
+        result = minimiser.run(_quadratic, jnp.zeros(5), _M)
+        assert result.grad_norm < 1e-5
+        assert jnp.linalg.norm(result.value - _M) <= _ROUND + 1e-5
 
     def test_pytree_control(self):
         def cost(x, m):
@@ -77,74 +99,151 @@ class TestOptaxMinimiser:
 
         x0 = {"a": jnp.zeros(3), "b": jnp.ones((2, 2))}
         minimiser = OptaxMinimiser(optax.adam(1e-1), polish=optax.lbfgs())
-        x = minimiser(cost, x0, _M[:3])
+        result = minimiser.run(cost, x0, _M[:3])
+        x = result.value
         assert jax.tree.structure(x) == jax.tree.structure(x0)
-        assert jnp.allclose(x["a"], _M[:3], atol=1e-4)
-        assert jnp.allclose(x["b"], 0.0, atol=1e-4)
+        # Hessian I: the error is bounded by the gradient norm.
+        bound = float(result.grad_norm) + 8 * EPS * 3.0
+        assert jnp.max(jnp.abs(x["a"] - _M[:3])) <= bound
+        assert jnp.max(jnp.abs(x["b"])) <= bound
 
     def test_stops_on_max_steps(self):
-        result = _quiet(max_steps=7, tol=0.0, patience=None).run(
+        result = OptaxMinimiser(max_steps=7, gtol=0.0, patience=None).run(
             _quadratic, jnp.zeros(5), _M
         )
         assert int(result.num_steps) == 7
 
-    def test_stops_on_patience(self):
-        # A constant cost never improves after the first step.
-        result = _quiet(max_steps=1000, tol=0.0, patience=5).run(
-            lambda x, _: jnp.sum(0.0 * x) + 1.0, jnp.zeros(3), None
+    def test_stops_on_gradient_norm(self):
+        # SGD(0.5) on ½‖x - 1‖² halves the gradient exactly each step:
+        # ‖g_k‖ = √3 / 2^k ≤ 1e-3 first at k = 11, so 12 evaluations.
+        result = OptaxMinimiser(optax.sgd(0.5), gtol=1e-3, patience=None).run(
+            lambda x, _: 0.5 * jnp.sum((x - 1.0) ** 2), jnp.zeros(3), None
+        )
+        assert int(result.num_steps) == 12
+
+    def test_stops_on_step_size(self):
+        # Same iteration, step ‖u_k‖ = ‖g_k‖ / 2 = √3 / 2^(k+1) ≤ 1e-3 first
+        # at k = 10, so 11 evaluations.
+        result = OptaxMinimiser(optax.sgd(0.5), gtol=0.0, atol=1e-3, patience=None).run(
+            lambda x, _: 0.5 * jnp.sum((x - 1.0) ** 2), jnp.zeros(3), None
+        )
+        assert int(result.num_steps) == 11
+
+    def test_patience_and_lowest_cost_iterate(self):
+        # SGD(3) on ½‖x‖² multiplies x by -2 each step, so the cost grows
+        # 4x per step: x0 is the best, and patience 5 stops after 1 + 5.
+        x0 = jnp.array([0.1, -0.1])
+        result = OptaxMinimiser(optax.sgd(3.0), gtol=0.0, patience=5).run(
+            lambda x, _: 0.5 * jnp.sum(x**2), x0, None
         )
         assert int(result.num_steps) == 6
-
-    def test_stops_on_relative_cost_change(self):
-        result = _quiet(
-            optimizer=optax.sgd(0.5), max_steps=1000, tol=1e-3, patience=None
-        ).run(lambda x, _: 0.5 * jnp.sum((x - 1.0) ** 2) + 1.0, jnp.zeros(3), None)
-        assert 1 < int(result.num_steps) < 1000
-
-    def test_returns_lowest_cost_iterate(self):
-        # SGD with too large a step diverges; the best iterate is x0.
-        x0 = jnp.array([0.1, -0.1])
-        result = _quiet(
-            optimizer=optax.sgd(3.0), max_steps=10, tol=0.0, patience=None
-        ).run(lambda x, _: 0.5 * jnp.sum(x**2), x0, None)
         assert jnp.array_equal(result.value, x0)
 
-    def test_warns_when_not_stationary(self):
-        minimiser = OptaxMinimiser(max_steps=1, warn_grad_norm=1e-3)
-        with pytest.warns(UserWarning, match="gradient norm"):
-            result = minimiser.run(_quadratic, jnp.zeros(5), _M)
-            jax.effects_barrier()
-        assert result.grad_norm > 1e-3
+    def test_flat_cost_does_not_exhaust_patience(self):
+        # A cost flat to float32 round-off (offset 1e7) counts as improving:
+        # patience=3 must not stop Adam while x is still moving.
+        result = OptaxMinimiser(optax.adam(1e-2), gtol=0.0, patience=3).run(
+            lambda x, _: 1e-3 * jnp.sum((x - 1.0) ** 2) + 1e7, jnp.zeros(3), None
+        )
+        # The cost is exactly 1e7 throughout (ulp(1e7) = 1); Adam walks x
+        # to 1 regardless, ~100 steps per unit at lr 1e-2.
+        assert int(result.num_steps) > 100
+        assert jnp.allclose(result.value, 1.0, atol=2e-2)
 
-    def test_no_warning_when_stationary(self):
-        minimiser = OptaxMinimiser(optax.adam(1e-1), polish=optax.lbfgs())
-        with warnings.catch_warnings():
-            warnings.simplefilter("error")
-            minimiser.run(_quadratic, jnp.zeros(5), _M)
-            jax.effects_barrier()
+    def test_not_stationary_is_reported_under_jit_and_vmap(self):
+        # No in-graph warning: jit + vmap under warnings-as-errors works and
+        # the gradient norm is returned instead.
+        minimiser = OptaxMinimiser(max_steps=1)
+
+        @jax.jit
+        @jax.vmap
+        def solve(m):
+            return minimiser.run(_quadratic, jnp.zeros(5), m).grad_norm
+
+        g = solve(jnp.stack([_M, 2 * _M]))
+        assert g.shape == (2,)
+        assert jnp.all(g > 1.0)
 
     def test_jit_full_minimisation(self):
         minimiser = OptaxMinimiser(optax.adam(1e-1), polish=optax.lbfgs())
 
         @jax.jit
         def solve(m):
-            return minimiser(_quadratic, jnp.zeros(5), m)
+            return minimiser.run(_quadratic, jnp.zeros(5), m)
 
-        x_jit = solve(_M)
-        x_eager = minimiser(_quadratic, jnp.zeros(5), _M)
-        assert jnp.allclose(x_jit, x_eager, atol=1e-5)
-        assert jnp.allclose(solve(2.0 * _M), 2.0 * _M, atol=1e-4)
+        r_jit = solve(_M)
+        r_eager = minimiser.run(_quadratic, jnp.zeros(5), _M)
+        # Both are within the gradient bound of m, hence of each other.
+        tol = _grad_bound(r_jit) + _grad_bound(r_eager)
+        assert jnp.linalg.norm(r_jit.value - r_eager.value) <= tol
+        r2 = solve(2.0 * _M)
+        assert jnp.linalg.norm(r2.value - 2.0 * _M) <= _grad_bound(r2) + _ROUND
 
     def test_implicit_adjoint_gradient(self):
-        # x*(m) = m, so dx*/dm = I through the implicit function theorem.
+        # x*(m) = m, so dx*/dm = I; the IFT tangent is A^{-1} A = I up to
+        # the float32 solve error, ~ eps·cond(A) times a small op count.
         minimiser = OptaxMinimiser(optax.adam(1e-1), polish=optax.lbfgs())
         jac = jax.jacobian(lambda m: minimiser(_quadratic, jnp.zeros(5), m))(_M)
-        assert jnp.allclose(jac, jnp.eye(5), atol=1e-4)
+        assert jnp.allclose(jac, jnp.eye(5), atol=16 * EPS * _COND)
+
+    def test_implicit_adjoint_matrix_derivative(self):
+        # J = ½ xᵀAx - bᵀx, x* = A⁻¹b, dx*/dA[δA] = -A⁻¹ δA A⁻¹ b. Unlike
+        # dx*/dm above, this depends on x* itself, so an inexact x* shows.
+        Q = jnp.linalg.qr(jax.random.normal(jax.random.PRNGKey(0), (4, 4)))[0]
+        A = Q @ jnp.diag(jnp.array([1.0, 2.0, 5.0, 10.0])) @ Q.T
+        b = jnp.array([1.0, -1.0, 2.0, 0.5])
+        dA = jax.random.normal(jax.random.PRNGKey(2), (4, 4))
+        dA = dA + dA.T
+        minimiser = OptaxMinimiser(optax.adam(1e-1), polish=optax.lbfgs())
+
+        def solve(Am):
+            return minimiser(lambda x, _: 0.5 * x @ Am @ x - b @ x, jnp.zeros(4), None)
+
+        x, t = jax.jvp(solve, (A,), (dA,))
+        A_inv = jnp.linalg.inv(A)
+        x_true = A_inv @ b
+        t_true = -A_inv @ dA @ x_true
+        cond = 10.0
+        # x* is resolved to float32: ~eps·cond(A)·‖x‖ (8 for the op count).
+        x_floor = 8 * EPS * cond * float(jnp.linalg.norm(x_true))
+        assert jnp.linalg.norm(x - x_true) <= x_floor
+        # The IFT tangent is -A⁻¹ δA x̂, so its error is ‖A⁻¹‖‖δA‖‖x̂ - x‖
+        # plus the float32 tangent solve, ~eps·cond(A)·‖t‖.
+        bound = float(jnp.linalg.norm(dA, 2)) * x_floor + 8 * EPS * cond * float(
+            jnp.linalg.norm(t_true)
+        )
+        assert jnp.linalg.norm(t - t_true) <= bound
+
+    @pytest.mark.parametrize("which", ["optax", "optimistix"])
+    def test_cost_gradient_is_envelope(self, which):
+        # J*(b) = min_x ½ xᵀAx - bᵀx has dJ*/db = -x* = -A⁻¹b.
+        b = jnp.array([1.0, -1.0, 2.0, 0.5, 0.0])
+        minimiser = (
+            OptaxMinimiser(optax.adam(1e-1), polish=optax.lbfgs())
+            if which == "optax"
+            else OptimistixMinimiser()
+        )
+
+        def run(b):
+            return minimiser.run(
+                lambda x, _: 0.5 * x @ _A @ x - b @ x, jnp.zeros(5), None
+            )
+
+        g = jax.grad(lambda b: run(b).cost)(b)
+        expected = -jnp.linalg.solve(_A, b)
+        # dJ*/db = -x̂ exactly, so the error is ‖x̂ - x*‖ ≤ ‖∇J(x̂)‖ / λ_min
+        # (exact for a quadratic) plus round-off.
+        bound = float(run(b).grad_norm) / _LAMBDA_MIN + _ROUND
+        assert jnp.linalg.norm(g - expected) <= bound
 
     def test_recursive_checkpoint_adjoint_gradient(self):
-        # No L-BFGS polish: its zoom line search is an inner while_loop,
-        # which reverse-mode cannot differentiate.
-        minimiser = _quiet(optimizer=optax.adam(1e-1), max_steps=1000)
+        # 50 fixed SGD(0.1) steps on J = ½(x - m)ᵀA(x - m): x_50 = m - (I -
+        # 0.1A)^50 (m - x0), so dx_50/dm = I - (I - 0.1A)^50 exactly. The
+        # cost decreases monotonically (0.1·λ_max < 2), so the last iterate
+        # is returned. Tolerance: float32 round-off of a 50-term product.
+        minimiser = OptaxMinimiser(
+            optax.sgd(0.1), max_steps=50, gtol=0.0, patience=None
+        )
 
         def solve(m):
             return minimiser.run(
@@ -155,18 +254,20 @@ class TestOptaxMinimiser:
             ).value
 
         jac = jax.jacrev(solve)(_M)
-        # Unrolled differentiation of a converged loop: I up to the
-        # residual contraction of the last iterates (looser than IFT).
-        assert jnp.allclose(jac, jnp.eye(5), atol=1e-2)
+        expected = jnp.eye(5) - jnp.linalg.matrix_power(jnp.eye(5) - 0.1 * _A, 50)
+        assert jnp.allclose(jac, expected, atol=50 * 8 * EPS)
 
     @pytest.mark.parametrize(
         "kwargs",
         [
             {"max_steps": 0},
-            {"tol": -1.0},
+            {"gtol": -1.0},
+            {"rtol": -1.0},
+            {"atol": -1.0},
             {"patience": 0},
             {"polish_steps": 0},
-            {"warn_grad_norm": -1.0},
+            {"polish_gtol": -1.0},
+            {"polish_patience": 0},
         ],
     )
     def test_validation(self, kwargs):
@@ -181,8 +282,7 @@ class TestOptaxMinimiser:
 class TestOptimistixMinimiser:
     def test_quadratic(self):
         result = OptimistixMinimiser().run(_quadratic, jnp.zeros(5), _M)
-        # BFGS(rtol=atol=1e-6) on a 5-D quadratic: converged to round-off.
-        assert jnp.allclose(result.value, _M, atol=1e-4)
+        assert jnp.linalg.norm(result.value - _M) <= _grad_bound(result)
         assert result.grad_norm < 1e-3
 
     def test_validation(self):
@@ -238,6 +338,71 @@ def _strong(minimiser=None, **kw):
         obs_cov_op=_eye((4,)),
         minimiser=minimiser,
         **kw,
+    )
+
+
+def _l63_case(seed):
+    """Strong 4D-Var on Lorenz-63: BFGS and OptaxMinimiser analyses.
+
+    Returns ``(‖x_optax - x_bfgs‖, bound, ‖x_optax - x_true‖, ‖x_b - x_true‖)``.
+    """
+    key_truth, key_b, key_o = jax.random.split(jax.random.PRNGKey(seed), 3)
+    forward = Lorenz63RK4()
+    _, states = vdx.simulate_lorenz63(key_truth, n_steps=1, n_burn_in=500)
+    x_true = states[0]
+    T = 20  # 0.2 time units: weakly nonlinear window
+    traj = [x_true]
+    for _ in range(T):
+        traj.append(forward.step(traj[-1], forward.dt))
+    truth = jnp.stack(traj)
+    y = truth + jax.random.normal(key_o, truth.shape)
+    x_b = x_true + jax.random.normal(key_b, (3,))
+    batch = Batch1D(input=y[None], mask=jnp.ones_like(y)[None])
+
+    def model(minimiser=None):
+        return StrongFourDVar(
+            forward=forward,
+            obs_op=MaskedIdentity(),
+            prior_mean=x_b,
+            prior_cov_op=_eye((3,)),
+            obs_cov_op=_eye((3,)),
+            minimiser=minimiser,
+        )
+
+    x_bfgs = model()(batch)[0]
+    x_optax = model(
+        OptaxMinimiser(
+            optax.adam(5e-2),
+            max_steps=3000,
+            patience=20,
+            polish=optax.lbfgs(),
+            polish_steps=100,
+        )
+    )(batch)[0]
+
+    # The cost the model minimises, with B = R = I.
+    def cost(x0):
+        xs = [x0]
+        for _ in range(T):
+            xs.append(forward.step(xs[-1], forward.dt))
+        return 0.5 * jnp.sum((x0 - x_b) ** 2) + 0.5 * jnp.sum((y - jnp.stack(xs)) ** 2)
+
+    # Heuristic bound (not a proof): near a strict minimum each analysis
+    # lies within ‖∇J‖ / λ of x*, with λ the smallest Hessian eigenvalue on
+    # the segment. We use half the eigenvalue at x_bfgs for λ, plus 1e-4
+    # for float32 round-off in the 21-step rollout. Calibrated on seeds
+    # 1-6: observed distance / bound was at most 0.15, so the margin is
+    # about 7x.
+    lam = jnp.linalg.eigvalsh(jax.hessian(cost)(x_bfgs))[0] / 2.0
+    assert lam > 0
+    g_bfgs = jnp.linalg.norm(jax.grad(cost)(x_bfgs))
+    g_optax = jnp.linalg.norm(jax.grad(cost)(x_optax))
+    bound = (g_bfgs + g_optax) / lam + 1e-4
+    return (
+        float(jnp.linalg.norm(x_optax - x_bfgs)),
+        float(bound),
+        float(jnp.linalg.norm(x_optax - x_true)),
+        float(jnp.linalg.norm(x_b - x_true)),
     )
 
 
@@ -299,62 +464,7 @@ class TestModels:
 
     @pytest.mark.slow
     def test_strong_4dvar_lorenz63_matches_bfgs(self):
-        key_truth, key_b, key_o = jax.random.split(jax.random.PRNGKey(1), 3)
-        forward = Lorenz63RK4()
-        _, states = vdx.simulate_lorenz63(key_truth, n_steps=1, n_burn_in=500)
-        x_true = states[0]
-        T = 20  # 0.2 time units: weakly nonlinear window
-        traj = [x_true]
-        for _ in range(T):
-            traj.append(forward.step(traj[-1], forward.dt))
-        truth = jnp.stack(traj)
-        y = truth + jax.random.normal(key_o, truth.shape)
-        x_b = x_true + jax.random.normal(key_b, (3,))
-        batch = Batch1D(input=y[None], mask=jnp.ones_like(y)[None])
-
-        def model(minimiser=None):
-            return StrongFourDVar(
-                forward=forward,
-                obs_op=MaskedIdentity(),
-                prior_mean=x_b,
-                prior_cov_op=_eye((3,)),
-                obs_cov_op=_eye((3,)),
-                minimiser=minimiser,
-            )
-
-        x_bfgs = model()(batch)[0]
-        x_optax = model(
-            # tol=0: stop on patience, not on a float32-noise cost change.
-            OptaxMinimiser(
-                optax.adam(5e-2),
-                max_steps=3000,
-                tol=0.0,
-                patience=20,
-                polish=optax.lbfgs(),
-                polish_steps=100,
-            )
-        )(batch)[0]
-
-        # The cost the model minimises, with B = R = I.
-        def cost(x0):
-            xs = [x0]
-            for _ in range(T):
-                xs.append(forward.step(xs[-1], forward.dt))
-            return 0.5 * jnp.sum((x0 - x_b) ** 2) + 0.5 * jnp.sum(
-                (y - jnp.stack(xs)) ** 2
-            )
-
-        # Strong convexity bound near the minimum: if ∇²J ⪰ λ I on the
-        # segment between the two analyses, each lies within ‖∇J‖ / λ of
-        # x*, so ‖x_optax - x_bfgs‖ ≤ (‖∇J(x_optax)‖ + ‖∇J(x_bfgs)‖) / λ.
-        # λ is the smallest Hessian eigenvalue at x_bfgs halved, to allow
-        # for curvature change over a segment this short; 1e-4 covers
-        # float32 round-off in the 21-step rollout.
-        lam = jnp.linalg.eigvalsh(jax.hessian(cost)(x_bfgs))[0] / 2.0
-        assert lam > 0
-        g_bfgs = jnp.linalg.norm(jax.grad(cost)(x_bfgs))
-        g_optax = jnp.linalg.norm(jax.grad(cost)(x_optax))
-        bound = (g_bfgs + g_optax) / lam + 1e-4
-        assert jnp.linalg.norm(x_optax - x_bfgs) <= bound
+        dist, bound, err_a, err_b = _l63_case(1)
+        assert dist <= bound
         # And the analysis improves on the background.
-        assert jnp.linalg.norm(x_optax - x_true) < jnp.linalg.norm(x_b - x_true)
+        assert err_a < err_b

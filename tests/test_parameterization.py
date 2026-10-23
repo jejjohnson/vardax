@@ -7,6 +7,7 @@ import geonnax
 import jax
 import jax.numpy as jnp
 import lineax as lx
+import numpy as np
 import optax
 import pytest
 
@@ -70,6 +71,50 @@ def _ring(n=40):
     return jnp.stack([jnp.cos(angle), jnp.sin(angle)], axis=-1)
 
 
+EPS = float(jnp.finfo(jnp.float32).eps)
+
+
+def _rbf():
+    return rbf_basis(
+        (jnp.arange(6.0),), centers=jnp.array([[0.0], [2.5], [5.0]]), widths=2.0
+    )
+
+
+def _phi(basis):
+    return jnp.stack([basis.operg(0.0, e) for e in jnp.eye(basis.nbasis)], axis=1)
+
+
+def _closed_form(batch, x_b, basis):
+    """Normal equations of the reduced-basis cost, in float64 (NumPy).
+
+    J(X) = ½ XᵀQ⁻¹X + ½ Σ_t ‖m_t ⊙ (y_t - 0.9^t (x_b + ΦX))‖², so
+    (Q⁻¹ + Σ_t A_tᵀA_t) X = Σ_t A_tᵀ(y_t - m_t 0.9^t x_b), A_t = 0.9^t m_t Φ.
+    """
+    phi = np.asarray(_phi(basis), dtype=np.float64)
+    m = phi.shape[1]
+    q_inv = np.stack([np.asarray(basis.prior_inv(e)) for e in np.eye(m)], axis=1)
+    y = np.asarray(batch.input[0], dtype=np.float64)
+    mask = np.asarray(batch.mask[0], dtype=np.float64)
+    xb = np.asarray(x_b, dtype=np.float64)
+    h, g = q_inv.astype(np.float64), np.zeros(m)
+    for t in range(y.shape[0]):
+        a = (0.9**t) * mask[t][:, None] * phi
+        h = h + a.T @ a
+        g = g + a.T @ (y[t] - mask[t] * 0.9**t * xb)
+    X = np.linalg.solve(h, g)
+    j_star = 0.5 * X @ q_inv @ X
+    for t in range(y.shape[0]):
+        r = mask[t] * (y[t] - 0.9**t * (xb + phi @ X))
+        j_star = j_star + 0.5 * r @ r
+    x_cf = jnp.asarray(xb + phi @ X, dtype=jnp.float32)
+    return (
+        x_cf,
+        float(j_star),
+        float(np.linalg.eigvalsh(h)[0]),
+        float(np.linalg.norm(phi, 2)),
+    )
+
+
 @pytest.fixture
 def window():
     """N = 6 state, 3 rollout steps of decay dynamics, partial observations."""
@@ -100,11 +145,9 @@ class TestLinearParameterization:
         assert jnp.allclose(param.penalty(X), 0.5 * jnp.sum(X**2 / variance))
         assert jnp.array_equal(param.init_control(), jnp.zeros(3))
 
-    def test_reproduces_incremental_4dvar_basis_exactly(self, window):
+    def test_matches_incremental_4dvar_basis_and_closed_form(self, window):
         batch, x_b = window
-        basis = rbf_basis(
-            (jnp.arange(6.0),), centers=jnp.array([[0.0], [2.5], [5.0]]), widths=2.0
-        )
+        basis = _rbf()
         common = {
             "forward": DecayForward(),
             "obs_op": MaskedIdentity(),
@@ -112,11 +155,42 @@ class TestLinearParameterization:
             "prior_cov_op": _eye((6,)),
             "obs_cov_op": _eye((6,)),
         }
-        x_basis = Incremental4DVar(**common, basis=basis)(batch)
+        x_basis = Incremental4DVar(**common, basis=basis)(batch)[0]
         x_param = Incremental4DVar(
             **common, parameterization=LinearParameterization(basis, x_b)
-        )(batch)
-        assert jnp.array_equal(x_basis, x_param)
+        )(batch)[0]
+        x_cf, j_star, lam_min, phi_norm = _closed_form(batch, x_b, basis)
+        # Tied to BFGS(rtol = atol = 1e-6): it stops once the cost decrease
+        # is below atol + rtol·|J|. Allowing the remaining gap to be 10x that
+        # last decrease, J(X̂) - J* ≤ δ := 10 (1e-6 + 1e-6 |J*|), and for this
+        # quadratic ½ λ_min ‖X̂ - X*‖² ≤ J(X̂) - J*, so
+        # ‖x̂ - x*‖ ≤ ‖Φ‖₂ sqrt(2δ / λ_min), plus float32 round-off of x.
+        delta = 10 * (1e-6 + 1e-6 * abs(j_star))
+        bound = phi_norm * np.sqrt(2 * delta / lam_min)
+        bound = bound + 8 * EPS * float(jnp.max(jnp.abs(x_cf)))
+        assert jnp.linalg.norm(x_basis - x_cf) <= bound
+        assert jnp.linalg.norm(x_param - x_cf) <= bound
+        # Both minimise the same cost; they agree within twice that bound.
+        assert jnp.linalg.norm(x_basis - x_param) <= 2 * bound
+
+    def test_basis_path_matches_pre_pr_reference(self, window):
+        # Incremental4DVar(basis=...) output on main before this PR (the
+        # basis path is the same code). 1e-5 allows cross-platform float32
+        # differences in the BFGS iterates; routing it through
+        # LinearParameterization moved it by 6.6e-5.
+        batch, x_b = window
+        x = Incremental4DVar(
+            forward=DecayForward(),
+            obs_op=MaskedIdentity(),
+            prior_mean=x_b,
+            prior_cov_op=_eye((6,)),
+            obs_cov_op=_eye((6,)),
+            basis=_rbf(),
+        )(batch)[0]
+        reference = jnp.array(
+            [-0.4702341, -0.7426063, -0.8532791, -0.7294558, -0.41439342, -0.05025512]
+        )
+        assert jnp.allclose(x, reference, rtol=0.0, atol=1e-5)
 
     def test_strong_4dvar_matches_incremental_basis(self, window):
         batch, x_b = window
@@ -241,6 +315,44 @@ class TestNeuralFieldParameterization:
         with pytest.raises(ValueError, match="weight_decay"):
             NeuralFieldParameterization(siren, _ring(), -1.0)
 
+    def test_frozen_leaves_stay_fixed_with_filter_spec(self):
+        # An RFF field: frozen frequencies B behind stop_gradient (the geonnax
+        # convention) and a trainable linear head.
+        class RFFField(eqx.Module):
+            B: jax.Array
+            lin: eqx.nn.Linear
+
+            def __call__(self, s):
+                z = s @ jax.lax.stop_gradient(self.B)
+                return self.lin(jnp.concatenate([jnp.cos(z), jnp.sin(z)]))
+
+        field = RFFField(
+            3.0 * jax.random.normal(jax.random.PRNGKey(0), (2, 8)),
+            eqx.nn.Linear(16, 1, key=jax.random.PRNGKey(1)),
+        )
+        spec = eqx.tree_at(
+            lambda f: f.B, jax.tree.map(eqx.is_inexact_array, field), False
+        )
+        coords = _ring(20)
+        param = NeuralFieldParameterization(field, coords, 1.0, filter_spec=spec)
+        theta = param.init_control()
+        assert theta.B is None  # not a control
+        assert jnp.allclose(param.decode(theta), jax.vmap(field)(coords)[:, 0])
+        # The penalty only sees the head; minimising it leaves B untouched.
+        head_sq = sum(jnp.sum(a**2) for a in jax.tree.leaves(theta))
+        assert jnp.allclose(param.penalty(theta), 0.5 * head_sq)
+        y = jnp.sin(3 * 2 * jnp.pi * jnp.arange(20) / 20)
+        theta_star = OptaxMinimiser(optax.adam(1e-2), max_steps=300)(
+            lambda th, _: (
+                param.penalty(th) + 0.5 * jnp.sum((param.decode(th) - y) ** 2)
+            ),
+            theta,
+            None,
+        )
+        assert theta_star.B is None
+        rebuilt = eqx.combine(theta_star, eqx.filter(field, spec, inverse=True))
+        assert jnp.array_equal(rebuilt.B, field.B)
+
     def test_grad_flows_to_parameters(self):
         param = self._param()
         g = jax.grad(lambda th: jnp.sum(param.decode(th) ** 2))(param.init_control())
@@ -266,9 +378,7 @@ class TestNeuralFieldParameterization:
             2, 32, 1, depth=3, key=jax.random.PRNGKey(0), first_omega=10.0
         )
         param = NeuralFieldParameterization(siren, _ring(), 1e-4)
-        minimiser = OptaxMinimiser(
-            optax.adam(1e-2), max_steps=400, patience=50, warn_grad_norm=None
-        )
+        minimiser = OptaxMinimiser(optax.adam(1e-2), max_steps=400, patience=50)
         model = StrongFourDVar(
             forward=forward,
             obs_op=MaskedIdentity(),
