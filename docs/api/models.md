@@ -32,6 +32,21 @@ window. `IncrementalConfig` collects the outer/inner-loop knobs of
       show_root_toc_entry: false
       members: [OptimalInterpolation, ThreeDVar, StrongFourDVar, WeakFourDVar, IncrementalFourDVar, IncrementalConfig, Incremental4DVar]
 
+## Neural-field 4DVar
+
+[`SpaceTimeFieldVar`](../22_neural_field_4dvar.md) fits one continuous
+field $u(t, s) = f_\theta(t, s)$ over the whole window to point
+observations, with an optional PDE residual as a soft constraint and
+weight decay in place of $B$; no rollout. It returns a
+`SpaceTimeFieldResult`, queryable anywhere, and `ensemble(...)` gives a
+deep-ensemble spread.
+
+::: vardax
+    options:
+      show_root_heading: false
+      show_root_toc_entry: false
+      members: [SpaceTimeFieldVar, SpaceTimeFieldResult]
+
 ## Learned solvers — 4DVarNet
 
 End-to-end-trainable 4DVar: the variational cost is kept explicit, but the

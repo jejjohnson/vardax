@@ -183,11 +183,12 @@ end to end.
 
 This site has two main sections:
 
-- **[Mathematical Reference](01_problem_setting.md)** — 21 chapters
+- **[Mathematical Reference](01_problem_setting.md)** — 22 chapters
   covering the Bayesian foundation (1–3), each of the seven analysis
   methods (4–10), cross-cutting concerns (11–14), end-to-end examples
   on Lorenz, SSH, methane and latent-space DA (15–18), then physical
-  models, uncertainty quantification and OceanBench (19–21).
+  models, uncertainty quantification, OceanBench and neural-field
+  4D-Var (19–22).
 - **[Tutorials](notebooks/index.md)** — 17 executable walkthroughs on
   Lorenz-63 and Lorenz-96, run at documentation build time.
 - **[Design Docs](design/README.md)** — architecture, API contracts,

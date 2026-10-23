@@ -109,6 +109,7 @@ nav:
           - 19. Physical Models & ODE Priors: 19_physical_models.md
           - 20. Uncertainty Quantification: 20_uncertainty.md
           - 21. OceanBench SSH Applications: 21_oceanbench.md
+          - 22. Neural-Field 4DVar: 22_neural_field_4dvar.md
       - Reference:
           - Notation: notation.md
           - References: references.md

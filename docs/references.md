@@ -136,6 +136,18 @@
     well blowout enables quantification of total methane emissions.*
     GRL 48(2).
 
+## Neural-field 4D-Var (chapter 22)
+
+42. Oh, Y. (2025). *On the effect of neural field reparameterization
+    for 4DVAR.* arXiv:2509.21751.
+43. Raissi, M., Perdikaris, P., & Karniadakis, G. E. (2019).
+    *Physics-informed neural networks.* J. Comput. Phys. 378.
+44. Rahaman, N., et al. (2019). *On the spectral bias of neural
+    networks.* ICML.
+45. Lakshminarayanan, B., Pritzel, A., & Blundell, C. (2017). *Simple
+    and scalable predictive uncertainty estimation using deep
+    ensembles.* NeurIPS.
+
 ## Ecosystem libraries
 
 - [`somax`](https://github.com/jejjohnson/somax) — geophysical fluid
