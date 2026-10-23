@@ -35,6 +35,7 @@ from vardax._src.minimisers import minimise
 from vardax._src.models._analysis_step import analyse_forecast
 from vardax._src.obs_operators.point import (
     FieldPointObs,
+    check_point_obs_cov,
     grid_point_obs_cost,
     map_point_batch,
     point_obs_cost,
@@ -129,9 +130,11 @@ class ThreeDVar(eqx.Module):
         [`FieldPointObs`][vardax.FieldPointObs] with a
         [`NeuralFieldParameterization`][vardax.NeuralFieldParameterization],
         which evaluates the field at the coordinates directly. The error
-        variances are the batch's $\sigma_i^2$; ``obs_cov_op`` is not used.
+        variances are the batch's $\sigma_i^2$; ``obs_cov_op`` must be
+        ``None`` or an identity (``ValueError`` otherwise).
         """
         if isinstance(batch, PointObsBatch):
+            check_point_obs_cov(self.obs_cov_op)
             return map_point_batch(
                 lambda b: self._analyse_points(self.prior_mean, b), batch
             )

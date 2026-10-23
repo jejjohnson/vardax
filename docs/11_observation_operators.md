@@ -272,7 +272,9 @@ Two operators evaluate $\mathcal H(x)$ at the points:
 `ThreeDVar`, `StrongFourDVar`, `WeakFourDVar`, `Incremental4DVar` and
 `IncrementalFourDVar` choose their path from the batch type. A
 `PointObsBatch` needs `obs_op=GridPointObs(...)`, and the per-observation
-$\sigma_i$ replaces `obs_cov_op`. 4D-Var models compare observation $i$
+$\sigma_i$ replaces `obs_cov_op`, which must be `None` (or an identity
+operator; anything else raises `ValueError` rather than being silently
+ignored). 4D-Var models compare observation $i$
 with the trajectory state at step $\tau_i$, so $\mathcal H_t$ and $R_t$
 can change from step to step. `ThreeDVar` also accepts `FieldPointObs`
 together with a `NeuralFieldParameterization`, which evaluates the field
@@ -288,7 +290,7 @@ batch = vardax.PointObsBatch(
 )
 model = vardax.StrongFourDVar(
     forward=qg_model, obs_op=vardax.GridPointObs((y_axis, x_axis)),
-    prior_mean=x_b, prior_cov_op=B_op, obs_cov_op=R_unused,
+    prior_mean=x_b, prior_cov_op=B_op, obs_cov_op=None,
 )
 x0_star = model(batch)
 ```

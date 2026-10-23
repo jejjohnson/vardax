@@ -240,18 +240,41 @@ def test_point_batch_reproduces_grid_3dvar(all_observed):
         obs_cov_op=_diag((sigma**2)[None]),
         **common,
     )
-    point_model = ThreeDVar(
-        obs_op=GridPointObs((AXIS,)),
-        obs_cov_op=_diag((sigma**2)[None]),
-        **common,
-    )
+    point_model = ThreeDVar(obs_op=GridPointObs((AXIS,)), obs_cov_op=None, **common)
     xa_grid = grid_model(grid)[0]
     xa_point = point_model(points)
-    # The two costs are the same function of x (the point cost at the grid
-    # nodes is the masked diagonal-R grid cost); both runs are BFGS with
-    # rtol = atol = 1e-6 on it, so they agree to its stopping tolerance.
     assert xa_point.shape == x_b.shape
-    assert jnp.allclose(xa_grid, xa_point, atol=1e-4)
+    # The two costs are the same quadratic (the point cost at the grid
+    # nodes is the masked diagonal-R grid cost), so each analysis is within
+    # its gradient bound of the common minimiser, and of each other.
+    tol = _quad_bound(xa_grid[0], x_b[0], B, points) + _quad_bound(
+        xa_point[0], x_b[0], B, points
+    )
+    assert jnp.linalg.norm(xa_grid - xa_point) <= tol
+
+
+EPS = float(jnp.finfo(jnp.float32).eps)
+
+
+def _quad_bound(x, x_b, B, points):
+    """‖x - x*‖ for J(x) = ½‖x - x_b‖²_{B⁻¹} + point cost (one state).
+
+    J is quadratic with Hessian ⪰ B⁻¹ ⪰ I / λ_max(B), so
+    ‖x - x*‖ ≤ λ_max(B) ‖∇J(x)‖ exactly. ∇J is evaluated in float32, which
+    resolves x only to ~eps·cond(B)·‖x‖ (8 for the op count): added as the
+    round-off floor.
+    """
+    B_inv = jnp.linalg.inv(B)
+    H = GridPointObs((AXIS,))
+
+    def cost(x):
+        d = x - x_b
+        return 0.5 * d @ B_inv @ d + point_obs_cost(H(x[None], points), points)
+
+    eig = jnp.linalg.eigvalsh(B)
+    lam_max, cond = float(eig[-1]), float(eig[-1] / eig[0])
+    g = float(jnp.linalg.norm(jax.grad(cost)(x)))
+    return lam_max * g + 8 * EPS * cond * float(jnp.linalg.norm(x))
 
 
 def _psd_time(B):
@@ -284,7 +307,7 @@ def test_point_batch_linear_gaussian_agreement(which):
         "obs_op": GridPointObs((AXIS,)),
         "prior_mean": x_b,
         "prior_cov_op": _psd(B),
-        "obs_cov_op": _diag(sigma**2),
+        "obs_cov_op": None,
     }
     if which == "strong":
         xa = StrongFourDVar(**common)(points)
@@ -295,9 +318,9 @@ def test_point_batch_linear_gaussian_agreement(which):
         xa = Incremental4DVar(**common)(points)
     else:
         xa = IncrementalFourDVar(**common)(points)
-    # Linear-Gaussian: every method minimises the same quadratic as OI;
-    # iterative solvers stop at rtol/atol 1e-6 (CG inner for the GN path).
-    assert jnp.allclose(xa, x_oi, atol=1e-3)
+    # Linear-Gaussian: every method minimises the same quadratic as OI
+    # (exact up to float32), so ‖x̂ - x_OI‖ is within the gradient bound.
+    assert jnp.linalg.norm(xa - x_oi) <= _quad_bound(xa, x_b, B, points)
 
 
 def test_padding_invariance_of_strong_4dvar_analysis():
@@ -308,7 +331,7 @@ def test_padding_invariance_of_strong_4dvar_analysis():
         obs_op=GridPointObs((AXIS,)),
         prior_mean=jnp.zeros(N),
         prior_cov_op=_psd(B),
-        obs_cov_op=_psd(jnp.eye(N)),
+        obs_cov_op=None,
     )
     # Padding changes the cost only by float32 summation order, so BFGS
     # follows the same path to within its stopping tolerance.
@@ -324,7 +347,7 @@ def test_batched_point_batch():
         obs_op=GridPointObs((AXIS,)),
         prior_mean=jnp.zeros(N),
         prior_cov_op=_psd(B),
-        obs_cov_op=_psd(jnp.eye(N)),
+        obs_cov_op=None,
     )
     out = model(stacked)
     assert out.shape == (2, N)
@@ -338,7 +361,7 @@ def test_point_batch_needs_point_operator():
         obs_op=MaskedIdentity(),
         prior_mean=jnp.zeros(N),
         prior_cov_op=_psd(jnp.eye(N)),
-        obs_cov_op=_psd(jnp.eye(N)),
+        obs_cov_op=None,
     )
     with pytest.raises(TypeError, match="GridPointObs"):
         model(points)
@@ -351,7 +374,7 @@ def test_time_index_needs_n_times():
         obs_op=GridPointObs((AXIS,)),
         prior_mean=jnp.zeros(N),
         prior_cov_op=_psd(jnp.eye(N)),
-        obs_cov_op=_psd(jnp.eye(N)),
+        obs_cov_op=None,
     )
     with pytest.raises(ValueError, match="n_times"):
         model(batch)
@@ -375,9 +398,9 @@ def test_threedvar_field_point_obs_with_neural_field():
         obs_op=FieldPointObs(),
         prior_mean=jnp.zeros((1, 16)),
         prior_cov_op=_psd(jnp.eye(16)),
-        obs_cov_op=_psd(jnp.eye(16)),
+        obs_cov_op=None,
         parameterization=param,
-        minimiser=OptaxMinimiser(optax.adam(1e-2), max_steps=200, warn_grad_norm=None),
+        minimiser=OptaxMinimiser(optax.adam(1e-2), max_steps=200),
     )
     xa = model(batch)
     assert xa.shape == (1, 16)
@@ -388,7 +411,7 @@ def test_threedvar_field_point_obs_with_neural_field():
             obs_op=FieldPointObs(),
             prior_mean=jnp.zeros((1, 16)),
             prior_cov_op=_psd(jnp.eye(16)),
-            obs_cov_op=_psd(jnp.eye(16)),
+            obs_cov_op=None,
         )(batch)
 
 
@@ -422,7 +445,7 @@ def _l96_problem(n_obs, key):
         obs_op=GridPointObs((axis,)),
         prior_mean=x_b,
         prior_cov_op=_psd(jnp.eye(40)),
-        obs_cov_op=_psd(jnp.eye(40)),
+        obs_cov_op=None,
         max_steps=500,
     )
 
@@ -457,3 +480,141 @@ def test_strong_4dvar_lorenz96_scattered_obs_smoke():
 @pytest.mark.slow
 def test_strong_4dvar_lorenz96_scattered_obs_converges():
     _check_l96(n_obs=200)
+
+
+# --- review follow-up -------------------------------------------------------
+
+
+def test_field_point_obs_padding_is_finite_for_field_singular_at_origin():
+    # Padding used to be evaluated at the origin; log|s| is singular there.
+    batch = PointObsBatch(
+        coords=jnp.array([[1.0], [jnp.nan]]),
+        values=jnp.zeros(2),
+        sigma=jnp.ones(2),
+        valid=jnp.array([True, False]),
+    )
+
+    def cost(scale):
+        pred = FieldPointObs()(lambda s: scale * jnp.log(jnp.abs(s)), batch)
+        return point_obs_cost(pred, batch)
+
+    v, g = jax.value_and_grad(cost)(1.0)
+    # The only valid row is at s = 1, where log|s| = 0: value and gradient 0.
+    assert v == 0.0
+    assert g == 0.0
+
+
+def test_out_of_range_valid_time_index_is_an_error():
+    batch = _batch(
+        jnp.array([1.0, 2.0]),
+        jnp.zeros(2),
+        time_index=jnp.array([0, 7]),
+        n_times=3,
+    )
+    model = StrongFourDVar(
+        forward=IdentityForward(),
+        obs_op=GridPointObs((AXIS,)),
+        prior_mean=jnp.zeros(N),
+        prior_cov_op=_psd(jnp.eye(N)),
+        obs_cov_op=None,
+    )
+    with pytest.raises(ValueError, match="time_index"):
+        model(batch)
+    # Padding rows may hold any index.
+    padded = _pad(
+        _batch(jnp.array([1.0]), jnp.zeros(1), time_index=jnp.array([2]), n_times=3), 2
+    )
+    assert model(padded).shape == (N,)
+
+
+def test_traced_time_index_is_clamped():
+    H = GridPointObs((AXIS,))
+    traj = jnp.stack([AXIS, 10 * AXIS, 100 * AXIS])
+
+    @jax.jit
+    def apply(t_idx):
+        b = _batch(jnp.array([1.0]), jnp.zeros(1), time_index=t_idx, n_times=3)
+        return H(traj, b)
+
+    assert jnp.allclose(apply(jnp.array([7])), 100.0)
+
+
+@pytest.mark.parametrize(
+    "cov", [_diag(jnp.ones(N)), _psd(jnp.eye(N)), _psd(2.0 * jnp.eye(N))]
+)
+def test_point_batch_rejects_obs_cov_op(cov):
+    _, points, _ = _grid_and_points(jnp.ones(N, bool))
+    model = StrongFourDVar(
+        forward=IdentityForward(),
+        obs_op=GridPointObs((AXIS,)),
+        prior_mean=jnp.zeros(N),
+        prior_cov_op=_psd(jnp.eye(N)),
+        obs_cov_op=cov,
+    )
+    with pytest.raises(ValueError, match="obs_cov_op"):
+        model(points)
+    identity = lx.IdentityLinearOperator(jax.ShapeDtypeStruct((N,), jnp.float32))
+    assert eqx.tree_at(lambda m: m.obs_cov_op, model, identity)(points).shape == (N,)
+
+
+class MixingForward(eqx.Module):
+    """Non-trivial linear dynamics: x ← 0.8 x + 0.1 roll(x, 1)."""
+
+    @property
+    def dt(self) -> float:
+        return 1.0
+
+    def step(self, state, dt):
+        return 0.8 * state + 0.1 * jnp.roll(state, 1)
+
+
+@pytest.mark.parametrize("which", ["strong", "weak", "incremental", "incremental_gn"])
+def test_scattered_time_points_match_grid_batch(which):
+    """Scattered (t, i) point observations reproduce the grid-batch analysis.
+
+    Three states of mixing dynamics, five observations at scattered
+    (time, site) pairs, R = I. The point cost equals the masked grid cost
+    term by term, so both runs minimise the same function from the same
+    start and follow the same iterates up to float32 summation order (the
+    reviewer's probe saw 6e-8). 1e-5 is 5x the solvers' step tolerance
+    (BFGS rtol = atol = 1e-6 on an O(1) state), covering a stop one
+    iteration apart.
+    """
+    T1 = 3
+    y = jax.random.normal(jax.random.PRNGKey(3), (T1, N))
+    mask = (
+        jnp.zeros((T1, N))
+        .at[0, 1]
+        .set(1)
+        .at[1, 3]
+        .set(1)
+        .at[2, 0]
+        .set(1)
+        .at[2, 5]
+        .set(1)
+        .at[1, 2]
+        .set(1)
+    )
+    grid = Batch1D(input=(y * mask)[None], mask=mask[None])
+    t, i = jnp.nonzero(mask)
+    points = _pad(
+        _batch(AXIS[i], y[t, i], time_index=t.astype(jnp.int32), n_times=T1), 2
+    )
+    eye = lx.IdentityLinearOperator(jax.ShapeDtypeStruct((N,), jnp.float32))
+    common = {
+        "forward": MixingForward(),
+        "prior_mean": jnp.linspace(-1.0, 1.0, N),
+        "prior_cov_op": eye,
+    }
+    cls, extra = {
+        "strong": (StrongFourDVar, {}),
+        "weak": (WeakFourDVar, {"model_err_cov_op": eye}),
+        "incremental": (Incremental4DVar, {}),
+        "incremental_gn": (IncrementalFourDVar, {}),
+    }[which]
+    xg = cls(obs_op=MaskedIdentity(), obs_cov_op=eye, **common, **extra)(grid)
+    xp = cls(obs_op=GridPointObs((AXIS,)), obs_cov_op=None, **common, **extra)(points)
+    if which == "weak":
+        (xg, eta_g), (xp, eta_p) = xg, xp
+        assert jnp.allclose(eta_g[0], eta_p, atol=1e-5)
+    assert jnp.allclose(xg[0], xp, atol=1e-5)

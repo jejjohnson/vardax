@@ -33,19 +33,27 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 from jaxtyping import Array, Float, Int
+import lineax as lx
+import numpy as np
 
 from vardax._src._types import PointObsBatch
 
 
 def _safe(batch: PointObsBatch) -> PointObsBatch:
-    """Replace padding rows by finite placeholders (zero value, unit sigma).
+    """Replace padding rows by finite placeholders.
 
-    ``jnp.where`` alone stops the padding's *value* but not a ``NaN``
-    gradient: ``0 * NaN`` is ``NaN``. Sanitising the inputs first keeps
-    every intermediate on padding rows finite.
+    Padding gets value 0, sigma 1, time index 0 and the coordinates of the
+    first valid row (the origin if there is none), so an operator never
+    evaluates the state or field anywhere a real observation does not:
+    a field singular at the origin stays finite. ``jnp.where`` alone stops
+    the padding's *value* but not a ``NaN`` gradient (``0 * NaN`` is
+    ``NaN``); sanitising the inputs first keeps every intermediate on
+    padding rows finite.
     """
     valid = batch.valid
-    coords = jnp.where(valid[:, None], batch.coords, jnp.zeros_like(batch.coords))
+    first_valid = batch.coords[jnp.argmax(valid)]
+    placeholder = jnp.where(jnp.any(valid), first_valid, jnp.zeros_like(first_valid))
+    coords = jnp.where(valid[:, None], batch.coords, placeholder[None, :])
     values = jnp.where(valid, batch.values, jnp.zeros_like(batch.values))
     sigma = jnp.where(valid, batch.sigma, jnp.ones_like(batch.sigma))
     time_index = (
@@ -127,7 +135,10 @@ class GridPointObs(eqx.Module):
     linearly in each spatial dimension at the first ``len(grid_axes)``
     columns of ``coords[i]``, clamping points outside the grid to its
     edge — the ``order=1`` scheme of `interp_obs_from_coords`, with the
-    stencil computed at call time so the coordinates can be traced. Any
+    stencil computed at call time so the coordinates can be traced. A
+    ``time_index`` outside ``[0, n_times - 1]`` on a valid row is an error
+    when the indices are concrete (the models check it); traced indices
+    are clamped to that range. Any
     further coordinate columns (a time) are ignored: the time enters
     through ``time_index``.
 
@@ -202,7 +213,8 @@ class FieldPointObs(eqx.Module):
     Evaluates the single-example field $f(s) \mapsto$ ``(1,)`` (or a
     scalar) at every observation coordinate, $\hat y_i = f(s_i)$; all
     ``D`` coordinate columns (including a time column) are passed to the
-    field. Padding rows are evaluated at the origin, a finite placeholder.
+    field. Padding rows are evaluated at the first valid row's
+    coordinates, so the field is never queried where no observation is.
 
     Examples:
         >>> import jax.numpy as jnp, vardax
@@ -252,7 +264,36 @@ def window_steps(batch: PointObsBatch) -> int:
         return 0
     if batch.n_times < 1:
         raise ValueError(f"PointObsBatch.n_times must be >= 1, got {batch.n_times}.")
+    if batch.time_index is not None:
+        # Validate eagerly when the indices are concrete; traced indices are
+        # clamped to [0, n_times - 1] by GridPointObs.
+        try:
+            t_idx = np.asarray(batch.time_index)
+            valid = np.asarray(batch.valid, dtype=bool)
+        except (
+            jax.errors.TracerArrayConversionError,
+            jax.errors.ConcretizationTypeError,
+        ):
+            return batch.n_times - 1
+        bad = valid & ((t_idx < 0) | (t_idx >= batch.n_times))
+        if bad.any():
+            raise ValueError(
+                f"PointObsBatch.time_index has valid entries outside "
+                f"[0, n_times - 1] = [0, {batch.n_times - 1}]: "
+                f"{np.unique(t_idx[bad]).tolist()}."
+            )
     return batch.n_times - 1
+
+
+def check_point_obs_cov(obs_cov_op: object) -> None:
+    """A point batch carries R as its sigma: refuse a non-trivial ``obs_cov_op``."""
+    if obs_cov_op is None or isinstance(obs_cov_op, lx.IdentityLinearOperator):
+        return
+    raise ValueError(
+        "A PointObsBatch carries its observation errors in sigma, so the "
+        "model's obs_cov_op would be ignored: build the model with "
+        f"obs_cov_op=None (or an identity), not {type(obs_cov_op).__name__}."
+    )
 
 
 def grid_point_obs_cost(

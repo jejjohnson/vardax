@@ -34,6 +34,7 @@ import lineax as lx
 
 from vardax._src._types import Batch1D, PointObsBatch
 from vardax._src.obs_operators.point import (
+    check_point_obs_cov,
     map_point_batch,
     require_grid_point_obs,
     whitened_residual,
@@ -144,10 +145,11 @@ class IncrementalFourDVar(eqx.Module):
         A [`PointObsBatch`][vardax.PointObsBatch] needs
         ``obs_op=GridPointObs(...)``: observation $i$ is compared with the
         trajectory state at ``time_index[i]`` over a window of ``n_times``
-        states, with error variance $\\sigma_i^2$ (``obs_cov_op`` is not
-        used).
+        states, with error variance $\\sigma_i^2$ (``obs_cov_op`` must
+        be ``None`` or an identity, else ``ValueError``).
         """
         if isinstance(batch, PointObsBatch):
+            check_point_obs_cov(self.obs_cov_op)
             n_steps = window_steps(batch)
             return map_point_batch(lambda b: self._analyse_points(b, n_steps), batch)
 
