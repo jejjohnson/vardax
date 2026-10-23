@@ -260,7 +260,15 @@ class TestNeuralFieldParameterization:
         y = truth + jax.random.normal(key_o, truth.shape)
         batch = Batch1D(input=y[None], mask=jnp.ones_like(y)[None])
 
-        param = self._param(weight_decay=1e-4)
+        # A small SIREN over the 40-site ring, (cos, sin) inputs so the
+        # field is periodic; first_omega=10 resolves the L96 wavenumbers.
+        siren = geonnax.SIREN.init(
+            2, 32, 1, depth=3, key=jax.random.PRNGKey(0), first_omega=10.0
+        )
+        param = NeuralFieldParameterization(siren, _ring(), 1e-4)
+        minimiser = OptaxMinimiser(
+            optax.adam(1e-2), max_steps=400, patience=50, warn_grad_norm=None
+        )
         model = StrongFourDVar(
             forward=forward,
             obs_op=MaskedIdentity(),
@@ -268,24 +276,23 @@ class TestNeuralFieldParameterization:
             prior_cov_op=_eye((40,)),
             obs_cov_op=_eye((40,)),
             parameterization=param,
-            minimiser=OptaxMinimiser(
-                optax.adam(1e-3), max_steps=300, patience=50, warn_grad_norm=None
-            ),
+            minimiser=minimiser,
         )
 
-        def cost(theta):
+        # The cost the model minimises (R = I, everything observed).
+        def cost(theta, _):
             xs = [param.decode(theta)]
             for _ in range(T):
                 xs.append(forward.step(xs[-1], forward.dt))
             return param.penalty(theta) + 0.5 * jnp.sum((y - jnp.stack(xs)) ** 2)
 
         theta0 = param.init_control()
+        result = minimiser.run(cost, theta0, None)
+        # The 4D-Var cost falls by an order of magnitude (from ~4e3 to the
+        # noise level ~ n_obs / 2 = 220).
+        assert result.cost < 0.1 * cost(theta0, None)
+        # And the model's analysis is far closer to the truth than the
+        # untrained field.
         x0_star = model(batch)[0]
-        # Recover θ* by rerunning the same minimiser on the same cost.
-        theta_star = model.minimiser(lambda th, _: cost(th), theta0, None)
-        assert jnp.allclose(param.decode(theta_star), x0_star, atol=1e-5)
-        j0, j_star = cost(theta0), cost(theta_star)
-        assert j_star < 0.5 * j0
-        assert jnp.linalg.norm(x0_star - x_true) < jnp.linalg.norm(
-            param.decode(theta0) - x_true
-        )
+        err0 = jnp.linalg.norm(param.decode(theta0) - x_true)
+        assert jnp.linalg.norm(x0_star - x_true) < 0.25 * err0

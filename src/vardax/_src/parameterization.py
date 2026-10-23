@@ -55,7 +55,7 @@ class LinearParameterization(eqx.Module):
         >>> X.shape
         (2,)
         >>> param.decode(jnp.array([1.0, -1.0]))
-        Array([ 2.,  0.,  1.,  1.], dtype=float32)
+        Array([2., 0., 1., 1.], dtype=float32)
         >>> float(param.penalty(jnp.array([1.0, -1.0])))  # ½ (1 + 1) / 2
         0.5
     """
