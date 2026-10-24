@@ -1,12 +1,28 @@
 r"""Laplace approximation at MAP.
 
-For Gaussian-likelihood / Gaussian-prior problems at the MAP $x^*$:
+For Gaussian-likelihood / Gaussian-prior problems at the MAP, the
+posterior covariance is the inverse Gauss–Newton Hessian of the cost the
+analysis minimised. For a single analysis time (``OptimalInterpolation``,
+``ThreeDVar``):
 
 $$
-P^* \approx \big((H')^\top R^{-1} H' + B^{-1}\big)^{-1}.
+P^* \approx \big(B^{-1} + H'^\top R^{-1} H'\big)^{-1}.
 $$
 
-The result is returned as an ``AbstractLinearOperator`` so mat-vec
+For a 4DVar analysis the window's observations depend on $x_0$ through
+the model, so the tangent-linear model $M'_{t \leftarrow 0}$ enters:
+
+$$
+P^* \approx \Big(B^{-1} + \sum_t (H'_t M'_{t\leftarrow 0})^\top R_t^{-1}
+              (H'_t M'_{t\leftarrow 0})\Big)^{-1},
+$$
+
+applied matrix-free through the model's own rollout (``jax.linearize`` /
+``jax.vjp``). For ``WeakFourDVar`` the control is $(x_0, \eta)$ and the
+returned covariance is the $x_0$ block of the inverse augmented
+precision, with $Q^{-1}$ on each $\eta_t$.
+
+The result is returned as an ``AbstractLinearOperator`` so mat-vecs
 (samples, marginals) compose lazily via ``lineax.CG`` without
 materialising $P^*$.
 
@@ -15,12 +31,10 @@ Use when:
 - Gaussian likelihood + Gaussian prior + single posterior mode
   (verified by SBC).
 - Default for ``ThreeDVar``, ``StrongFourDVar``, ``WeakFourDVar``,
-  ``FourDVarNet``.
+  ``IncrementalFourDVar``.
 
 For multimodal posteriors / non-Gaussian likelihoods, use
-``EnsembleCovariance``. For ``IncrementalFourDVar`` the
-``GaussNewtonHessian`` adapter reuses the Hessian assembled during
-the last outer iteration.
+``EnsembleCovariance``.
 """
 
 from __future__ import annotations
@@ -28,11 +42,14 @@ from __future__ import annotations
 from typing import Any
 
 import equinox as eqx
-import gaussx
 from jaxtyping import Array, Float
 import lineax as lx
 
+from ._precision import gauss_newton_covariance
 from .container import Posterior
+
+#: Default solver for the lazy inverses (max_steps bounds the Krylov space).
+DEFAULT_SOLVER = lx.CG(atol=1e-6, rtol=1e-6, max_steps=200)
 
 
 class LaplaceCovariance(eqx.Module):
@@ -40,7 +57,9 @@ class LaplaceCovariance(eqx.Module):
 
     Attributes:
         prior_cov_op: Background-error covariance $B$.
-        obs_cov_op: Observation-error covariance $R$.
+        obs_cov_op: Observation-error covariance $R$ at one time.
+        solver: Linear solver for the lazy inverses (default CG,
+            ``atol = rtol = 1e-6``, 200 steps).
 
     Both required so the adapter can build $P^*$ lazily. They
     should match the operators used by the analysis method that
@@ -63,6 +82,7 @@ class LaplaceCovariance(eqx.Module):
 
     prior_cov_op: lx.AbstractLinearOperator
     obs_cov_op: lx.AbstractLinearOperator
+    solver: lx.AbstractLinearSolver = eqx.field(static=True, default=DEFAULT_SOLVER)
 
     def __call__(
         self,
@@ -70,68 +90,38 @@ class LaplaceCovariance(eqx.Module):
         model: Any,  # AnalysisStep-compliant
         batch: Any,
     ) -> Posterior:
-        """Build the Laplace posterior at ``analysis``.
+        r"""Build the Laplace posterior at ``analysis``.
 
         Args:
-            analysis: MAP / posterior mean.
-            model: The analysis-step instance (used to recover the
-                observation operator). Expected to have a ``.model``
-                or be the underlying ``eqx.Module`` directly.
-            batch: The batch the analysis was computed against (used
-                to recover the mask, instrument bookkeeping, etc.).
+            analysis: MAP of one window: $x_0^*$, or $(x_0^*, \eta^*)$ for
+                ``WeakFourDVar``.
+            model: The analysis model or its ``.as_analysis_step()``
+                wrapper. Its ``obs_op`` (and, for 4DVar, its rollout) build
+                the precision.
+            batch: The single window the analysis was computed from; 4DVar
+                models read its length and mask. A batch with a leading
+                sample axis must hold one sample.
 
         Returns:
-            [`Posterior`][vardax.Posterior] with ``mean = analysis``
-            and ``cov`` as a lazy ``AbstractLinearOperator``
-            representing $P^*$.
+            [`Posterior`][vardax.Posterior] with ``mean`` $= x_0^*$ and
+            ``cov`` a lazy ``AbstractLinearOperator`` representing $P^*$.
+
+        Raises:
+            AttributeError: If the model exposes no ``obs_op``.
+            ValueError: For a point batch, a multi-sample batch, or a
+                ``basis=`` / ``parameterization=`` control.
         """
-        # Pull the obs operator off either an .as_analysis_step()
-        # wrapper or the raw model. Both expose ``obs_op``.
-        underlying = getattr(model, "model", model)
-        obs_op = getattr(underlying, "obs_op", None)
-        if obs_op is None:
-            raise AttributeError(
-                "LaplaceCovariance requires the model to expose `obs_op`; "
-                "got a model without one."
-            )
-
-        H = obs_op.linearize(analysis)
-        # P*^{-1} = H^T R^{-1} H + B^{-1}
-        # Build lazily via operator composition (gaussx.sandwich would
-        # materialise the Jacobian, breaking the matrix-free design);
-        # the inverses are gaussx.inv, which dispatches to closed forms
-        # for structured operators and falls back to lineax.CG mat-vecs.
-        precision = H.transpose() @ _inverse_op(self.obs_cov_op) @ H + _inverse_op(
-            self.prior_cov_op
+        mean, covariance, structure = gauss_newton_covariance(
+            analysis,
+            model,
+            batch,
+            self.prior_cov_op,
+            self.obs_cov_op,
+            self.solver,
         )
-        precision_tagged = lx.TaggedLinearOperator(
-            precision, lx.positive_semidefinite_tag
-        )
-
         return Posterior(
-            mean=analysis,
-            cov=gaussx.inv(precision_tagged, solver=_CG_SOLVER),
+            mean=mean,
+            cov=covariance,
             samples=None,
-            provenance={"adapter": "LaplaceCovariance"},
+            provenance={"adapter": "LaplaceCovariance", "structure": structure},
         )
-
-
-_CG_SOLVER = lx.CG(atol=1e-6, rtol=1e-6, max_steps=200)
-
-
-def _inverse_op(op: lx.AbstractLinearOperator) -> lx.AbstractLinearOperator:
-    """Lazy PSD inverse — delegates to ``gaussx.inv``.
-
-    Structured operators (diagonal, Kronecker, block-diagonal,
-    low-rank) invert in closed form; everything else solves via
-    ``lineax.CG`` mat-vecs, never materialising the inverse. The
-    gaussx operator is re-wrapped as a ``FunctionLinearOperator`` so
-    lineax can linearise it when it appears inside a composed
-    precision that is itself solved (gaussx's ``InverseOperator``
-    does not register ``lx.linearise``).
-    """
-    inv_op = gaussx.inv(
-        lx.TaggedLinearOperator(op, lx.positive_semidefinite_tag),
-        solver=_CG_SOLVER,
-    )
-    return lx.FunctionLinearOperator(inv_op.mv, op.in_structure())

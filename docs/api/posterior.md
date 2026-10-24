@@ -14,11 +14,13 @@ Reference for derivations and when each approximation is trustworthy.
 
 Adapters satisfy the [`PosteriorAdapter`](protocols.md) Protocol and all
 produce the same `Posterior` container, so downstream diagnostics (e.g. the
-[posterior-agreement gate](utils.md)) are adapter-agnostic. Choose
-`LaplaceCovariance` for the exact-Hessian Gaussian approximation around the
-mode, `GaussNewtonHessian` when second derivatives of the observation
-operator are unavailable or noisy, and `EnsembleCovariance` when samples
-are cheaper than curvature.
+[posterior-agreement gate](utils.md)) are adapter-agnostic. `LaplaceCovariance` and
+`GaussNewtonHessian` both build the inverse Gauss–Newton Hessian at the
+mode, matrix-free; for a 4DVar model it runs through the model's
+tangent-linear and adjoint rollouts, so pass the model and the window's
+batch. `GaussNewtonHessian` exposes the Krylov budget. Choose
+`EnsembleCovariance` when samples are cheaper than curvature or the
+posterior is not Gaussian.
 
 ## Container
 

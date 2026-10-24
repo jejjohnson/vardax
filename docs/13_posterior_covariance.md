@@ -52,26 +52,55 @@ This is the cheapest and most accurate posterior — when applicable.
 
 ### 2. Laplace approximation
 
-For `ThreeDVar`, `StrongFourDVar`, `WeakFourDVar`, `FourDVarNet`: at
-the MAP $x^*$, approximate the posterior as Gaussian with covariance
+For `ThreeDVar` and the 4DVar models: at the MAP, approximate the
+posterior as Gaussian with covariance the inverse Hessian of the cost,
+and drop the second-derivative term of the observation misfit (the
+Gauss–Newton approximation). What the observations depend on decides
+the precision.
+
+A single analysis time (`ThreeDVar`):
 
 $$
 P^*_\text{Laplace} = \big(\nabla^2 J(x^*)\big)^{-1}
-                   \approx \big(B^{-1} + H'(x^*)^\top R^{-1} H'(x^*)\big)^{-1}
+                   \approx \big(B^{-1} + H'(x^*)^\top R^{-1} H'(x^*)\big)^{-1}.
 $$
 
-(the Gauss-Newton approximation drops the second-derivative term).
+A 4DVar window (`StrongFourDVar`, `IncrementalFourDVar`,
+`ReducedBasisFourDVar` without a basis): the observations at time $t$
+depend on $x_0$ through the model, so with the tangent-linear model
+$M'_{t \leftarrow 0}$ along the analysis trajectory and the mask $m_t$,
+
+$$
+P^*_\text{GN} = \Big(B^{-1} + \sum_t (H'_t M'_{t\leftarrow 0})^\top R_t^{-1}
+                    (H'_t M'_{t\leftarrow 0})\Big)^{-1}.
+$$
+
+Never-observed state components that the dynamics couple to observed
+ones are constrained through $M'$: their posterior variance drops below
+the prior even though no observation touches them.
+
+`WeakFourDVar`: the control is $(x_0, \eta_1, \ldots, \eta_T)$ and the
+precision gains $Q^{-1}$ on each $\eta_t$; the adapter returns the
+$x_0$ block of the inverse, which is the Kalman-smoother covariance of
+$x_0$ in the linear-Gaussian case. Pass `analysis=(x0, eta)`.
 
 ```python
-from vardax.posterior import LaplaceCovariance
+import vardax
 
-x_star = three_dvar(batch)
-posterior = LaplaceCovariance()(x_star, three_dvar.as_analysis_step(), batch)
+x0_star = strong(batch)[0]                     # one window
+posterior = vardax.LaplaceCovariance(prior_cov_op=B_op, obs_cov_op=R_op)(
+    x0_star, strong, batch                    # batch: that one window
+)
 ```
 
-`LaplaceCovariance` returns `cov` as an `AbstractLinearOperator` —
-mat-vec via Krylov in `lineax.CG`, no materialisation. The cost per
-mat-vec is one tangent-linear-plus-adjoint pass through $H$.
+The adapter reads the model's `obs_op` and rollout (an
+`.as_analysis_step()` wrapper works too) and the window's length and mask
+from `batch`, which must hold a single window. It returns `cov` as an
+`AbstractLinearOperator`: each mat-vec is a Krylov solve (`lineax.CG`
+by default, `solver=` to change it), and each Krylov iteration is one
+tangent-linear plus one adjoint pass through the rollout. Nothing is
+materialised. Models with a `basis=` or `parameterization=` control
+raise `ValueError`, since their prior is not $B$.
 
 **Gaussian-likelihood only.** For non-Gaussian likelihoods (heavy
 tails, censored, count data), the Laplace approximation is wrong; use
@@ -81,33 +110,20 @@ ensemble or amortized posteriors.
 Laplace approximation captures only the local mode. Diagnose by
 running multiple MAPs from perturbed starting points.
 
-### 3. Gauss-Newton Hessian (`IncrementalFourDVar`)
+### 3. Gauss-Newton Hessian
 
-For `IncrementalFourDVar`, the Gauss-Newton Hessian is assembled during
-the last outer iteration as part of the algorithm. Reuse it:
-
-$$
-P^*_\text{GN} = \big(B^{-1} + \sum_t (H'_t M'_t)^\top R_t^{-1} (H'_t M'_t)\big)^{-1}.
-$$
+`GaussNewtonHessian` builds the same $P^*_\text{GN}$ as
+`LaplaceCovariance` and exposes the Krylov budget (`n_krylov`, `tol`):
 
 ```python
-incremental = IncrementalFourDVar(...)
-x_star = incremental(batch)
-posterior = incremental.posterior(batch)        # GN Hessian reused, free
+posterior = vardax.GaussNewtonHessian(
+    prior_cov_op=B_op, obs_cov_op=R_op, n_krylov=50
+)(x0_star, strong, batch)
 ```
 
-The Hessian is an `AbstractLinearOperator`; inversion via `lineax.CG`
-for diagonals or samples. The cost is essentially zero beyond the
-analysis cost itself — the Hessian is already there.
-
-For `StrongFourDVar` (same problem, general inner solver), compute
-the GN Hessian on demand via
-
-```python
-from vardax.posterior import GaussNewtonHessian
-
-posterior = GaussNewtonHessian(n_krylov=50)(x_star, strong.as_analysis_step(), batch)
-```
+`IncrementalFourDVar` assembles this operator at its last outer
+iterate during the analysis; the adapter rebuilds it at the analysis
+it is given, at the cost of one linearisation of the rollout.
 
 Now you pay the Krylov cost — typically 50 tangent-linear+adjoint
 passes. Still much cheaper than full materialisation.

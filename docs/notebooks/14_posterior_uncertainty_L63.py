@@ -73,14 +73,14 @@
 # [`GaussNewtonHessian`](../api/posterior.md) build, lazily, as a
 # `lineax` operator whose matrix-vector product runs a conjugate-gradient
 # solve against the precision — nothing is ever formed as a dense matrix
-# unless you ask. The adapters take their linearisation from the model's
-# `obs_op`, which for a single-time analysis is the whole story. For a
-# 4DVar analysis whose control is $x_0$, the operator that maps control to
-# data is $G$, not $H$, so below we hand the adapter a small
-# `WindowObs` wrapper that exposes $G$ and $G'$ through the same
-# `ObservationOperator` protocol. That is the general recipe: whatever
-# maps *the thing you are estimating* to *the data* is the observation
-# operator of the posterior.
+# unless you ask. For a single-time analysis they linearise the model's
+# `obs_op`. For a 4DVar analysis whose control is $x_0$, the operator
+# that maps control to data is $G$, not $H$, and the adapters build $G'$
+# and $G'^{\top}$ from the model's own rollout when you hand them the
+# model and the window's batch. Below we also build $G$ by hand, as a
+# small `WindowObs` operator, to check that route independently. That is
+# the general recipe: whatever maps *the thing you are estimating* to
+# *the data* is the observation operator of the posterior.
 #
 # ## Uncertainty along the window
 #
@@ -229,6 +229,11 @@ def solve_map(y, m, xb):
 
 
 x0_star = solve_map(y_obs, mask, x_b)
+strong = StrongFourDVar(
+    forward=forward, obs_op=MaskedIdentity(), prior_mean=x_b,
+    prior_cov_op=B_op, obs_cov_op=R_op, max_steps=300,
+)
+window_batch = Batch1D(input=y_obs[None], mask=mask[None])
 print("true x0     :", x_true[0])
 print("background  :", x_b, f"  error {float(jnp.linalg.norm(x_b - x_true[0])):.3f}")
 print("MAP         :", x0_star, f"  error {float(jnp.linalg.norm(x0_star - x_true[0])):.3f}")
@@ -236,19 +241,20 @@ print("MAP         :", x0_star, f"  error {float(jnp.linalg.norm(x0_star - x_tru
 # %% [markdown]
 # ## 2. Laplace covariance: three ways to the same matrix
 #
-# `WindowObs` is the observation operator of the window: it maps $x_0$ to
-# the flattened, masked trajectory of predicted observations, and its
-# `linearize` returns $G'$ as a `lineax.JacobianLinearOperator` — no
-# Jacobian is formed; products with $G'$ and $G'^{\top}$ are one
-# tangent-linear or one adjoint pass through the rollout. Handing it to
-# `LaplaceCovariance` with the *window* observation covariance
-# $\mathcal{R}$ gives the Gauss–Newton posterior lazily. The state is
+# `LaplaceCovariance(prior_cov_op=B, obs_cov_op=R)` called with the
+# `StrongFourDVar` model and its window batch builds the Gauss–Newton
+# precision $B^{-1} + G'^{\top} R^{-1} G'$ lazily: products with $G'$ and
+# $G'^{\top}$ are one tangent-linear or one adjoint pass through the
+# model's rollout, and no Jacobian is formed. `GaussNewtonHessian` builds
+# the same operator and exposes the CG budget. The state is
 # three-dimensional, so we can afford to materialise the covariance by
 # probing it with unit vectors and compare with
 #
-# - `GaussNewtonHessian`, which builds the same operator through the
-#   same route (it differs from `LaplaceCovariance` only in intent —
-#   it is the adapter that reuses `IncrementalFourDVar`'s Hessian), and
+# - the same posterior through a hand-built window operator: `WindowObs`
+#   maps $x_0$ to the flattened, masked trajectory of predicted
+#   observations, and its `linearize` returns $G'$ as a
+#   `lineax.JacobianLinearOperator`; with the *window* observation
+#   covariance $\mathcal{R}$ it is a single-time problem in disguise, and
 # - the exact inverse Hessian, `jax.hessian` of the cost at the MAP,
 #   which includes the residual-weighted second-derivative term.
 
@@ -274,10 +280,12 @@ window_obs = WindowObs(mask=mask)
 R_window = diag_cov(SIGMA_OBS**2, N_OBS)
 model_view = SimpleNamespace(obs_op=window_obs)  # what the adapters look at
 
-post_laplace = LaplaceCovariance(prior_cov_op=B_op, obs_cov_op=R_window)(x0_star, model_view, batch=None)
-post_gn = GaussNewtonHessian(prior_cov_op=B_op, obs_cov_op=R_window)(x0_star, model_view, batch=None)
+post_laplace = LaplaceCovariance(prior_cov_op=B_op, obs_cov_op=R_op)(x0_star, strong, window_batch)
+post_gn = GaussNewtonHessian(prior_cov_op=B_op, obs_cov_op=R_op)(x0_star, strong, window_batch)
+post_window = LaplaceCovariance(prior_cov_op=B_op, obs_cov_op=R_window)(x0_star, model_view, batch=None)
 P_laplace = materialise(post_laplace.cov, 3)
 P_gn = materialise(post_gn.cov, 3)
+P_window = materialise(post_window.cov, 3)
 
 
 def cost(x0):
@@ -295,6 +303,7 @@ print("posterior std, Laplace adapter   :", np.sqrt(np.diag(P_laplace)))
 print("posterior std, Gauss-Newton adapter:", np.sqrt(np.diag(P_gn)))
 print("posterior std, exact Hessian     :", np.sqrt(np.diag(P_exact)))
 print("prior std                        :", np.full(3, SIGMA_BG))
+print(f"max |P_laplace - P_window|        = {float(jnp.max(jnp.abs(P_laplace - P_window))):.2e}")
 print(f"max |P_laplace - inv(H_gn dense)| = {float(jnp.max(jnp.abs(P_laplace - jnp.linalg.inv(H_gn_dense)))):.2e}")
 print(f"relative size of the dropped second-derivative term: "
       f"{float(jnp.linalg.norm(H_exact - H_gn_dense) / jnp.linalg.norm(H_gn_dense)):.3f}")
