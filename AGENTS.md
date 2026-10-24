@@ -11,24 +11,29 @@ Before calling `report_progress` (which commits and pushes), always verify that
 all four quality gates pass locally.  Fix any failures before committing.
 
 ```bash
-# Formatting
-ruff format src/vardax/
+# Formatting — the whole repo, as the CI Format job does (tests included)
+ruff format .
 
-# Linting
-ruff check src/vardax/
+# Linting — the whole repo, as the CI Lint job does (tests included)
+ruff check --no-fix .
 
-# Type checking
+# Type checking — the package only, as the CI Type Check job does
 ty check src/vardax/
 
 # Tests
 python -m pytest tests/ -x -q
 ```
 
+Ruff runs on `.` rather than `src/vardax/` because CI does: a lint error in
+`tests/` fails the PR just like one in the package. `--no-fix` makes the
+local check strict; `pyproject.toml` sets `fix = true`, so a plain
+`ruff check` would silently rewrite files instead of reporting them.
+
 Alternatively, use the Makefile shortcuts:
 
 ```bash
-make uv-format   # ruff format + ruff check --fix
-make uv-lint     # ruff check + ty check
+make uv-format   # ruff format . + ruff check --fix .
+make uv-lint     # ruff format --check . + ruff check --no-fix . + ty check src/vardax
 make uv-test     # pytest
 ```
 
