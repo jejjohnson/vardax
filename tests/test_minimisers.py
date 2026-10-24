@@ -13,7 +13,7 @@ import pytest
 import vardax as vdx
 from vardax import (
     Batch1D,
-    Incremental4DVar,
+    ReducedBasisFourDVar,
     MaskedIdentity,
     Minimiser,
     OptaxMinimiser,
@@ -485,7 +485,7 @@ class TestModels:
                 **common,
             )(batch)
         else:
-            xa = Incremental4DVar(
+            xa = ReducedBasisFourDVar(
                 forward=IdentityForward(),
                 prior_mean=jnp.zeros(4),
                 prior_cov_op=_eye((4,)),

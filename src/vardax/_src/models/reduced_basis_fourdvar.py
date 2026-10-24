@@ -1,11 +1,16 @@
 r"""Reduced-basis 4DVar with optional `ReducedBasis` control parameterisation.
 
 Concrete `vardax.protocols.AnalysisStep` (via ``.as_analysis_step()``).
-Distinct from `vardax.IncrementalFourDVar` (the operational GN-CG fast
-path): this class minimises the **full nonlinear** 4DVar cost via an
-``optimistix.AbstractMinimiser``, optionally parameterising the analysis
-increment through a reduced basis (Gaussian RBFs, BM, wavelets) — the
-classical MASSH / Le Guillou shape.
+Distinct from `vardax.IncrementalFourDVar` (the operational Gauss–Newton
+/ CG fast path): this class minimises the **full nonlinear** 4DVar cost
+via an ``optimistix.AbstractMinimiser``, with no linearisation, outer
+loop or inner CG, optionally parameterising the analysis increment
+through a reduced basis (Gaussian RBFs, Fourier modes, wavelets, EOFs) —
+the classical MASSH / Le Guillou shape.
+
+This class was called ``Incremental4DVar`` until vardax 0.1.10, after
+MASSH's name for the increment $\delta x_0 = \Phi X$. In vardax
+"incremental" means Gauss–Newton, so the old name is a deprecated alias.
 
 Cost (basis-less state-space mode):
 
@@ -60,7 +65,7 @@ from vardax._src.obs_operators.point import (
 from vardax._src.protocols import Minimiser, StateParameterization
 
 
-class Incremental4DVar(eqx.Module):
+class ReducedBasisFourDVar(eqx.Module):
     r"""Reduced-basis 4DVar.
 
     Attributes:
@@ -90,6 +95,40 @@ class Incremental4DVar(eqx.Module):
             ``optx.ImplicitAdjoint``.
         max_steps: Iteration cap on the outer solver when ``minimiser``
             is an ``optimistix`` solver; a vardax `Minimiser` keeps its own.
+
+    Examples:
+        Trivial dynamics, one timestep, $B = R = I$ and no basis: the
+        cost is that of 3DVar, so $x_0^* = y / 2$.
+
+        >>> import jax, jax.numpy as jnp, lineax as lx, vardax
+        >>> class Identity:
+        ...     dt = 1.0
+        ...
+        ...     def step(self, x, dt):
+        ...         return x
+        >>> eye = lx.IdentityLinearOperator(jax.ShapeDtypeStruct((4,), jnp.float32))
+        >>> common = dict(
+        ...     forward=Identity(),
+        ...     obs_op=vardax.MaskedIdentity(),
+        ...     prior_mean=jnp.zeros(4),
+        ...     prior_cov_op=eye,
+        ...     obs_cov_op=eye,
+        ... )
+        >>> batch = vardax.Batch1D(input=jnp.ones((1, 1, 4)), mask=jnp.ones((1, 1, 4)))
+        >>> xa = vardax.ReducedBasisFourDVar(**common)(batch)
+        >>> xa.shape
+        (1, 4)
+        >>> bool(jnp.allclose(xa, 0.5, atol=1e-3))
+        True
+
+        With a basis the increment is confined to $\mathrm{span}(\Phi)$.
+        A single unit-variance constant mode gives
+        $X^* = \tfrac{\sum_i y_i}{1 + N}$ and $x_0^* = X^* \mathbf{1}$:
+
+        >>> basis = vardax.linear_basis(jnp.ones((4, 1)))
+        >>> xa = vardax.ReducedBasisFourDVar(**common, basis=basis)(batch)
+        >>> bool(jnp.allclose(xa, 4.0 / 5.0, atol=1e-3))
+        True
     """
 
     forward: Any
@@ -264,9 +303,9 @@ class Incremental4DVar(eqx.Module):
             return param.decode(x_star).reshape(self.prior_mean.shape)
         return x_star
 
-    def as_analysis_step(self) -> _Incremental4DVarAnalysisStep:
+    def as_analysis_step(self) -> _ReducedBasisFourDVarAnalysisStep:
         """Adapt to ``pipekit_cycle.AnalysisStep`` (Decision D8)."""
-        return _Incremental4DVarAnalysisStep(self)
+        return _ReducedBasisFourDVarAnalysisStep(self)
 
 
 def _accepts_mask(obs_op: Any) -> bool:
@@ -278,8 +317,8 @@ def _accepts_mask(obs_op: Any) -> bool:
         return False
 
 
-class _Incremental4DVarAnalysisStep(eqx.Module):
-    """``pipekit_cycle.AnalysisStep`` adapter for ``Incremental4DVar``.
+class _ReducedBasisFourDVarAnalysisStep(eqx.Module):
+    """``pipekit_cycle.AnalysisStep`` adapter for ``ReducedBasisFourDVar``.
 
     Handles both calling conventions: ``DACycle`` hands in single
     ``(N,)`` arrays, ``SmootherCycle`` hands in length-``window`` lists
@@ -293,7 +332,7 @@ class _Incremental4DVarAnalysisStep(eqx.Module):
     being returned as the next carrier.
     """
 
-    model: Incremental4DVar
+    model: ReducedBasisFourDVar
 
     def __call__(
         self,

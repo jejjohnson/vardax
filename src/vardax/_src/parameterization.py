@@ -42,7 +42,7 @@ class LinearParameterization(eqx.Module):
     $\psi(X) = x_b + \Phi(t) X$ (with $t = 0$ when not given) and
     $\mathrm{pen}(X) = \tfrac12 X^\top Q^{-1} X$, so a model built with
     ``parameterization=LinearParameterization(basis, x_b)`` minimises the
-    same cost as ``Incremental4DVar(basis=basis)`` with ``prior_mean=x_b``.
+    same cost as ``ReducedBasisFourDVar(basis=basis)`` with ``prior_mean=x_b``.
 
     Attributes:
         basis: The `ReducedBasis` ($\Phi$, $Q^{-1}$, ``nbasis``).

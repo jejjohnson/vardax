@@ -14,7 +14,7 @@ import pytest
 import vardax as vdx
 from vardax import (
     Batch1D,
-    Incremental4DVar,
+    ReducedBasisFourDVar,
     LinearParameterization,
     MaskedIdentity,
     NeuralFieldParameterization,
@@ -155,8 +155,8 @@ class TestLinearParameterization:
             "prior_cov_op": _eye((6,)),
             "obs_cov_op": _eye((6,)),
         }
-        x_basis = Incremental4DVar(**common, basis=basis)(batch)[0]
-        x_param = Incremental4DVar(
+        x_basis = ReducedBasisFourDVar(**common, basis=basis)(batch)[0]
+        x_param = ReducedBasisFourDVar(
             **common, parameterization=LinearParameterization(basis, x_b)
         )(batch)[0]
         x_cf, j_star, lam_min, phi_norm = _closed_form(batch, x_b, basis)
@@ -174,12 +174,12 @@ class TestLinearParameterization:
         assert jnp.linalg.norm(x_basis - x_param) <= 2 * bound
 
     def test_basis_path_matches_pre_pr_reference(self, window):
-        # Incremental4DVar(basis=...) output on main before this PR (the
+        # ReducedBasisFourDVar(basis=...) output on main before this PR (the
         # basis path is the same code). 1e-5 allows cross-platform float32
         # differences in the BFGS iterates; routing it through
         # LinearParameterization moved it by 6.6e-5.
         batch, x_b = window
-        x = Incremental4DVar(
+        x = ReducedBasisFourDVar(
             forward=DecayForward(),
             obs_op=MaskedIdentity(),
             prior_mean=x_b,
@@ -197,7 +197,7 @@ class TestLinearParameterization:
         basis = rbf_basis(
             (jnp.arange(6.0),), centers=jnp.array([[0.0], [2.5], [5.0]]), widths=2.0
         )
-        x_basis = Incremental4DVar(
+        x_basis = ReducedBasisFourDVar(
             forward=DecayForward(),
             obs_op=MaskedIdentity(),
             prior_mean=x_b,
@@ -243,7 +243,7 @@ class TestLinearParameterization:
             cls = {
                 "strong": StrongFourDVar,
                 "weak": WeakFourDVar,
-                "incremental": Incremental4DVar,
+                "incremental": ReducedBasisFourDVar,
             }[which]
             kw = {"model_err_cov_op": _eye((4,))} if which == "weak" else {}
 
@@ -269,7 +269,7 @@ class TestLinearParameterization:
     def test_basis_and_parameterization_are_exclusive(self):
         basis = linear_basis(jnp.eye(4))
         with pytest.raises(ValueError, match="not both"):
-            Incremental4DVar(
+            ReducedBasisFourDVar(
                 forward=IdentityForward(),
                 obs_op=MaskedIdentity(),
                 prior_mean=jnp.zeros(4),

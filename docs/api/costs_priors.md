@@ -96,7 +96,7 @@ families; `CompositeBasis` concatenates several.
 
 Implementations of the [`StateParameterization`](protocols.md) protocol,
 accepted as `parameterization=` by `ThreeDVar`, `StrongFourDVar`,
-`WeakFourDVar` and `Incremental4DVar`: the control becomes any pytree
+`WeakFourDVar` and `ReducedBasisFourDVar`: the control becomes any pytree
 $\theta$, the state $\psi(\theta)$, and $\mathrm{pen}(\theta)$ replaces
 the background term. `LinearParameterization` adapts any reduced basis
 ($\psi(X) = x_b + \Phi X$); `NeuralFieldParameterization` makes the state
@@ -112,7 +112,7 @@ a coordinate network on the grid, with weight decay as its penalty.
 
 Implementations of the [`Minimiser`](protocols.md) protocol, accepted as
 `minimiser=` by `ThreeDVar`, `StrongFourDVar`, `WeakFourDVar` and
-`Incremental4DVar`. `OptimistixMinimiser` wraps an optimistix solver
+`ReducedBasisFourDVar`. `OptimistixMinimiser` wraps an optimistix solver
 (the models' default, BFGS); `OptaxMinimiser` runs a first-order optax
 optimiser with early stopping for controls too large for BFGS, and
 reports the final gradient norm the implicit adjoint relies on. Both

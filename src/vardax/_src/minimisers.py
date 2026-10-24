@@ -3,7 +3,7 @@ r"""Minimisers implementing the [`Minimiser`][vardax.Minimiser] protocol.
 The classical analysis models ([`ThreeDVar`][vardax.ThreeDVar],
 [`StrongFourDVar`][vardax.StrongFourDVar],
 [`WeakFourDVar`][vardax.WeakFourDVar],
-[`Incremental4DVar`][vardax.Incremental4DVar]) hand their cost
+[`ReducedBasisFourDVar`][vardax.ReducedBasisFourDVar]) hand their cost
 $J(\theta)$ to ``optimistix.minimise`` with a quasi-Newton solver by
 default. That is the right tool for a state-sized control, but not for a
 control made of $10^5$ network weights, where BFGS's dense inverse-Hessian

@@ -1,4 +1,4 @@
-"""Tests for `vardax.Incremental4DVar` (issue #49).
+"""Tests for `vardax.ReducedBasisFourDVar` (issue #49; renamed in #96).
 
 Vardax-style conformance:
 - Builds as an `eqx.Module` with stored `(forward, obs_op, prior_mean,
@@ -27,9 +27,9 @@ import vardax as vdx
 from vardax import (
     AnalysisStep,
     Batch1D,
-    Incremental4DVar,
     LinearBasis,
     LinearObs,
+    ReducedBasisFourDVar,
     rbf_basis,
 )
 
@@ -94,7 +94,7 @@ def test_basis_less_recovers_closed_form_map(lg_problem):
         x_0_MAP = (sum_t a^{2t}) / (1 + sum_t a^{2t}) * x_true.
     """
     p = lg_problem
-    ana = Incremental4DVar(
+    ana = ReducedBasisFourDVar(
         p["fwd"],
         obs_op=p["obs_op"],
         prior_mean=p["prior_mean"],
@@ -121,7 +121,7 @@ def test_analysis_step_smoother_window_shapes(lg_problem):
     must stack to ``(1, T+1, N)`` rather than letting the model treat
     ``T+1`` as the batch axis (which would mis-set the rollout length)."""
     p = lg_problem
-    ana = Incremental4DVar(
+    ana = ReducedBasisFourDVar(
         p["fwd"],
         obs_op=p["obs_op"],
         prior_mean=p["prior_mean"],
@@ -150,7 +150,7 @@ def test_analysis_step_threads_forecast_as_background(lg_problem):
     against the live forecast, not the stale stored background."""
     p = lg_problem
     bad_prior = jnp.full_like(p["prior_mean"], 1e6)
-    ana = Incremental4DVar(
+    ana = ReducedBasisFourDVar(
         p["fwd"],
         obs_op=p["obs_op"],
         prior_mean=bad_prior,
@@ -171,7 +171,7 @@ def test_analysis_step_threads_forecast_as_background(lg_problem):
         obs_err_cov=p["R_op"],
     )
 
-    ana_good = Incremental4DVar(
+    ana_good = ReducedBasisFourDVar(
         p["fwd"],
         obs_op=p["obs_op"],
         prior_mean=jnp.asarray(window_forecasts[0]),
@@ -197,7 +197,7 @@ def test_analysis_step_returns_window_end_state(lg_problem):
     For a non-trivial forward, those values differ; verify the return
     equals ``forward^(window-1)(x_0_analysed)``."""
     p = lg_problem
-    ana = Incremental4DVar(
+    ana = ReducedBasisFourDVar(
         p["fwd"],
         obs_op=p["obs_op"],
         prior_mean=p["prior_mean"],
@@ -251,7 +251,7 @@ def test_analysis_step_threads_obs_op_and_err_cov(lg_problem):
     # correct identity obs_op, which should override the bad one.
     zero_H = lx.MatrixLinearOperator(jnp.zeros((N, N), dtype=jnp.float32))
     bad_obs_op = LinearObs(H_mat=zero_H)
-    ana_bad = Incremental4DVar(
+    ana_bad = ReducedBasisFourDVar(
         p["fwd"],
         obs_op=bad_obs_op,
         prior_mean=p["prior_mean"],
@@ -272,7 +272,7 @@ def test_analysis_step_threads_obs_op_and_err_cov(lg_problem):
     )
 
     # Reference: build the model with the *correct* obs_op from the start.
-    ana_good = Incremental4DVar(
+    ana_good = ReducedBasisFourDVar(
         p["fwd"],
         obs_op=p["obs_op"],
         prior_mean=p["prior_mean"],
@@ -329,7 +329,7 @@ def test_masked_obs_marginalize_correlated_r():
         mask=jnp.array([[[1.0, 0.0]]], dtype=jnp.float32),  # second obs masked
         target=None,
     )
-    ana = Incremental4DVar(
+    ana = ReducedBasisFourDVar(
         fwd,
         obs_op=LinearObs(H_mat=H),
         prior_mean=jnp.zeros(N),
@@ -346,9 +346,9 @@ def test_masked_obs_marginalize_correlated_r():
 
 
 def test_as_analysis_step_satisfies_protocol(lg_problem):
-    """`Incremental4DVar.as_analysis_step()` returns an `AnalysisStep`."""
+    """`ReducedBasisFourDVar.as_analysis_step()` returns an `AnalysisStep`."""
     p = lg_problem
-    ana = Incremental4DVar(
+    ana = ReducedBasisFourDVar(
         p["fwd"],
         obs_op=p["obs_op"],
         prior_mean=p["prior_mean"],
@@ -363,7 +363,7 @@ def test_as_analysis_step_satisfies_protocol(lg_problem):
 def test_vardacycle_integration(lg_problem):
     """Plugs into `vardax.VarSmootherCycle` like every other vardax model."""
     p = lg_problem
-    ana = Incremental4DVar(
+    ana = ReducedBasisFourDVar(
         p["fwd"],
         obs_op=p["obs_op"],
         prior_mean=p["prior_mean"],
@@ -408,7 +408,7 @@ def test_basis_path_recovers_increment(lg_problem):
         target=None,
     )
 
-    ana = Incremental4DVar(
+    ana = ReducedBasisFourDVar(
         fwd,
         obs_op=obs_op,
         prior_mean=jnp.zeros(N),
@@ -428,7 +428,7 @@ def test_basis_path_recovers_increment(lg_problem):
 def test_minimiser_choice_respected(lg_problem):
     """Passing a different `optx.AbstractMinimiser` runs to convergence."""
     p = lg_problem
-    ana_bfgs = Incremental4DVar(
+    ana_bfgs = ReducedBasisFourDVar(
         p["fwd"],
         obs_op=p["obs_op"],
         prior_mean=p["prior_mean"],
@@ -437,7 +437,7 @@ def test_minimiser_choice_respected(lg_problem):
         minimiser=optx.BFGS(rtol=1e-6, atol=1e-6),
         max_steps=500,
     )
-    ana_cg = Incremental4DVar(
+    ana_cg = ReducedBasisFourDVar(
         p["fwd"],
         obs_op=p["obs_op"],
         prior_mean=p["prior_mean"],
@@ -449,3 +449,52 @@ def test_minimiser_choice_respected(lg_problem):
     out_bfgs = ana_bfgs(p["batch"])[0]
     out_cg = ana_cg(p["batch"])[0]
     np.testing.assert_allclose(np.asarray(out_bfgs), np.asarray(out_cg), atol=5e-2)
+
+
+# --------------------------------------------------------------------------
+# Deprecated name (#96): ``Incremental4DVar`` still resolves, warns, and is
+# the same class, so the suite's closed-form oracle holds under both names.
+# --------------------------------------------------------------------------
+
+
+def _resolve(name):
+    if name == "Incremental4DVar":
+        with pytest.warns(DeprecationWarning, match="ReducedBasisFourDVar"):
+            return vdx.Incremental4DVar
+    return getattr(vdx, name)
+
+
+class TestDeprecatedName:
+    def test_old_name_warns_and_is_new_class(self):
+        with pytest.warns(DeprecationWarning, match="ReducedBasisFourDVar"):
+            old = vdx.Incremental4DVar
+        assert old is ReducedBasisFourDVar
+
+    def test_from_import_warns(self):
+        with pytest.warns(DeprecationWarning, match="not Gauss-Newton"):
+            from vardax import Incremental4DVar  # noqa: F401
+
+    def test_old_name_not_in_all(self):
+        assert "Incremental4DVar" not in vdx.__all__
+        assert "ReducedBasisFourDVar" in vdx.__all__
+
+    def test_unknown_attribute_still_raises(self):
+        with pytest.raises(AttributeError, match="no_such_name"):
+            vdx.no_such_name  # noqa: B018
+
+    @pytest.mark.parametrize("name", ["ReducedBasisFourDVar", "Incremental4DVar"])
+    def test_closed_form_map_under_both_names(self, name, lg_problem):
+        cls = _resolve(name)
+        p = lg_problem
+        ana = cls(
+            forward=p["fwd"],
+            obs_op=p["obs_op"],
+            prior_mean=p["prior_mean"],
+            prior_cov_op=p["B_op"],
+            obs_cov_op=p["R_op"],
+        )
+        x0 = ana(p["batch"])[0]
+        a2 = p["fwd"].alpha ** (2 * jnp.arange(p["T_plus_1"]))
+        shrink = jnp.sum(a2) / (1.0 + jnp.sum(a2))
+        assert isinstance(ana, ReducedBasisFourDVar)
+        assert jnp.allclose(x0, shrink * p["x0_true"], atol=1e-4)

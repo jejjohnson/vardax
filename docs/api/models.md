@@ -30,7 +30,7 @@ window. `IncrementalConfig` collects the outer/inner-loop knobs of
     options:
       show_root_heading: false
       show_root_toc_entry: false
-      members: [OptimalInterpolation, ThreeDVar, StrongFourDVar, WeakFourDVar, IncrementalFourDVar, IncrementalConfig, Incremental4DVar]
+      members: [OptimalInterpolation, ThreeDVar, StrongFourDVar, WeakFourDVar, IncrementalFourDVar, IncrementalConfig, ReducedBasisFourDVar]
 
 ## Neural-field 4DVar
 

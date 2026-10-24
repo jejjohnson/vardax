@@ -112,7 +112,7 @@ $$
 
 `LinearParameterization(basis, x_b)` is the reduced-basis case
 ($\psi(X) = x_b + \Phi X$, $\mathrm{pen}(X) = \tfrac12 X^\top Q^{-1} X$,
-identical to `Incremental4DVar(basis=...)`).
+identical to `ReducedBasisFourDVar(basis=...)`).
 `NeuralFieldParameterization(field, coords, weight_decay)` makes $x_0$ a
 coordinate network evaluated on the grid, with
 $\mathrm{pen}(\theta) = \tfrac{\alpha}{2}\lVert\theta\rVert^2$ and no $B$
@@ -130,6 +130,89 @@ model = vardax.StrongFourDVar(
     minimiser=vardax.OptaxMinimiser(optax.adam(1e-3), max_steps=2000),
 )
 ```
+
+## Reduced-basis 4DVar
+
+`ReducedBasisFourDVar` is strong-constraint 4DVar with the control moved
+into a low-dimensional basis. Let $\Phi \in \mathbb{R}^{N \times P}$ be a
+basis matrix with $P \ll N$ columns, $X \in \mathbb{R}^P$ its
+coefficients, and $Q \in \mathbb{R}^{P \times P}$ their prior covariance
+(diagonal for every built-in basis). The initial state is
+$x_0 = x_b + \Phi X$, and the cost is
+
+$$
+J(X) = \tfrac{1}{2} X^\top Q^{-1} X
+  + \tfrac{1}{2} \sum_t \lVert m_t \odot \big(y_t - H_t(M^t(x_b + \Phi X))\big)\rVert^2_{R_t^{-1}}.
+$$
+
+It is minimised directly, with no linearisation, outer loop or inner CG
+(that is [incremental 4DVar](08_incremental_4dvar.md)). The gradient is
+the state-space adjoint projected onto the basis,
+
+$$
+\nabla_X J = Q^{-1} X + \Phi^\top \lambda_0,
+$$
+
+where $\lambda_0 = -\sum_t M_t'^\top H_t'^\top R_t^{-1} d_t$ is the
+adjoint state at $t = 0$ (the backward sweep below) and
+$d_t = m_t \odot (y_t - H_t(M^t(x_0)))$. One cost-and-gradient
+evaluation costs one forward and one adjoint run, as in state space;
+the gain is that the minimiser works in $P$ dimensions. When $P$ is a few
+tens, forward-mode differentiation (`jax.jacfwd`, $P$ tangent runs) also
+becomes affordable, and the full Hessian $\nabla^2_X J$ is a
+$P \times P$ matrix.
+
+Every [`ReducedBasis`](api/protocols.md) carries its own $Q$:
+
+| Constructor | Columns of $\Phi$ | $Q$ |
+|---|---|---|
+| `rbf_basis` | Gaussian or Wendland bumps at chosen centres | `variance` (scalar or per mode) |
+| `fourier_basis` | Laplacian eigenfunctions on a box | `variance`, times a kernel's spectral density if given (HSGP) |
+| `wavelet_basis` | orthonormal DWT atoms | `variance` per scale |
+| `eof_basis` | leading EOFs of a sample matrix | each mode's sample variance (`"explained"`) |
+| `linear_basis` | any $(N, P)$ matrix | `variance` |
+| `composite_basis` | concatenated families | block-diagonal |
+
+With `basis=None` the class minimises the state-space cost and is the
+same as `StrongFourDVar`; `basis=` is equivalent to
+`StrongFourDVar(parameterization=LinearParameterization(basis, x_b))`.
+
+**Lorenz-96 example.** $N = 40$, RK4 with $\Delta t = 0.05$ over 10
+steps, every second site observed at every time, $\sigma_o = \sigma_b = 1$,
+Gaussian-correlated $B$ (length scale 2 sites). The basis is the leading
+$P$ eigenvectors of $B$, the EOFs of the background error:
+
+| Control | Share of $\mathrm{tr}\,B$ | Analysis RMSE of $x_0$ |
+|---|---:|---:|
+| background $x_b$ | — | 0.96 |
+| $P = 8$ | 79 % | 0.57 |
+| $P = 16$ | 99 % | 0.31 |
+| full state, $N = 40$ | 100 % | 0.28 |
+
+Two practical notes. First, scale the basis so that $Q = I$
+($\Phi = U_P \Lambda_P^{1/2}$ for eigenpairs $(U_P, \Lambda_P)$ of $B$):
+the cost is unchanged, and BFGS no longer has to learn a spread of
+$Q^{-1}$ spanning several decades. Second, a chaotic forward can return
+non-finite values during an aggressive line-search trial step, and the
+masked $R$-solve raises on them; if that happens, cap the step, shorten
+the window, or start from a better first guess.
+
+```python
+import jax.numpy as jnp
+import vardax
+
+eigvals, eigvecs = jnp.linalg.eigh(B)                 # ascending
+whitened = eigvecs[:, -16:] * jnp.sqrt(eigvals[-16:])  # Φ = U_P Λ_P^{1/2}
+model = vardax.ReducedBasisFourDVar(
+    forward=l96, obs_op=vardax.MaskedIdentity(), prior_mean=x_b,
+    prior_cov_op=B_op, obs_cov_op=R_op,
+    basis=vardax.linear_basis(whitened, variance=1.0),
+)
+x0_star = model(batch)
+```
+
+`ReducedBasisFourDVar` was called `Incremental4DVar` until vardax 0.1.10.
+The old name still works and emits a `DeprecationWarning`.
 
 ## The adjoint problem
 
