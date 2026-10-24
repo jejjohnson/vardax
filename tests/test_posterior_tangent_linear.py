@@ -110,7 +110,7 @@ def _smoother_covariance_x0(problem, model_error_cov):
         predicted_covs.append(predicted)
     smoothed = filtered_covs[-1]
     for t in range(N_STEPS - 1, -1, -1):
-        # Gₜ = Pₜ|ₜ Aᵀ Pₜ₊₁|ₜ⁻¹ ; Pₜ|T = Pₜ|ₜ + Gₜ (Pₜ₊₁|T − Pₜ₊₁|ₜ) Gₜᵀ
+        # Gₜ = Pₜ|ₜ Aᵀ Pₜ₊₁|ₜ⁻¹ ; Pₜ|T = Pₜ|ₜ + Gₜ (Pₜ₊₁|T - Pₜ₊₁|ₜ) Gₜᵀ
         smoother_gain = filtered_covs[t] @ A.T @ np.linalg.inv(predicted_covs[t])
         correction = smoothed - predicted_covs[t]
         smoothed = filtered_covs[t] + smoother_gain @ correction @ smoother_gain.T
@@ -140,7 +140,7 @@ def test_strong_matches_kalman_smoother(x64, adapter_cls, model_kind):
         adapter = adapter_cls(
             prior_cov_op=B_op, obs_cov_op=R_op, n_krylov=200, tol=1e-13
         )
-    # linear model: the Gauss–Newton covariance does not depend on x₀*
+    # linear model: the Gauss-Newton covariance does not depend on x₀*
     analysis = jnp.full(N_STATE, 0.3)
     post = adapter(analysis, model.as_analysis_step(), _batch(problem))
     expected = _smoother_covariance_x0(problem, np.zeros((N_STATE, N_STATE)))
@@ -188,7 +188,9 @@ def test_weak_single_state_window(x64):
         ),
     )
     batch = vdx.Batch1D(input=jnp.ones((1, 1, N_STATE)), mask=jnp.ones((1, 1, N_STATE)))
-    adapter = vdx.LaplaceCovariance(prior_cov_op=B_op, obs_cov_op=R_op, solver=lx.Cholesky())
+    adapter = vdx.LaplaceCovariance(
+        prior_cov_op=B_op, obs_cov_op=R_op, solver=lx.Cholesky()
+    )
     post = adapter((jnp.zeros(N_STATE), jnp.zeros((0, N_STATE))), model, batch)
     # P* = (B⁻¹ + R⁻¹)⁻¹
     expected = np.linalg.inv(np.linalg.inv(problem["B"]) + np.diag(1 / problem["r"]))
@@ -211,8 +213,12 @@ def test_window_beats_single_time(x64):
     """More observed times than the 3DVar Hessian sees ⇒ smaller variance."""
     problem = _problem(observed_sites=(0, 1, 2, 3))
     B_op, R_op = _ops(problem)
-    adapter = vdx.LaplaceCovariance(prior_cov_op=B_op, obs_cov_op=R_op, solver=lx.Cholesky())
-    window = _materialise(adapter(jnp.zeros(N_STATE), _strong(problem), _batch(problem)).cov)
+    adapter = vdx.LaplaceCovariance(
+        prior_cov_op=B_op, obs_cov_op=R_op, solver=lx.Cholesky()
+    )
+    window = _materialise(
+        adapter(jnp.zeros(N_STATE), _strong(problem), _batch(problem)).cov
+    )
     single_time = np.linalg.inv(np.linalg.inv(problem["B"]) + np.diag(1 / problem["r"]))
     assert np.all(np.diag(window) < np.diag(single_time) - 1e-3)
 
@@ -228,16 +234,20 @@ class TestSingleTimeUnchanged:
             prior_cov_op=B_op, obs_cov_op=R_op, solver=lx.Cholesky()
         )
         post = adapter(jnp.zeros(N_STATE), _strong(problem), batch)
-        expected = np.linalg.inv(np.linalg.inv(problem["B"]) + np.diag(1 / problem["r"]))
+        expected = np.linalg.inv(
+            np.linalg.inv(problem["B"]) + np.diag(1 / problem["r"])
+        )
         np.testing.assert_allclose(_materialise(post.cov), expected, atol=1e-8)
 
     def test_threedvar_uses_obs_operator(self, x64):
         problem = _problem()
         B_op, R_op = _ops(problem)
         model = vdx.ThreeDVar(
-            obs_op=vdx.LinearObs(H_mat=lx.IdentityLinearOperator(
-                jax.ShapeDtypeStruct((N_STATE,), jnp.float64)
-            )),
+            obs_op=vdx.LinearObs(
+                H_mat=lx.IdentityLinearOperator(
+                    jax.ShapeDtypeStruct((N_STATE,), jnp.float64)
+                )
+            ),
             prior_mean=jnp.zeros(N_STATE),
             prior_cov_op=B_op,
             obs_cov_op=R_op,
@@ -246,7 +256,9 @@ class TestSingleTimeUnchanged:
             prior_cov_op=B_op, obs_cov_op=R_op, solver=lx.Cholesky()
         )
         post = adapter(jnp.zeros(N_STATE), model, batch=None)
-        expected = np.linalg.inv(np.linalg.inv(problem["B"]) + np.diag(1 / problem["r"]))
+        expected = np.linalg.inv(
+            np.linalg.inv(problem["B"]) + np.diag(1 / problem["r"])
+        )
         np.testing.assert_allclose(_materialise(post.cov), expected, atol=1e-8)
         assert post.provenance["structure"] == "single_time"
 
