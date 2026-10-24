@@ -34,7 +34,7 @@ class L96RK4(eqx.Module):
 
     def step(self, x, dt):
         def tendency(x):
-            # dx_k/dt = (x_{k+1} − x_{k−2}) x_{k−1} − x_k + F
+            # dx_k/dt = (x_{k+1} - x_{k-2}) x_{k-1} - x_k + F
             return (jnp.roll(x, -1) - jnp.roll(x, 2)) * jnp.roll(x, 1) - x + FORCING
 
         k1 = tendency(x)
@@ -81,7 +81,7 @@ def _l96_cost(checkpoint, n_steps):
 
     def cost(x0):
         trajectory = rollout(L96RK4(), x0, n_steps, checkpoint=checkpoint)
-        # J = ½ ∑ₜ ‖xₜ − yₜ‖²
+        # J = ½ ∑ₜ ‖xₜ - yₜ‖²
         return 0.5 * jnp.sum((trajectory - target) ** 2)
 
     return cost
@@ -219,9 +219,9 @@ class TestModelSlots:
             return jax.grad(cost)(jnp.ones(3))
 
         default = _models(DiffraxDecay(), 3)["strong"]()
-        backsolve = _models(
-            DiffraxDecay(), 3, forward_adjoint=dfx.BacksolveAdjoint()
-        )["strong"]()
+        backsolve = _models(DiffraxDecay(), 3, forward_adjoint=dfx.BacksolveAdjoint())[
+            "strong"
+        ]()
         assert jnp.allclose(cost_at(default), cost_at(backsolve), rtol=1e-3)
 
     def test_protocol_conformance(self):
