@@ -13,11 +13,11 @@ import pytest
 import vardax as vdx
 from vardax import (
     Batch1D,
-    ReducedBasisFourDVar,
     MaskedIdentity,
     Minimiser,
     OptaxMinimiser,
     OptimistixMinimiser,
+    ReducedBasisFourDVar,
     StrongFourDVar,
     ThreeDVar,
     WeakFourDVar,

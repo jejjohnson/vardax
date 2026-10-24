@@ -14,11 +14,11 @@ import pytest
 import vardax as vdx
 from vardax import (
     Batch1D,
-    ReducedBasisFourDVar,
     LinearParameterization,
     MaskedIdentity,
     NeuralFieldParameterization,
     OptaxMinimiser,
+    ReducedBasisFourDVar,
     StateParameterization,
     StrongFourDVar,
     ThreeDVar,
