@@ -83,18 +83,9 @@ def _has_attribute(cls: type, name: str) -> bool:
     return False
 
 
-def _check_block(source: str) -> list[str]:
-    try:
-        tree = ast.parse(source)
-    except SyntaxError as error:
-        if "vardax" in source or "vdx" in source:
-            return [f"block does not parse ({error.msg}, line {error.lineno})"]
-        return []
-
-    problems: list[str] = []
+def _bind_imports(tree: ast.AST, problems: list[str]) -> dict[str, Any]:
+    """Names the block binds to vardax objects; unresolved imports → problems."""
     bound: dict[str, Any] = dict(ALIASES)
-    instances: dict[str, type] = {}
-
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
@@ -105,9 +96,7 @@ def _check_block(source: str) -> list[str]:
                 except ImportError:
                     problems.append(f"import {alias.name}: no such module")
                     continue
-                bound[alias.asname or alias.name.split(".")[0]] = (
-                    module if alias.asname else vardax
-                )
+                bound[alias.asname or "vardax"] = module if alias.asname else vardax
         elif isinstance(node, ast.ImportFrom) and node.module:
             if node.module.split(".")[0] != "vardax":
                 continue
@@ -121,46 +110,67 @@ def _check_block(source: str) -> list[str]:
                 if value is _MISSING:
                     problems.append(f"from {node.module} import {alias.name}: missing")
                 bound[alias.asname or alias.name] = value
+    return bound
 
+
+def _check_keywords(node: ast.Call, bound: dict[str, Any]) -> list[str]:
+    """Keyword arguments of a call to a vardax callable must be parameters."""
+    target = _resolve_chain(node.func, bound)
+    if target is None or target is _MISSING or not callable(target):
+        return []
+    try:
+        parameters = inspect.signature(target).parameters
+    except (TypeError, ValueError):
+        return []
+    if any(p.kind is inspect.Parameter.VAR_KEYWORD for p in parameters.values()):
+        return []
+    return [
+        f"{ast.unparse(node.func)}({keyword.arg}=...): no such parameter"
+        for keyword in node.keywords
+        if keyword.arg and keyword.arg not in parameters
+    ]
+
+
+def _instances(tree: ast.AST, bound: dict[str, Any]) -> dict[str, type]:
+    """Variables assigned an instance of a vardax class: ``x = vardax.C(...)``."""
+    instances: dict[str, type] = {}
     for node in ast.walk(tree):
-        if isinstance(node, ast.Attribute):
-            value = _resolve_chain(node, bound)
-            if value is _MISSING and _resolve_chain(node.value, bound) is not _MISSING:
-                problems.append(f"{ast.unparse(node)}: no such attribute")
-        if isinstance(node, ast.Call):
-            target = _resolve_chain(node.func, bound)
-            if target is None or target is _MISSING or not callable(target):
-                continue
-            try:
-                parameters = inspect.signature(target).parameters
-            except (TypeError, ValueError):
-                continue
-            takes_kwargs = any(
-                p.kind is inspect.Parameter.VAR_KEYWORD for p in parameters.values()
-            )
-            for keyword in node.keywords:
-                if keyword.arg and not takes_kwargs and keyword.arg not in parameters:
-                    problems.append(
-                        f"{ast.unparse(node.func)}({keyword.arg}=...): "
-                        "no such parameter"
-                    )
         if isinstance(node, ast.Assign) and isinstance(node.value, ast.Call):
             target = _resolve_chain(node.value.func, bound)
             if inspect.isclass(target):
                 for name in node.targets:
                     if isinstance(name, ast.Name):
                         instances[name.id] = target
+    return instances
 
+
+def _check_block(source: str) -> list[str]:
+    try:
+        tree = ast.parse(source)
+    except SyntaxError as error:
+        if "vardax" in source or "vdx" in source:
+            return [f"block does not parse ({error.msg}, line {error.lineno})"]
+        return []
+
+    problems: list[str] = []
+    bound = _bind_imports(tree, problems)
+    instances = _instances(tree, bound)
     for node in ast.walk(tree):
-        if (
-            isinstance(node, ast.Attribute)
-            and isinstance(node.value, ast.Name)
-            and node.value.id in instances
-        ):
-            cls = instances[node.value.id]
+        if isinstance(node, ast.Call):
+            problems.extend(_check_keywords(node, bound))
+        if not isinstance(node, ast.Attribute):
+            continue
+        # vardax.X chains
+        value = _resolve_chain(node, bound)
+        if value is _MISSING and _resolve_chain(node.value, bound) is not _MISSING:
+            problems.append(f"{ast.unparse(node)}: no such attribute")
+        # attributes of instances of vardax classes
+        owner = node.value
+        if isinstance(owner, ast.Name) and owner.id in instances:
+            cls = instances[owner.id]
             if not _has_attribute(cls, node.attr):
                 problems.append(
-                    f"{node.value.id}.{node.attr}: {cls.__name__} has no "
+                    f"{owner.id}.{node.attr}: {cls.__name__} has no "
                     f"attribute {node.attr!r}"
                 )
     return problems

@@ -85,7 +85,9 @@ def test_posterior_equals_explicit_adapter(x64, name):
     probe = jnp.arange(1.0, N_STATE + 1)
     assert isinstance(posterior, vdx.Posterior)
     np.testing.assert_allclose(posterior.mean, mean)
-    np.testing.assert_allclose(posterior.cov.mv(probe), explicit.cov.mv(probe), rtol=1e-6)
+    np.testing.assert_allclose(
+        posterior.cov.mv(probe), explicit.cov.mv(probe), rtol=1e-6
+    )
 
 
 def test_posterior_with_gauss_newton_adapter(x64):
