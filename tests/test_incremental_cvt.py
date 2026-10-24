@@ -56,7 +56,9 @@ def _problem(prior_cov):
     mask = np.zeros((N_STEPS + 1, N_STATE))
     mask[:, ::3] = 1.0
     observations = rng.normal(size=(N_STEPS + 1, N_STATE)) * mask
-    batch = vdx.Batch1D(input=jnp.asarray(observations)[None], mask=jnp.asarray(mask)[None])
+    batch = vdx.Batch1D(
+        input=jnp.asarray(observations)[None], mask=jnp.asarray(mask)[None]
+    )
     B_op = lx.MatrixLinearOperator(prior_cov, lx.positive_semidefinite_tag)
     R_op = lx.DiagonalLinearOperator(jnp.full(N_STATE, 0.25))
     return batch, B_op, R_op
@@ -66,7 +68,10 @@ def _exact_analysis(prior_cov, batch):
     """Linear model and H: x₀* = (B⁻¹ + GᵀR⁻¹G)⁻¹ GᵀR⁻¹ y (x_b = 0)."""
     transition = 0.9 * np.roll(np.eye(N_STATE), 1, axis=0)
     mask = np.asarray(batch.mask[0])
-    rows = [np.diag(mask[t]) @ np.linalg.matrix_power(transition, t) for t in range(N_STEPS + 1)]
+    rows = [
+        np.diag(mask[t]) @ np.linalg.matrix_power(transition, t)
+        for t in range(N_STEPS + 1)
+    ]
     G = np.concatenate(rows)
     y = np.asarray(batch.input[0]).reshape(-1)
     precision = np.linalg.inv(np.asarray(prior_cov)) + G.T @ G / 0.25
@@ -93,8 +98,14 @@ def test_both_paths_reach_the_exact_analysis(x64, cvt):
     prior_cov = _smooth_background_cov()
     batch, B_op, R_op = _problem(prior_cov)
     model = _model(
-        B_op, R_op, n_outer=1, n_inner=400, cvt=cvt,
-        cg_atol=1e-11, cg_rtol=1e-11, covariance_tol=1e-12,
+        B_op,
+        R_op,
+        n_outer=1,
+        n_inner=400,
+        cvt=cvt,
+        cg_atol=1e-11,
+        cg_rtol=1e-11,
+        covariance_tol=1e-12,
     )
     analysis = model(batch)[0]
     exact = _exact_analysis(prior_cov, batch)
@@ -104,7 +115,9 @@ def test_both_paths_reach_the_exact_analysis(x64, cvt):
 def test_cvt_and_state_space_agree(x64):
     prior_cov = _smooth_background_cov()
     batch, B_op, R_op = _problem(prior_cov)
-    tight = dict(n_outer=2, n_inner=400, cg_atol=1e-11, cg_rtol=1e-11, covariance_tol=1e-12)
+    tight = dict(
+        n_outer=2, n_inner=400, cg_atol=1e-11, cg_rtol=1e-11, covariance_tol=1e-12
+    )
     with_cvt = _model(B_op, R_op, cvt=True, **tight)(batch)
     without_cvt = _model(B_op, R_op, cvt=False, **tight)(batch)
     np.testing.assert_allclose(with_cvt, without_cvt, rtol=1e-6, atol=1e-8)
@@ -114,8 +127,14 @@ def _iterations_to_converge(cvt, prior_cov, batch, B_op, R_op, budgets):
     exact = _exact_analysis(prior_cov, batch)
     for budget in budgets:
         model = _model(
-            B_op, R_op, n_outer=1, n_inner=budget, cvt=cvt,
-            cg_atol=0.0, cg_rtol=0.0, covariance_tol=1e-12,
+            B_op,
+            R_op,
+            n_outer=1,
+            n_inner=budget,
+            cvt=cvt,
+            cg_atol=0.0,
+            cg_rtol=0.0,
+            covariance_tol=1e-12,
         )
         if _relative_error(model(batch)[0], exact) < 1e-4:
             return budget
@@ -140,7 +159,8 @@ def test_cvt_never_solves_against_the_prior(x64, monkeypatch):
     prior_cov = _smooth_background_cov(jitter=0.1)
     batch, _, R_op = _problem(prior_cov)
     B_op = lx.TaggedLinearOperator(
-        lx.MatrixLinearOperator(prior_cov), frozenset({lx.positive_semidefinite_tag, marker})
+        lx.MatrixLinearOperator(prior_cov),
+        frozenset({lx.positive_semidefinite_tag, marker}),
     )
     solved_against_prior = []
     original_solve = lx.linear_solve
