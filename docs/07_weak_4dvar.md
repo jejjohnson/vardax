@@ -47,7 +47,7 @@ every time without distorting $x_0$.
 
 ```python
 import optimistix as optx
-from vardax.models import WeakFourDVar
+from vardax import WeakFourDVar
 
 model = WeakFourDVar(
     forward=somax_model,                              # M_t^free
@@ -133,7 +133,7 @@ this space. Marginalising to the state trajectory requires applying
 the linearised forward through the joint posterior — vardax provides
 
 ```python
-from vardax.posterior import LaplaceCovariance
+from vardax import LaplaceCovariance
 
 posterior_aug = LaplaceCovariance()(
     (x_0_star, eta_star), model.as_analysis_step(), batch,

@@ -129,6 +129,28 @@ class OptimalInterpolation(eqx.Module):
         # x_star = x_b + B H^T v
         return x_b + self.prior_cov_op.mv(H.transpose().mv(v))
 
+    def posterior(self, batch: Batch1D, adapter: Any = None) -> Any:
+        """Analyse one window and return its [`Posterior`][vardax.Posterior].
+
+        Runs the analysis, then ``adapter(analysis, self, batch)``; the
+        default adapter is [`LaplaceCovariance`][vardax.LaplaceCovariance]
+        with this model's $B$ and $R$.
+
+        Args:
+            batch: A ``Batch1D`` holding one window.
+            adapter: Optional [`PosteriorAdapter`][vardax.PosteriorAdapter],
+                e.g. [`GaussNewtonHessian`][vardax.GaussNewtonHessian].
+
+        Returns:
+            The window's posterior: mean and lazy covariance.
+
+        Raises:
+            ValueError: If ``batch`` holds more than one window.
+        """
+        from vardax._src.posterior._precision import model_posterior
+
+        return model_posterior(self, batch, adapter)
+
     def as_analysis_step(self) -> _OIAnalysisStep:
         """Adapt to ``pipekit_cycle.AnalysisStep`` (Decision D8)."""
         return _OIAnalysisStep(self)

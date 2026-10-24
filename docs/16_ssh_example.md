@@ -27,15 +27,16 @@ import optimistix as optx
 import diffrax as dfx
 
 from vardax import Batch2D
-from vardax.obs_operators import MaskedIdentity, LinearObs
+from vardax import MaskedIdentity, LinearObs
 
 # Build a Batch2D from preprocessed altimetric data
 batch = Batch2D(
     input=ssh_observed,          # (B, T, H, W) with NaN in gaps
     mask=track_mask,             # 1 along-track, 0 in gaps
     target=ssh_truth,            # ground truth (training only)
-    obs_err=altika_uncertainty,
 )
+# the along-track error (altika_uncertainty) enters as the model's
+# obs_cov_op, e.g. lx.DiagonalLinearOperator(altika_uncertainty**2)
 ```
 
 ## Approach 1 — `OptimalInterpolation`
@@ -44,7 +45,7 @@ The classical baseline. Linear $H$ (masked identity), Gaussian
 Matérn prior, Gaussian diagonal obs error — closed-form fast path.
 
 ```python
-from vardax.models import OptimalInterpolation
+from vardax import OptimalInterpolation
 
 coords = jnp.stack(jnp.meshgrid(lon, lat, indexing="ij"), axis=-1)
 B_op = gx.MaternLinearOperator(
@@ -77,7 +78,7 @@ get filled by dynamical propagation rather than just smoothing.
 
 ```python
 import somax
-from vardax.models import IncrementalFourDVar
+from vardax import IncrementalFourDVar
 from vardax import IncrementalConfig
 
 swm = somax.ShallowWaterModel(grid=grid, params=ssh_params)
@@ -109,19 +110,17 @@ $\varphi_\theta$ captures the SSH manifold; the learned grad modulator
 $\Phi_\phi$ accelerates inner iterations.
 
 ```python
-from vardax.models import FourDVarNet
-from vardax.priors import BilinAEPrior2D
-from vardax.grad_mod import ConvLSTMGradMod2D
-from vardax import SolverConfig
+import jax
+from vardax import FourDVarNet2D
+from vardax import train_step
 from vardax.adjoints import OneStepAdjoint
-from vardax.training import train_step
 
-model = FourDVarNet(
-    prior=BilinAEPrior2D(latent_dim=128, n_time=10, height=128, width=128),
-    obs_op=MaskedIdentity(),
-    grad_mod=ConvLSTMGradMod2D(state_channels=10, hidden_dim=64),
-    config=SolverConfig(n_steps=15, alpha=0.2),
+# BilinAEPrior2D prior + ConvLSTMGradMod2D modulator, built inside
+model = FourDVarNet2D(
+    n_time=10, height=128, width=128, latent_dim=128, hidden_dim=64,
+    n_solver_steps=15, alpha=0.2,
     solver_adjoint=OneStepAdjoint(),       # O(1) memory training
+    key=jax.random.PRNGKey(0),
 )
 
 # Train on the OceanBench dataset

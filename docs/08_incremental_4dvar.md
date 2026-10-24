@@ -150,7 +150,7 @@ model = IncrementalFourDVar(
 )
 x_star = model(batch)
 
-# Posterior is free — reuses the GN Hessian from the last outer iteration
+# Gauss–Newton posterior at the analysis, with the model's B and R
 posterior = model.posterior(batch)
 ```
 
@@ -224,9 +224,10 @@ Three multiplicative speedups over `StrongFourDVar` with `NonlinearCG`:
    per outer iteration and reused across all $n_\text{inner}$ inner CG
    steps. `NonlinearCG` on the full nonlinear cost recomputes the
    gradient (which requires a full forward + adjoint pass) every step.
-3. **Free posterior** — the GN Hessian assembled in the last outer
-   iteration is reused for `LaplaceCovariance` / `GaussNewtonHessian`.
-   No separate Krylov pass needed for posterior diagonal.
+3. **Cheap posterior** — the posterior precision is the same
+   Gauss–Newton operator the inner loop solves with, so
+   `model.posterior(batch)` costs one more linearisation of the rollout
+   at the analysis.
 
 For a typical operational problem ($T = 12$ hours, $n = 10^7$ grid
 points, $m = 10^5$ observations), `IncrementalFourDVar` converges in
@@ -287,19 +288,20 @@ the augmented problem is heavier and not always worth the complexity.
 The strong / weak choice is structural; the inner-solver choice
 (general vs incremental) is performance.
 
-## Posterior covariance — for free
+## Posterior covariance
 
-The last outer iteration's GN Hessian is an `AbstractLinearOperator`
-that can be inverted via Krylov for posterior diagonal or sampling:
+The posterior precision at the analysis is the Gauss–Newton operator
+$B^{-1} + \sum_t (H'_t M'_t)^\top R_t^{-1} (H'_t M'_t)$, the inner
+loop's Hessian. `model.posterior(batch)` relinearises the rollout once at
+the analysis and returns its lazy inverse (chapter 13):
 
 ```python
-posterior = model.posterior(batch)
-# Posterior(mean=x_star, cov=GN_Hessian_inv_op, samples=None, provenance={...})
+posterior = model.posterior(batch)              # batch: one window
+# Posterior(mean=x_star, cov=lazy (B⁻¹ + G'ᵀR⁻¹G')⁻¹, samples=None, provenance={...})
 ```
 
-Compare `StrongFourDVar`, where computing the posterior requires a
-fresh Krylov pass over the same Hessian. For `IncrementalFourDVar` the
-Hessian is already there.
+Pass `adapter=vardax.GaussNewtonHessian(n_krylov=...)` to set the Krylov
+budget of each covariance mat-vec.
 
 ## When to switch from `IncrementalFourDVar` to `StrongFourDVar`
 

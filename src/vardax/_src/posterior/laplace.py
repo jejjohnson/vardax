@@ -56,14 +56,15 @@ class LaplaceCovariance(eqx.Module):
     r"""Laplace approximation at MAP.
 
     Attributes:
-        prior_cov_op: Background-error covariance $B$.
-        obs_cov_op: Observation-error covariance $R$ at one time.
+        prior_cov_op: Background-error covariance $B$. Default ``None``:
+            the model's ``prior_cov_op``.
+        obs_cov_op: Observation-error covariance $R$ at one time. Default
+            ``None``: the model's ``obs_cov_op``.
         solver: Linear solver for the lazy inverses (default CG,
             ``atol = rtol = 1e-6``, 200 steps).
 
-    Both required so the adapter can build $P^*$ lazily. They
-    should match the operators used by the analysis method that
-    produced ``analysis``.
+    Pass $B$ and $R$ explicitly only to evaluate the posterior under
+    different error statistics from the ones the analysis used.
 
     Examples:
         >>> import jax, jax.numpy as jnp, lineax as lx
@@ -80,13 +81,13 @@ class LaplaceCovariance(eqx.Module):
         True
     """
 
-    prior_cov_op: lx.AbstractLinearOperator
-    obs_cov_op: lx.AbstractLinearOperator
+    prior_cov_op: lx.AbstractLinearOperator | None = None
+    obs_cov_op: lx.AbstractLinearOperator | None = None
     solver: lx.AbstractLinearSolver = eqx.field(static=True, default=DEFAULT_SOLVER)
 
     def __call__(
         self,
-        analysis: Float[Array, ...],
+        analysis: Float[Array, ...] | tuple[Array, Array],
         model: Any,  # AnalysisStep-compliant
         batch: Any,
     ) -> Posterior:

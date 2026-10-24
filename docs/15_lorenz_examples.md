@@ -57,8 +57,8 @@ The Lorenz dynamics are nonlinear; the assumption of static field
 gives a poor reconstruction — but it's a useful baseline:
 
 ```python
-from vardax.models import OptimalInterpolation
-from vardax.obs_operators import MaskedIdentity
+from vardax import OptimalInterpolation
+from vardax import MaskedIdentity
 
 # Treat as static — wrong but instructive
 oi = OptimalInterpolation(
@@ -76,8 +76,8 @@ x_oi = oi(batch)
 
 ```python
 import optimistix as optx
-from vardax.models import StrongFourDVar
-from vardax.priors import DynamicalPrior
+from vardax import StrongFourDVar
+from vardax import DynamicalPrior
 
 # Wrap the Lorenz-63 vector field as a ForwardModel
 forward = wrap_l63_as_forward_model(sigma=10, rho=28, beta=8/3, dt=0.01)
@@ -105,18 +105,16 @@ wings because the static prior doesn't know about the dynamics.
 Train a small AE prior on a long training trajectory:
 
 ```python
-from vardax.models import FourDVarNet
-from vardax.priors import MLPAEPrior1D
-from vardax.grad_mod import MLPGradMod
-from vardax import SolverConfig
+import jax
+from vardax import FourDVarNet1D
 from vardax.adjoints import OneStepAdjoint
 
-net = FourDVarNet(
-    prior=MLPAEPrior1D(state_dim=3, latent_dim=8, hidden_dim=32, n_time=20),
-    obs_op=MaskedIdentity(),
-    grad_mod=MLPGradMod(hidden_dim=64),
-    config=SolverConfig(n_steps=15, alpha=0.2),
+# builds a BilinAEPrior1D prior and a ConvLSTMGradMod1D modulator
+net = FourDVarNet1D(
+    state_dim=3, n_time=20, latent_dim=8, hidden_dim=32,
+    n_solver_steps=15, alpha=0.2,
     solver_adjoint=OneStepAdjoint(),
+    key=jax.random.PRNGKey(0),
 )
 
 # Train on (masked_input, ground_truth) pairs from extracted patches
@@ -125,7 +123,7 @@ net = FourDVarNet(
 x_net = net(batch)
 ```
 
-`FourDVarNet` learns the attractor structure from the training data
+`FourDVarNet1D` learns the attractor structure from the training data
 and reconstructs without explicit access to the dynamics. The
 comparison `x_strong` vs `x_net` is the canonical demonstration that
 learned priors recover similar information to model-based ones.
@@ -170,7 +168,7 @@ incremental solver, AK-style or masked observations.
 
 ```python
 import gaussx as gx
-from vardax.models import IncrementalFourDVar
+from vardax import IncrementalFourDVar
 from vardax import IncrementalConfig
 
 # Matérn-3/2 prior on the periodic 40-cell grid

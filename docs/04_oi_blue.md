@@ -90,8 +90,8 @@ no $O(n^3)$ factorisations.
 ```python
 import gaussx as gx
 import lineax as lx
-from vardax.models import OptimalInterpolation
-from vardax.obs_operators import LinearObs
+from vardax import OptimalInterpolation
+from vardax import LinearObs
 
 model = OptimalInterpolation(
     obs_op=LinearObs(H_mat=along_track_op),       # must be linear

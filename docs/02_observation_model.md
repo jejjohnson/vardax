@@ -61,7 +61,7 @@ Tangent-linear: $H'(x) = \mathrm{diag}(m)$. Use case: SSH altimetry
 along-track gaps, SST with cloud masks, in-situ samples on a grid.
 
 ```python
-from vardax.obs_operators import MaskedIdentity
+from vardax import MaskedIdentity
 obs_op = MaskedIdentity()
 ```
 
@@ -80,7 +80,7 @@ filtering, spatial interpolation. The matrix is stored as an
 be exploited.
 
 ```python
-from vardax.obs_operators import LinearObs
+from vardax import LinearObs
 obs_op = LinearObs(H_mat=footprint_op)
 ```
 
@@ -113,7 +113,7 @@ prior $x_b$. vardax exposes `AveragingKernel` as a first-class operator
 because this is a day-one requirement, not a future feature.
 
 ```python
-from vardax.obs_operators import AveragingKernel
+from vardax import AveragingKernel
 ak = AveragingKernel(A=A_op, x_a=retrieval_prior, h=weighting_vector)
 ```
 
@@ -142,7 +142,7 @@ pixels — they contribute zero log-likelihood, not dropped (this lets us
 audit effective per-instrument observation count).
 
 ```python
-from vardax.obs_operators import (
+from vardax import (
     MultiInstrumentFusion, InstrumentRegistry, InstrumentSpec,
 )
 

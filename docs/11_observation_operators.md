@@ -20,7 +20,7 @@ H(x) = m \odot x, \quad m \in \{0, 1\}^n.
 $$
 
 ```python
-from vardax.obs_operators import MaskedIdentity
+from vardax import MaskedIdentity
 
 obs_op = MaskedIdentity()
 y_pred = obs_op(x, mask=batch.mask)
@@ -41,7 +41,7 @@ H(x) = H_\text{mat} \cdot x.
 $$
 
 ```python
-from vardax.obs_operators import LinearObs
+from vardax import LinearObs
 
 obs_op = LinearObs(H_mat=footprint_op)         # AbstractLinearOperator
 y_pred = obs_op(x)
@@ -95,7 +95,7 @@ weighting as sidecar metadata in the netCDF / HDF5 file:
 ```python
 import xarray as xr
 import lineax as lx
-from vardax.obs_operators import AveragingKernel
+from vardax import AveragingKernel
 
 def averaging_kernel_from_l2(ds: xr.Dataset) -> AveragingKernel:
     return AveragingKernel(
@@ -159,7 +159,7 @@ cost.
 For multi-satellite inversions:
 
 ```python
-from vardax.obs_operators import (
+from vardax import (
     MultiInstrumentFusion, InstrumentRegistry, InstrumentSpec,
 )
 
