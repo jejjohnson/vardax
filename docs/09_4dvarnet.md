@@ -100,21 +100,19 @@ known to be a contraction.
 
 ```python
 import equinox as eqx
+import jax
 import optax
-from vardax.models import FourDVarNet
-from vardax import SolverConfig
+from vardax import FourDVarNet2D
+from vardax import train_step
 from vardax.adjoints import OneStepAdjoint
-from vardax.priors import ConvAEPrior
-from vardax.obs_operators import MaskedIdentity
-from vardax.grad_mod import ConvLSTMGradMod2D
-from vardax.training import train_step
 
-model = FourDVarNet(
-    prior=ConvAEPrior(encoder=enc_2d, decoder=dec_2d),
-    obs_op=MaskedIdentity(),
-    grad_mod=ConvLSTMGradMod2D(hidden_dim=64),
-    config=SolverConfig(n_steps=15, alpha=0.2, prior_weight=1.0),
+# builds a BilinAEPrior2D prior and a ConvLSTMGradMod2D modulator
+model = FourDVarNet2D(
+    n_time=10, height=64, width=64,
+    latent_dim=64, hidden_dim=64,
+    n_solver_steps=15, alpha=0.2, prior_weight=1.0,
     solver_adjoint=OneStepAdjoint(),                # O(1) memory training
+    key=jax.random.PRNGKey(0),
 )
 
 optimizer = optax.adam(1e-3)
@@ -220,7 +218,7 @@ Don't use `FourDVarNet` when:
 The Laplace approximation works the same way as for classical methods:
 
 ```python
-from vardax.posterior import LaplaceCovariance
+from vardax import LaplaceCovariance
 
 posterior = LaplaceCovariance()(model(batch), model.as_analysis_step(), batch)
 ```

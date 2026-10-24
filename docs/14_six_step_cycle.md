@@ -107,12 +107,18 @@ fails adjoint calibration, even if the forward agreement is excellent.
 Wrong-direction gradients are silently corrosive.
 
 ```python
-from vardax.utils.validation import (
-    assert_forward_agreement, assert_adjoint_calibrated,
-)
+import jax
+import jax.numpy as jnp
+from vardax import assert_adjoint_calibrated
 
-assert_forward_agreement(emulator, physics_forward, val_states, eps=0.01)
-assert_adjoint_calibrated(emulator, physics_forward, val_states, threshold=0.05)
+# forward agreement: relative error of the emulator on held-out states
+forward_error = jnp.linalg.norm(emulator(val_states) - physics_forward(val_states))
+assert forward_error / jnp.linalg.norm(physics_forward(val_states)) < 0.01
+
+# adjoint calibration: random-probe agreement of the Jacobians
+assert_adjoint_calibrated(
+    emulator, physics_forward, val_states, key=jax.random.PRNGKey(0), threshold=0.05
+)
 ```
 
 The emulator $F_\psi$ satisfies `pipekit_cycle.ForwardModel`. It's a
@@ -176,7 +182,7 @@ Validation gates (Decision D12):
 - **SBC** rank histograms uniform
 
 ```python
-from vardax.utils.validation import (
+from vardax import (
     assert_posterior_agreement, simulation_based_calibration,
 )
 

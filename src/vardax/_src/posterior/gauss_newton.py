@@ -36,8 +36,9 @@ class GaussNewtonHessian(eqx.Module):
     ``n_krylov`` iterations per covariance mat-vec.
 
     Attributes:
-        prior_cov_op: $B$.
-        obs_cov_op: $R$ at one time.
+        prior_cov_op: $B$. Default ``None``: the model's ``prior_cov_op``.
+        obs_cov_op: $R$ at one time. Default ``None``: the model's
+            ``obs_cov_op``.
         n_krylov: Maximum CG iterations per covariance mat-vec.
         tol: CG absolute and relative tolerance.
 
@@ -67,14 +68,14 @@ class GaussNewtonHessian(eqx.Module):
         True
     """
 
-    prior_cov_op: lx.AbstractLinearOperator
-    obs_cov_op: lx.AbstractLinearOperator
+    prior_cov_op: lx.AbstractLinearOperator | None = None
+    obs_cov_op: lx.AbstractLinearOperator | None = None
     n_krylov: int = eqx.field(static=True, default=50)
     tol: float = eqx.field(static=True, default=1e-6)
 
     def __call__(
         self,
-        analysis: Float[Array, ...],
+        analysis: Float[Array, ...] | tuple[Array, Array],
         model: Any,
         batch: Any,
     ) -> Posterior:

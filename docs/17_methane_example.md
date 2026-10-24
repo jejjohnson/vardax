@@ -102,9 +102,15 @@ plume = plumax.tier1.GaussianPlume(met=met, dispersion="MO")
 # plume satisfies pipekit_cycle.ForwardModel
 
 # (3) Multi-instrument observation operator
-fusion = vdx.obs_operators.MultiInstrumentFusion(
-    registry=vdx.obs_operators.InstrumentRegistry.from_l2_dict({
-        op.instrument: op.l2_ds for op in overpasses
+fusion = vdx.MultiInstrumentFusion(
+    registry=vdx.InstrumentRegistry(entries={
+        op.instrument: vdx.InstrumentSpec(
+            obs_op=averaging_kernel_from_l2(op.l2_ds),  # an AveragingKernel
+            mask=op.quality_mask,
+            R_op=lx.DiagonalLinearOperator(op.retrieval_variance),
+            instrument_id=op.instrument,
+        )
+        for op in overpasses
     }),
 )
 
@@ -119,25 +125,25 @@ R_op = lx.BlockDiagonalLinearOperator([
 ])
 
 # (6) Configure incremental 4DVar inversion
-inversion = vdx.models.IncrementalFourDVar(
+inversion = vdx.IncrementalFourDVar(
     forward=plume, obs_op=fusion,
     prior_mean=jnp.array([Q_prior_mu, 0.0, 0.0, 50.0]),  # (logQ, x0, y0, H_eff)
     prior_cov_op=B_op, obs_cov_op=R_op,
     config=vdx.IncrementalConfig(n_outer=5, n_inner=20, cvt=True),
 )
 
-# (7) Build batch from overpasses
-batch = vdx.utils.build_event_batch(overpasses, met=met)
+# (7) Build batch from overpasses (your glue: overpasses -> vdx.Batch1D)
+batch = build_event_batch(overpasses, met=met)
 
 # (8) Invert
 x_star = inversion(batch)
 
-# (9) Posterior via Gauss-Newton Hessian (reuses last outer iteration)
+# (9) Gauss-Newton posterior at the analysis (model's own B and R)
 posterior = inversion.posterior(batch)
 # Posterior(mean=x_star, cov=GN_Hessian_inv_op, samples=None, provenance={...})
 
 # (10) Export to population layer
-mark = vdx.posterior.GaussianMarkLikelihood(
+mark = vdx.GaussianMarkLikelihood(
     posterior=posterior,
     event_metadata={
         "event_id": event.id, "time": event.time, "geometry": event.geometry,

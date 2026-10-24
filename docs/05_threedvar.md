@@ -49,7 +49,7 @@ For time series and dynamics, use `StrongFourDVar` (chapter 6).
 
 ```python
 import optimistix as optx
-from vardax.models import ThreeDVar
+from vardax import ThreeDVar
 
 model = ThreeDVar(
     obs_op=AveragingKernel(A=A, x_a=xa, h=h),   # nonlinear via h ⊙ x
@@ -141,7 +141,7 @@ $$
 Compute via `LaplaceCovariance`:
 
 ```python
-from vardax.posterior import LaplaceCovariance
+from vardax import LaplaceCovariance
 
 posterior = LaplaceCovariance()(x_star, model.as_analysis_step(), batch)
 ```

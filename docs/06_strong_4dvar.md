@@ -38,7 +38,7 @@ Errico 1997). With `diffrax`, it's a constructor argument.
 ```python
 import diffrax as dfx
 import optimistix as optx
-from vardax.models import StrongFourDVar
+from vardax import StrongFourDVar
 
 model = StrongFourDVar(
     forward=somax_model,                              # pipekit_cycle.ForwardModel
@@ -324,10 +324,10 @@ The 4DVar cost $J$ is nonconvex when $M_t$ is nonlinear — multiple
 local minima exist (and matter, especially for chaotic systems like
 Lorenz). Strategies:
 
-- **Multi-start.** Run `optimistix.NonlinearCG` from several
-  perturbed initial guesses, pick the lowest cost. vardax provides
-  `vardax.utils.multi_start(model, batch, n_starts=10, key)` as a
-  helper.
+- **Multi-start.** Minimise from several perturbed first guesses and
+  keep the lowest cost. vardax has no helper for this yet: the models
+  start every minimisation from $x_b$, so a multi-start needs a first
+  guess separate from the background.
 - **Quasi-static gradient.** Use a warm-start from a previous cycle
   (the usual operational pattern).
 - **Switch to `IncrementalFourDVar`** (chapter 8) — the outer
@@ -339,7 +339,7 @@ Lorenz). Strategies:
 Pair the analysis with a `PosteriorAdapter`:
 
 ```python
-from vardax.posterior import LaplaceCovariance
+from vardax import LaplaceCovariance
 
 posterior = LaplaceCovariance()(x_0_star, model.as_analysis_step(), batch)
 ```

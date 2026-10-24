@@ -44,9 +44,11 @@ posterior = oi.posterior(batch)
 # Posterior(mean=..., cov=AbstractLinearOperator, samples=None, provenance={...})
 ```
 
-The `cov` operator is the Sherman-Morrison-Woodbury form chosen by
-vardax based on dimensions. Diagonals, samples, and mat-vecs all
-compose `gaussx` mat-vecs without materialisation.
+`posterior(batch)` takes one window and returns the Laplace posterior
+with the model's own $B$ and $R$, which for OI is exact. The `cov`
+operator is lazy: each mat-vec is a CG solve against
+$B^{-1} + H^\top R^{-1} H$ (closed form for diagonal and other
+structured operators), never a dense matrix.
 
 This is the cheapest and most accurate posterior — when applicable.
 
@@ -143,31 +145,31 @@ condition or observation realisation.
 ```python
 import equinox as eqx
 import filterax as fx
-from vardax.posterior import EnsembleCovariance
+from vardax import EnsembleCovariance
 
 # Run M analyses in parallel
 analyses = eqx.filter_vmap(strong_4dvar)(perturbed_batches)
 
 posterior = EnsembleCovariance(
-    n_members=M, inflation=1.1, localization_radius=50.0,
+    n_members=M, inflation=1.1,
 )(analyses, strong_4dvar.as_analysis_step(), batch)
 ```
 
-Localisation and inflation are standard ensemble fixes — delegated to
-`filterax`. Without localisation, sample covariance from $M \ll N$
-members is rank-deficient and noisy; with it, the covariance is
-spatially smoothed and stabilised.
+Inflation is built in. Localisation is not: without it, the sample
+covariance from $M \ll N$ members is rank-deficient and noisy, so taper
+it (for example with `filterax`'s localisation) before using it for
+anything spatial.
 
 ## Picking by inference method
 
 | Method | Default posterior path |
 |---|---|
-| `OptimalInterpolation` | `.posterior(batch)` — closed form, free |
-| `ThreeDVar` | `LaplaceCovariance()` |
-| `StrongFourDVar` | `LaplaceCovariance()` or `GaussNewtonHessian()` |
-| `WeakFourDVar` | `LaplaceCovariance()` on augmented control |
-| `IncrementalFourDVar` | `.posterior(batch)` — GN Hessian reused, free |
-| `FourDVarNet` | `LaplaceCovariance()` (verify calibration via SBC) |
+| `OptimalInterpolation` | `.posterior(batch)` — exact |
+| `ThreeDVar` | `.posterior(batch)` / `LaplaceCovariance()` |
+| `StrongFourDVar` | `.posterior(batch)` / `LaplaceCovariance()` or `GaussNewtonHessian()` |
+| `WeakFourDVar` | `.posterior(batch)` — $x_0$ block of the augmented-control inverse |
+| `IncrementalFourDVar` | `.posterior(batch)` — the inner loop's Gauss–Newton operator, relinearised at the analysis |
+| `FourDVarNet1D` / `FourDVarNet2D` | `EnsembleCovariance()` over perturbed inputs (no `obs_op`, so no Laplace adapter); verify calibration via SBC |
 | `AmortizedPosterior` | direct `.sample(batch, key, n)` — flow / score gives samples natively |
 | Hybrid `EnVarFourDVar` (Epic 9) | `EnsembleCovariance()` |
 
@@ -177,7 +179,7 @@ Per-event posteriors feed downstream population models (TMTPP,
 hierarchical Bayesian) via a serialisable mark-likelihood:
 
 ```python
-from vardax.posterior import GaussianMarkLikelihood
+from vardax import GaussianMarkLikelihood
 
 mark = GaussianMarkLikelihood(
     posterior=posterior,

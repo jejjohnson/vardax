@@ -116,9 +116,9 @@ the vardax training infrastructure (chapter 9) applies.
 ## Implementation in vardax
 
 ```python
-from vardax.models import AmortizedPosterior
+from vardax import AmortizedPosterior
 from vardax import AmortizedConfig
-from vardax.training import train_step
+from vardax import train_step
 
 model = AmortizedPosterior(
     encoder=ConvObsEncoder(...),       # eqx.Module: (y, mask) → context
@@ -160,7 +160,7 @@ $$
 $$
 
 ```python
-from vardax.utils.validation import assert_posterior_agreement
+from vardax import assert_posterior_agreement
 
 for val_batch in val_loader:
     p_amort = LaplaceCovariance()(model(val_batch), model.as_analysis_step(), val_batch)
@@ -191,7 +191,7 @@ are uniform across the sample. Failure indicates over- or
 under-confident posteriors.
 
 ```python
-from vardax.utils.validation import simulation_based_calibration
+from vardax import simulation_based_calibration
 
 ranks = simulation_based_calibration(
     model, prior_distribution, forward_model, n_runs=200,

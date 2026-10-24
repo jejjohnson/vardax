@@ -302,6 +302,31 @@ class WeakFourDVar(eqx.Module):
         )
         return control_star[0], control_star[1:]
 
+    def posterior(self, batch: Batch1D, adapter: Any = None) -> Any:
+        """Analyse one window and return its [`Posterior`][vardax.Posterior].
+
+        Runs the analysis, then ``adapter(analysis, self, batch)``; the
+        default adapter is [`LaplaceCovariance`][vardax.LaplaceCovariance]
+        with this model's $B$ and $R$.
+
+        The covariance is that of $x_0$: the $x_0$ block of the inverse
+        Gauss–Newton precision over $(x_0, \\eta)$.
+
+        Args:
+            batch: A ``Batch1D`` holding one window.
+            adapter: Optional [`PosteriorAdapter`][vardax.PosteriorAdapter],
+                e.g. [`GaussNewtonHessian`][vardax.GaussNewtonHessian].
+
+        Returns:
+            The window's posterior: mean and lazy covariance.
+
+        Raises:
+            ValueError: If ``batch`` holds more than one window.
+        """
+        from vardax._src.posterior._precision import model_posterior
+
+        return model_posterior(self, batch, adapter)
+
     def as_analysis_step(self) -> _WeakFourDVarAnalysisStep:
         return _WeakFourDVarAnalysisStep(self)
 

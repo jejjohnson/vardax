@@ -97,6 +97,21 @@ def window_mask(batch: Any) -> Float[Array, "T_plus_1 N"]:
     return mask
 
 
+def _model_covariance(
+    given: lx.AbstractLinearOperator | None, model: Any, name: str
+) -> lx.AbstractLinearOperator:
+    """The adapter's covariance if given, else the model's of the same name."""
+    if given is not None:
+        return given
+    from_model = getattr(model, name, None)
+    if from_model is None:
+        raise ValueError(
+            f"No {name} given to the adapter and {type(model).__name__} has "
+            f"none; pass {name}= to the adapter."
+        )
+    return from_model
+
+
 def _check_state_space_control(model: Any) -> None:
     # a reduced-basis or parameterized control has its own prior, not B
     if getattr(model, "basis", None) is not None or (
@@ -114,8 +129,8 @@ def gauss_newton_covariance(
     analysis: Any,
     model: Any,
     batch: Any,
-    prior_cov_op: lx.AbstractLinearOperator,
-    obs_cov_op: lx.AbstractLinearOperator,
+    prior_cov_op: lx.AbstractLinearOperator | None,
+    obs_cov_op: lx.AbstractLinearOperator | None,
     solver: lx.AbstractLinearSolver,
 ) -> tuple[Float[Array, ...], lx.AbstractLinearOperator, str]:
     r"""Mean and lazy Gauss–Newton covariance of the analysis.
@@ -134,8 +149,9 @@ def gauss_newton_covariance(
             4DVar.
         model: The analysis model or its ``.as_analysis_step()`` wrapper.
         batch: The single window the analysis was computed from (4DVar).
-        prior_cov_op: B.
-        obs_cov_op: R, for one time.
+        prior_cov_op: B, or ``None`` for the model's ``prior_cov_op``.
+        obs_cov_op: R at one time, or ``None`` for the model's
+            ``obs_cov_op``.
         solver: Linear solver for the lazy inverses.
 
     Returns:
@@ -145,8 +161,9 @@ def gauss_newton_covariance(
 
     Raises:
         AttributeError: If the model exposes no ``obs_op``.
-        ValueError: For point batches, multi-sample batches, or a basis /
-            parameterized control.
+        ValueError: For point batches, multi-sample batches, a basis /
+            parameterized control, or a covariance neither given nor on
+            the model.
     """
     underlying = getattr(model, "model", model)
     if getattr(underlying, "obs_op", None) is None:
@@ -154,6 +171,8 @@ def gauss_newton_covariance(
             "The posterior adapters require the model to expose `obs_op`; "
             "got a model without one."
         )
+    prior_cov_op = _model_covariance(prior_cov_op, underlying, "prior_cov_op")
+    obs_cov_op = _model_covariance(obs_cov_op, underlying, "obs_cov_op")
     prior_precision = inverse_operator(prior_cov_op, solver)
     obs_precision = inverse_operator(obs_cov_op, solver)
 
@@ -299,3 +318,47 @@ def _weak_covariance(
         covariance_mv, structure, lx.positive_semidefinite_tag
     )
     return initial_state, covariance, "weak_4dvar"
+
+
+def model_posterior(model: Any, batch: Any, adapter: Any = None) -> Any:
+    """Analyse one window and return its [`Posterior`][vardax.Posterior].
+
+    The ``.posterior(batch)`` method of the variational models: run the
+    analysis on ``batch``, then hand the analysis, the model and the batch
+    to ``adapter``.
+
+    Args:
+        model: An analysis model with ``__call__(batch)``.
+        batch: A ``Batch1D`` holding one window.
+        adapter: A [`PosteriorAdapter`][vardax.PosteriorAdapter]. Default
+            ``None``: [`LaplaceCovariance`][vardax.LaplaceCovariance] with
+            the model's own $B$ and $R$.
+
+    Returns:
+        The posterior of that window.
+
+    Raises:
+        ValueError: If ``batch`` holds more than one window or is a point
+            batch.
+    """
+    from vardax._src.posterior.laplace import LaplaceCovariance
+
+    if isinstance(batch, PointObsBatch):
+        raise ValueError(
+            "posterior() does not support PointObsBatch windows yet; pass a "
+            "gridded Batch1D."
+        )
+    n_windows = batch.input.shape[0]
+    if n_windows != 1:
+        raise ValueError(
+            f"posterior() takes one window; the batch holds {n_windows}. Slice "
+            "it: jax.tree.map(lambda a: a[i:i + 1], batch)."
+        )
+    adapter = LaplaceCovariance() if adapter is None else adapter
+    analysis = model(batch)
+    if isinstance(analysis, tuple):
+        # weak 4DVar returns (x0, eta), each with a leading window axis
+        window_analysis = tuple(part[0] for part in analysis)
+    else:
+        window_analysis = analysis[0]
+    return adapter(window_analysis, model, batch)
