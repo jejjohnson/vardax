@@ -37,7 +37,12 @@ from jaxtyping import Array, Float
 import lineax as lx
 
 from vardax._src._types import Batch1D, PointObsBatch
-from vardax._src.models._rollout import checkpoint_every, resolve_forward, rollout
+from vardax._src.models._rollout import (
+    checkpoint_every,
+    observed_trajectory,
+    resolve_forward,
+    rollout,
+)
 from vardax._src.obs_operators.point import (
     check_point_obs_cov,
     map_point_batch,
@@ -207,19 +212,9 @@ class IncrementalFourDVar(eqx.Module):
 
             # Gauss-Newton outer iterations on the nonlinear cost.
             for _ in range(self.config.n_outer):
-                # Build the observation operator J: x_0 → masked
-                # trajectory observations (shape (T_plus_1, N)).
-                def J_full(x_0):
-                    trajectory = self._rollout(x_0, n_steps=T)
-
-                    def _per_step(x_t, m_t):
-                        return (
-                            self.obs_op(x_t, mask=m_t)
-                            if _accepts_mask(self.obs_op)
-                            else self.obs_op(x_t)
-                        ) * m_t
-
-                    return jax.vmap(_per_step)(trajectory, mask_i)
+                # G(x₀) = [mₜ ⊙ Hₜ(Mₜ(x₀))]ₜ, shared with the posterior
+                # adapters so both use the same tangent-linear operator
+                J_full = observed_trajectory(self, mask_i)
 
                 # GN Hessian as a hand-rolled mat-vec on the state
                 # space (N,). Uses jax.linearize + jax.vjp to apply

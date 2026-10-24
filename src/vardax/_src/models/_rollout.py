@@ -7,6 +7,8 @@ so that memory control (``checkpoint=``) and diffrax adjoints
 
 from __future__ import annotations
 
+from collections.abc import Callable
+import inspect
 from typing import Any
 
 import jax
@@ -201,3 +203,45 @@ def rollout(
         _, tail_states = checkpointed_block(state, tail_forcing, tail_length)
         pieces.append(tail_states)
     return jnp.concatenate(pieces)
+
+
+def accepts_mask(obs_op: Any) -> bool:
+    """Whether ``obs_op.__call__`` takes a ``mask`` keyword."""
+    try:
+        return "mask" in inspect.signature(obs_op.__call__).parameters
+    except (TypeError, ValueError):
+        return False
+
+
+def observed_trajectory(
+    model: Any, mask: Float[Array, "T_plus_1 N"]
+) -> Callable[[Float[Array, " N"]], Float[Array, "T_plus_1 N"]]:
+    """The window's observation map of a strong-constraint 4DVar model.
+
+    G(x₀) = [mₜ ⊙ Hₜ(Mₜ(x₀))]ₜ₌₀…T, the masked predicted observations,
+    stacked over time. Its tangent G' and adjoint G'ᵀ (via ``jax.linearize``
+    and ``jax.vjp``) apply ∑ₜ H'ₜ M'ₜ without forming a Jacobian.
+
+    Args:
+        model: A model with ``obs_op`` and ``_rollout(x0, n_steps)``.
+        mask: Observation mask mₜ; its length sets the window, T + 1.
+
+    Returns:
+        The map x₀ ↦ G(x₀).
+    """
+    n_steps = mask.shape[0] - 1
+    obs_op = model.obs_op
+
+    def observe(state: Float[Array, " N"], mask_t: Float[Array, " N"]):
+        # mₜ ⊙ Hₜ(xₜ)
+        if accepts_mask(obs_op):
+            predicted = obs_op(state, mask=mask_t)
+        else:
+            predicted = obs_op(state)
+        return mask_t * predicted
+
+    def observed(initial_state: Float[Array, " N"]) -> Float[Array, "T_plus_1 N"]:
+        trajectory = model._rollout(initial_state, n_steps)
+        return jax.vmap(observe)(trajectory, mask)
+
+    return observed

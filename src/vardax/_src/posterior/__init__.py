@@ -4,11 +4,12 @@ Every vardax analysis emits a [`Posterior`][vardax.Posterior]
 container — not just a point estimate. Three adapter families compute
 the posterior covariance via different approximations:
 
-- [`LaplaceCovariance`][vardax.LaplaceCovariance] —
-  $P^* = (B^{-1} + H^\top R^{-1} H)^{-1}$ at MAP. Cheap,
-  Gaussian-likelihood-only.
-- [`GaussNewtonHessian`][vardax.GaussNewtonHessian] — Krylov / Lanczos
-  inversion of the Gauss-Newton Hessian. Exact at MAP, structured.
+- [`LaplaceCovariance`][vardax.LaplaceCovariance] — inverse
+  Gauss–Newton Hessian at MAP: $(B^{-1} + H'^\top R^{-1} H')^{-1}$ for a
+  single time, $(B^{-1} + \sum_t (H'_t M'_t)^\top R_t^{-1} H'_t M'_t)^{-1}$
+  through the tangent-linear model for 4DVar. Gaussian-likelihood-only.
+- [`GaussNewtonHessian`][vardax.GaussNewtonHessian] — the same operator
+  with an explicit Krylov budget.
 - [`EnsembleCovariance`][vardax.EnsembleCovariance] — sample covariance
   from an ensemble of analyses (delegates to ``filterax`` when
   supplied).
