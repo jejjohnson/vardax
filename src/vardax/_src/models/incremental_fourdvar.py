@@ -4,13 +4,17 @@ The operational fast path of [`StrongFourDVar`][vardax.StrongFourDVar]:
 Gauss-Newton outer iterations on the full nonlinear cost, CG inner
 iterations on the linearised quadratic subproblem.
 
-At each outer iteration around $x_b^{(k)}$:
+Starting from $x^{(0)} = x_b$, each outer iteration around the current
+iterate $x^{(k)}$ (the background $x_b$ stays fixed):
 
-1. Linearise $M_t$ and $H_t$ (via ``jax.linearize``).
+1. Linearise $M_t$ and $H_t$ at $x^{(k)}$ (via ``jax.linearize``).
 2. Form the Gauss-Newton Hessian
    $J''_{GN} = B^{-1} + \sum_t (H'_t M'_t)^\top R_t^{-1} (H'_t M'_t)$.
-3. Solve $J''_{GN}\,\delta x^* = \text{rhs}$ via lineax CG.
-4. Update $x_b^{(k+1)} = x_b^{(k)} + \delta x^*$.
+3. Solve $J''_{GN}\,\delta x^* = -\nabla J(x^{(k)})$ via lineax CG, where
+   $-\nabla J(x^{(k)}) = -B^{-1}(x^{(k)} - x_b)
+   + \sum_t (H'_t M'_t)^\top R_t^{-1} (y_t - H_t(M_t(x^{(k)})))$
+   is the negative gradient of the full nonlinear cost.
+4. Update $x^{(k+1)} = x^{(k)} + \delta x^*$.
 
 This implementation applies $M'_t$, $H'_t$ through ``jax.linearize`` /
 ``jax.vjp`` (autodiff-derived, matrix-free) and solves the inner system

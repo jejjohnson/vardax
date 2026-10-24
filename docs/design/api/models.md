@@ -215,14 +215,16 @@ alternative.
 
 Functionally equivalent to `StrongFourDVar`, but uses Gauss-Newton outer
 iterations on the full nonlinear cost with CG / Lanczos inner iterations
-on the linearised quadratic subproblem. At each outer iterate $x_b^{(k)}$,
-linearise $M_t$ and $H_t$ via `jax.linearize`:
+on the linearised quadratic subproblem. At each outer iterate $x^{(k)}$
+(with $x^{(0)} = x_b$; the background $x_b$ stays fixed), linearise $M_t$
+and $H_t$ via `jax.linearize`:
 
-$$\delta J(\delta x) = \tfrac{1}{2} \|\delta x\|^2_{B^{-1}} + \tfrac{1}{2} \sum_t \|d_t - H'_t M'_t \delta x\|^2_{R_t^{-1}}$$
+$$\delta J(\delta x) = \tfrac{1}{2} \|x^{(k)} + \delta x - x_b\|^2_{B^{-1}} + \tfrac{1}{2} \sum_t \|d_t^{(k)} - H'_t M'_t \delta x\|^2_{R_t^{-1}}$$
 
-with innovation $d_t = y_t - H_t(M_t(x_b^{(k)}))$. Solve for
-$\delta x^*$ by CG, update $x_b^{(k+1)} = x_b^{(k)} + \delta x^*$,
-relinearise.
+with innovation $d_t^{(k)} = y_t - H_t(M_t(x^{(k)}))$. Solve
+$\mathbf{H}_\text{GN}\,\delta x^* = -\nabla J(x^{(k)})$ by CG (the
+right-hand side keeps the background misfit $-B^{-1}(x^{(k)} - x_b)$),
+update $x^{(k+1)} = x^{(k)} + \delta x^*$, relinearise.
 
 **Control-variable transform** (CVT): set $\chi = B^{-1/2}(\delta x)$;
 the prior term becomes $\|\chi\|^2$ and the inner CG operates on a
