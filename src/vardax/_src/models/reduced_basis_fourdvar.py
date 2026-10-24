@@ -56,6 +56,7 @@ import optimistix as optx
 
 from vardax._src._types import Batch1D, PointObsBatch
 from vardax._src.minimisers import minimise
+from vardax._src.models._rollout import checkpoint_every, resolve_forward, rollout
 from vardax._src.obs_operators.point import (
     check_point_obs_cov,
     grid_point_obs_cost,
@@ -95,6 +96,12 @@ class ReducedBasisFourDVar(eqx.Module):
             ``optx.ImplicitAdjoint``.
         max_steps: Iteration cap on the outer solver when ``minimiser``
             is an ``optimistix`` solver; a vardax `Minimiser` keeps its own.
+        forward_adjoint: As in [`StrongFourDVar`][vardax.StrongFourDVar]:
+            a ``diffrax.AbstractAdjoint`` for a forward implementing
+            [`SupportsForwardAdjoint`][vardax.SupportsForwardAdjoint].
+        checkpoint: As in [`StrongFourDVar`][vardax.StrongFourDVar]:
+            ``False``, ``True`` or a block length ``k`` for
+            ``jax.checkpoint`` over the rollout.
 
     Examples:
         Trivial dynamics, one timestep, $B = R = I$ and no basis: the
@@ -141,6 +148,8 @@ class ReducedBasisFourDVar(eqx.Module):
     minimiser: optx.AbstractMinimiser | Minimiser = eqx.field(static=True)
     minimiser_adjoint: optx.AbstractAdjoint = eqx.field(static=True)
     max_steps: int = eqx.field(static=True, default=200)
+    forward_adjoint: Any = eqx.field(static=True, default=None)
+    checkpoint: bool | int = eqx.field(static=True, default=False)
 
     def __init__(
         self,
@@ -155,7 +164,12 @@ class ReducedBasisFourDVar(eqx.Module):
         minimiser: optx.AbstractMinimiser | Minimiser | None = None,
         minimiser_adjoint: optx.AbstractAdjoint | None = None,
         max_steps: int = 200,
+        forward_adjoint: Any = None,
+        checkpoint: bool | int = False,
     ) -> None:
+        # fail at construction, not on the first traced call
+        checkpoint_every(checkpoint)
+        resolve_forward(forward, forward_adjoint)
         self.forward = forward
         self.obs_op = obs_op
         self.prior_mean = prior_mean
@@ -171,6 +185,8 @@ class ReducedBasisFourDVar(eqx.Module):
         self.minimiser = minimiser or optx.BFGS(rtol=1e-6, atol=1e-6)
         self.minimiser_adjoint = minimiser_adjoint or optx.ImplicitAdjoint()
         self.max_steps = max_steps
+        self.forward_adjoint = forward_adjoint
+        self.checkpoint = checkpoint
 
     def _rollout(
         self,
@@ -178,14 +194,8 @@ class ReducedBasisFourDVar(eqx.Module):
         n_steps: int,
     ) -> Float[Array, "T_plus_1 N"]:
         """Step the forward ``n_steps`` times, returning the ``T+1``-long trajectory."""
-        dt = self.forward.dt
-
-        def step_fn(x, _):
-            x_new = self.forward.step(x, dt)
-            return x_new, x_new
-
-        _, trajectory = jax.lax.scan(step_fn, x_0, None, length=n_steps)
-        return jnp.concatenate([x_0[None, :], trajectory], axis=0)
+        forward = resolve_forward(self.forward, self.forward_adjoint)
+        return rollout(forward, x_0, n_steps, checkpoint=self.checkpoint)
 
     def __call__(self, batch: Batch1D | PointObsBatch) -> Float[Array, "B N"]:
         """Reduced-basis 4DVar analysis: minimise over ``x_0`` (or ``X``).

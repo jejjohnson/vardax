@@ -34,6 +34,7 @@ import optimistix as optx
 
 from vardax._src._types import Batch1D, PointObsBatch
 from vardax._src.minimisers import minimise
+from vardax._src.models._rollout import checkpoint_every, resolve_forward, rollout
 from vardax._src.obs_operators.point import (
     check_point_obs_cov,
     grid_point_obs_cost,
@@ -66,6 +67,12 @@ class WeakFourDVar(eqx.Module):
             $x_0 = \psi(\theta)$ and $\mathrm{pen}(\theta)$ replaces the
             background term (``prior_mean`` and ``prior_cov_op`` are not
             used). Default ``None``: the control is $(x_0, \eta)$.
+        forward_adjoint: As in [`StrongFourDVar`][vardax.StrongFourDVar]:
+            a ``diffrax.AbstractAdjoint`` for a forward implementing
+            [`SupportsForwardAdjoint`][vardax.SupportsForwardAdjoint].
+        checkpoint: As in [`StrongFourDVar`][vardax.StrongFourDVar]:
+            ``False``, ``True`` or a block length ``k`` for
+            ``jax.checkpoint`` over the rollout.
 
     Examples:
         Trivial dynamics and a single timestep: no model-error steps
@@ -103,6 +110,8 @@ class WeakFourDVar(eqx.Module):
     minimiser_adjoint: optx.AbstractAdjoint = eqx.field(static=True)
     max_steps: int = eqx.field(static=True, default=200)
     parameterization: StateParameterization | None = None
+    forward_adjoint: Any = eqx.field(static=True, default=None)
+    checkpoint: bool | int = eqx.field(static=True, default=False)
 
     def __init__(
         self,
@@ -116,7 +125,12 @@ class WeakFourDVar(eqx.Module):
         minimiser_adjoint: optx.AbstractAdjoint | None = None,
         max_steps: int = 200,
         parameterization: StateParameterization | None = None,
+        forward_adjoint: Any = None,
+        checkpoint: bool | int = False,
     ) -> None:
+        # fail at construction, not on the first traced call
+        checkpoint_every(checkpoint)
+        resolve_forward(forward, forward_adjoint)
         self.forward = forward
         self.obs_op = obs_op
         self.prior_mean = prior_mean
@@ -127,6 +141,8 @@ class WeakFourDVar(eqx.Module):
         self.minimiser_adjoint = minimiser_adjoint or optx.ImplicitAdjoint()
         self.max_steps = max_steps
         self.parameterization = parameterization
+        self.forward_adjoint = forward_adjoint
+        self.checkpoint = checkpoint
 
     def _rollout_with_error(
         self,
@@ -137,17 +153,9 @@ class WeakFourDVar(eqx.Module):
 
         Each step applies $x_t = M_t^\text{free}(x_{t-1}) + \eta_t$.
         """
-        dt = self.forward.dt
-
-        def step_fn(
-            x: Float[Array, N],  # ty:ignore[unresolved-reference]
-            eta_t: Float[Array, N],  # ty:ignore[unresolved-reference]
-        ) -> tuple[Float[Array, N], Float[Array, N]]:  # ty:ignore[unresolved-reference]
-            x_new = self.forward.step(x, dt) + eta_t
-            return x_new, x_new
-
-        _, trajectory = jax.lax.scan(step_fn, x_0, etas)
-        return jnp.concatenate([x_0[None, :], trajectory], axis=0)
+        forward = resolve_forward(self.forward, self.forward_adjoint)
+        n_steps = etas.shape[0]
+        return rollout(forward, x_0, n_steps, forcing=etas, checkpoint=self.checkpoint)
 
     def __call__(
         self,

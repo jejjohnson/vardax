@@ -46,7 +46,6 @@ every time without distorting $x_0$.
 ## Implementation in vardax
 
 ```python
-import diffrax as dfx
 import optimistix as optx
 from vardax.models import WeakFourDVar
 
@@ -58,7 +57,7 @@ model = WeakFourDVar(
     obs_cov_op=R_op,
     model_err_cov_op=Q_op,                            # Q for η_t
     minimiser=optx.NonlinearCG(rtol=1e-5),
-    forward_adjoint=dfx.RecursiveCheckpointAdjoint(),
+    checkpoint=True,                                  # chapter 3
 )
 
 # Returns both the analysis IC and the model-error trajectory

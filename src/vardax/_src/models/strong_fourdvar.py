@@ -10,11 +10,17 @@ J(x_0) = \tfrac{1}{2} \|x_0 - x_b\|^2_{B^{-1}}
 $$
 
 Gradients of $J$ w.r.t. $x_0$ flow through the rollout
-``trajectory = [forward.step(x, dt) for _ in range(T)]`` and back —
-the adjoint composition is whatever JAX gives by default. For long
-windows where the forward is a diffrax ODE solve, the
-``forward_adjoint`` slot threads through to ``diffrax.diffeqsolve(...,
-adjoint=...)`` (per-step rollouts use plain reverse-mode autodiff).
+``trajectory = [forward.step(x, dt) for _ in range(T)]`` and back by
+reverse-mode autodiff, which by default stores every intermediate of
+every step. Two slots bound that memory:
+
+- ``checkpoint=True`` (or a block length ``k``) wraps blocks of steps in
+  ``jax.checkpoint``, so reverse mode recomputes the steps inside each
+  block instead of storing them. Works for any per-step forward.
+- ``forward_adjoint=`` hands a ``diffrax.AbstractAdjoint`` to a forward
+  that integrates with diffrax and exposes ``with_adjoint(adjoint)``
+  ([`SupportsForwardAdjoint`][vardax.SupportsForwardAdjoint]). A forward
+  without that method raises ``ValueError`` at construction.
 """
 
 from __future__ import annotations
@@ -31,6 +37,7 @@ import optimistix as optx
 
 from vardax._src._types import Batch1D, PointObsBatch
 from vardax._src.minimisers import minimise
+from vardax._src.models._rollout import checkpoint_every, resolve_forward, rollout
 from vardax._src.obs_operators.point import (
     check_point_obs_cov,
     grid_point_obs_cost,
@@ -57,9 +64,12 @@ class StrongFourDVar(eqx.Module):
             [`OptaxMinimiser`][vardax.OptaxMinimiser] for a large control.
         minimiser_adjoint: ``optimistix.AbstractAdjoint`` for
             differentiating through the minimum.
-        forward_adjoint: ``diffrax.AbstractAdjoint``-like — currently
-            stored as a tag, threaded through if the forward delegates
-            to ``diffrax``. Default ``None`` (use forward's own).
+        forward_adjoint: ``diffrax.AbstractAdjoint`` passed to
+            ``forward.with_adjoint(...)`` before the rollout. Requires a
+            forward implementing
+            [`SupportsForwardAdjoint`][vardax.SupportsForwardAdjoint];
+            any other forward raises ``ValueError``. Default ``None``
+            (use the forward's own).
         max_steps: Iteration cap on the outer solver when ``minimiser``
             is an ``optimistix`` solver; a vardax `Minimiser` keeps its own.
         parameterization: Optional
@@ -68,6 +78,11 @@ class StrongFourDVar(eqx.Module):
             to ``prior_mean.shape``) and $\mathrm{pen}(\theta)$ replaces
             the background term, so ``prior_mean`` and ``prior_cov_op``
             are not used. Default ``None``: the control is $x_0$.
+        checkpoint: Rematerialise the rollout in reverse mode. ``False``
+            (default) stores every step's intermediates; ``True`` wraps
+            each step in ``jax.checkpoint``; an int ``k`` wraps blocks of
+            ``k`` steps. Same gradient, less memory, about one extra
+            forward run.
 
     Examples:
         Trivial dynamics ($M_t(x) = x$) and a single timestep reduce
@@ -103,6 +118,7 @@ class StrongFourDVar(eqx.Module):
     forward_adjoint: Any = eqx.field(static=True)
     max_steps: int = eqx.field(static=True, default=200)
     parameterization: StateParameterization | None = None
+    checkpoint: bool | int = eqx.field(static=True, default=False)
 
     def __init__(
         self,
@@ -116,7 +132,11 @@ class StrongFourDVar(eqx.Module):
         forward_adjoint: Any = None,
         max_steps: int = 200,
         parameterization: StateParameterization | None = None,
+        checkpoint: bool | int = False,
     ) -> None:
+        # fail at construction, not on the first traced call
+        checkpoint_every(checkpoint)
+        resolve_forward(forward, forward_adjoint)
         self.forward = forward
         self.obs_op = obs_op
         self.prior_mean = prior_mean
@@ -127,21 +147,12 @@ class StrongFourDVar(eqx.Module):
         self.forward_adjoint = forward_adjoint
         self.max_steps = max_steps
         self.parameterization = parameterization
+        self.checkpoint = checkpoint
 
     def _rollout(self, x_0: Float[Array, N], n_steps: int) -> Float[Array, "T N"]:  # ty:ignore[unresolved-reference]
-        """Step the forward model ``n_steps`` times, returning the trajectory."""
-        dt = self.forward.dt
-
-        def step_fn(
-            x: Float[Array, N],  # ty:ignore[unresolved-reference]
-            _: None,
-        ) -> tuple[Float[Array, N], Float[Array, N]]:  # ty:ignore[unresolved-reference]
-            x_new = self.forward.step(x, dt)
-            return x_new, x_new
-
-        _, trajectory = jax.lax.scan(step_fn, x_0, None, length=n_steps)
-        # Prepend x_0 so the trajectory has length T+1.
-        return jnp.concatenate([x_0[None, :], trajectory], axis=0)
+        """Step the forward model ``n_steps`` times, returning ``T + 1`` states."""
+        forward = resolve_forward(self.forward, self.forward_adjoint)
+        return rollout(forward, x_0, n_steps, checkpoint=self.checkpoint)
 
     def __call__(self, batch: Batch1D | PointObsBatch) -> Float[Array, "B N"]:
         """Strong-4DVar analysis: minimise over $x_0$.

@@ -174,48 +174,74 @@ model = FourDVarNet(
 is to contribute upstream once stable, joining the standard adjoint
 family (Decision D6).
 
-## Two slots, two purposes
+## Slots and where they apply
 
 Vardax models that involve both dynamics and inner minimisation carry
-**two adjoint slots**:
+separate slots for the two:
 
 | Slot | Used by | Default |
 |---|---|---|
-| `forward_adjoint: diffrax.AbstractAdjoint` | `StrongFourDVar`, `WeakFourDVar`, `IncrementalFourDVar`, `FourDVarNet` (when prior is `DynamicalPrior`) | `RecursiveCheckpointAdjoint()` |
-| `minimiser_adjoint: optimistix.AbstractAdjoint` | `ThreeDVar`, `StrongFourDVar`, `WeakFourDVar` | `ImplicitAdjoint()` |
-| `solver_adjoint: optimistix.AbstractAdjoint` | `FourDVarNet` (through the learned inner solver) | `RecursiveCheckpointAdjoint()` |
+| `checkpoint: bool \| int` | `StrongFourDVar`, `WeakFourDVar`, `IncrementalFourDVar`, `ReducedBasisFourDVar` | `False` (plain reverse mode) |
+| `forward_adjoint: diffrax.AbstractAdjoint` | the same four; needs a forward with `with_adjoint` ([`SupportsForwardAdjoint`](api/protocols.md)) | `None` (the forward's own) |
+| `minimiser_adjoint: optimistix.AbstractAdjoint` | `ThreeDVar`, `StrongFourDVar`, `WeakFourDVar`, `ReducedBasisFourDVar` | `ImplicitAdjoint()` |
+| `solver_adjoint: optimistix.AbstractAdjoint` | `FourDVarNet1D`, `FourDVarNet2D` (through the learned inner solver) | `RecursiveCheckpointAdjoint()` |
 
-The two are independent. A typical operational 4DVar configuration:
+`checkpoint` and `forward_adjoint` act on the dynamics rollout;
+`minimiser_adjoint` and `solver_adjoint` act on the inner minimisation.
+They are independent.
+
+- `checkpoint=True` wraps each step of the rollout in `jax.checkpoint`
+  (an integer `k` wraps blocks of `k` steps), so reverse mode recomputes
+  the steps instead of storing their intermediates. It works for any
+  per-step forward and leaves the gradient unchanged.
+- `forward_adjoint=` is handed to `forward.with_adjoint(adjoint)`, which
+  a `diffrax`-backed forward implements by passing the adjoint to
+  `diffeqsolve` (chapter 3). With a forward that has no `with_adjoint`,
+  the model raises `ValueError` at construction rather than ignoring the
+  slot.
+
+A typical operational 4DVar configuration, with a `diffrax`-backed
+forward:
 
 ```python
 import diffrax as dfx
 import optimistix as optx
-from vardax.models import StrongFourDVar
+from vardax import StrongFourDVar
 
 model = StrongFourDVar(
-    forward=somax_model,
+    forward=diffrax_forward,                    # implements with_adjoint
     obs_op=obs_op,
     prior_mean=x_b, prior_cov_op=B_op, obs_cov_op=R_op,
-    minimiser=optx.NonlinearCG(rtol=1e-5),
+    minimiser=optx.NonlinearCG(rtol=1e-5, atol=1e-5),
     minimiser_adjoint=optx.ImplicitAdjoint(),
     forward_adjoint=dfx.BacksolveAdjoint(),     # constant memory through dynamics
 )
 ```
 
-A typical `FourDVarNet` training configuration:
+With a per-step forward (an RK4 stepper, a learned emulator), bound the
+rollout memory with `checkpoint=` instead:
 
 ```python
-from vardax.models import FourDVarNet
+model = StrongFourDVar(
+    forward=rk4_forward,
+    obs_op=obs_op,
+    prior_mean=x_b, prior_cov_op=B_op, obs_cov_op=R_op,
+    checkpoint=10,                              # rematerialise every 10 steps
+)
+```
+
+A typical 4DVarNet training configuration (the learned solver has no
+dynamics rollout; its memory is set by `solver_adjoint`):
+
+```python
+from vardax import FourDVarNet1D
 from vardax.adjoints import OneStepAdjoint
 
-model = FourDVarNet(
-    prior=DynamicalPrior(forward=somax_model, n_steps=5,
-                         forward_adjoint=dfx.BacksolveAdjoint()),
-    obs_op=obs_op,
-    grad_mod=ConvLSTMGradMod2D(hidden_dim=64),
-    config=SolverConfig(n_steps=15),
+model = FourDVarNet1D(
+    state_dim=40,
+    n_time=10,
     solver_adjoint=OneStepAdjoint(),            # O(1) training memory through solver
-    forward_adjoint=dfx.BacksolveAdjoint(),     # O(1) through the dynamical prior
+    key=key,
 )
 ```
 

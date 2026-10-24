@@ -75,7 +75,6 @@ x_oi = oi(batch)
 ### `StrongFourDVar` is the right tool
 
 ```python
-import diffrax as dfx
 import optimistix as optx
 from vardax.models import StrongFourDVar
 from vardax.priors import DynamicalPrior
@@ -91,7 +90,6 @@ strong = StrongFourDVar(
     prior_cov_op=lx.DiagonalLinearOperator(jnp.ones(3) * 100),  # weak prior
     obs_cov_op=lx.DiagonalLinearOperator(jnp.ones(3)),
     minimiser=optx.NonlinearCG(rtol=1e-6, atol=1e-6),
-    forward_adjoint=dfx.RecursiveCheckpointAdjoint(),
 )
 x_strong = strong(batch)
 

@@ -89,7 +89,7 @@ incremental = IncrementalFourDVar(
     prior_cov_op=B_op,
     obs_cov_op=R_op,
     config=IncrementalConfig(n_outer=3, n_inner=20, cvt=True),
-    forward_adjoint=dfx.RecursiveCheckpointAdjoint(),
+    checkpoint=True,
 )
 
 x_inc = incremental(batch)
