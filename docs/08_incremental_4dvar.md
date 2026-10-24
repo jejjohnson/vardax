@@ -20,39 +20,55 @@ J(x_0) = \tfrac{1}{2} \|x_0 - x_b\|^2_{B^{-1}} +
          \tfrac{1}{2} \sum_t \|y_t - H_t(M_t(x_0))\|^2_{R_t^{-1}}.
 $$
 
-Linearise around the current outer iterate $x_b^{(k)}$:
+Write $x^{(k)}$ for the outer iterate, starting from $x^{(0)} = x_b$.
+The background $x_b$ stays fixed across outer loops; only $x^{(k)}$
+moves. Linearise around $x^{(k)}$:
 
 $$
-M_t(x_b^{(k)} + \delta x) \approx M_t(x_b^{(k)}) + M'_t \delta x,
+M_t(x^{(k)} + \delta x) \approx M_t(x^{(k)}) + M'_t \delta x,
 $$
 
 $$
 H_t(z + \delta z) \approx H_t(z) + H'_t \delta z,
 $$
 
-where $M'_t = \partial M_t / \partial x|_{x_b^{(k)}}$ from
-`jax.linearize` and similarly $H'_t$ from `obs_op.linearize(...)`. The
-linearised (quadratic) increment cost is
+where $M'_t = \partial M_t / \partial x|_{x^{(k)}}$ from
+`jax.linearize` and $H'_t$ is the tangent of $H_t$ at
+$M_t(x^{(k)})$. With the innovation
+$d_t^{(k)} = y_t - H_t(M_t(x^{(k)}))$, the linearised (quadratic)
+cost of an increment $\delta x$ is
 
 $$
-\delta J(\delta x) = \tfrac{1}{2} \|\delta x\|^2_{B^{-1}} +
-                     \tfrac{1}{2} \sum_t \|d_t - H'_t M'_t \delta x\|^2_{R_t^{-1}},
+\delta J(\delta x) = \tfrac{1}{2} \|x^{(k)} + \delta x - x_b\|^2_{B^{-1}} +
+                     \tfrac{1}{2} \sum_t \|d_t^{(k)} - H'_t M'_t \delta x\|^2_{R_t^{-1}}.
 $$
 
-with innovation $d_t = y_t - H_t(M_t(x_b^{(k)}))$. The Gauss-Newton
-Hessian:
+The background term measures the *total* departure
+$x^{(k)} + \delta x - x_b$, not $\delta x$ alone. The Gauss-Newton
+Hessian is
 
 $$
-\mathbf{H}_\text{GN} = B^{-1} + \sum_t (H'_t M'_t)^\top R_t^{-1} (H'_t M'_t).
+\mathbf{H}_\text{GN} = B^{-1} + \sum_t (H'_t M'_t)^\top R_t^{-1} (H'_t M'_t),
 $$
 
-The inner CG / Lanczos solver finds $\delta x^*$ such that
+and setting $\nabla \delta J = 0$ gives the inner system that the CG /
+Lanczos solver solves for $\delta x^*$:
 
 $$
-\mathbf{H}_\text{GN}\, \delta x^* = \sum_t (H'_t M'_t)^\top R_t^{-1} d_t.
+\mathbf{H}_\text{GN}\, \delta x^* =
+  -B^{-1}\big(x^{(k)} - x_b\big)
+  + \sum_t (H'_t M'_t)^\top R_t^{-1} d_t^{(k)}
+  = -\nabla J\big(x^{(k)}\big).
 $$
 
-Outer update: $x_b^{(k+1)} = x_b^{(k)} + \delta x^*$. Relinearise.
+The right-hand side is the negative gradient of the full nonlinear cost
+at the current iterate. On the first outer loop $x^{(0)} = x_b$, so the
+background term vanishes and only the innovation term is left. On later
+loops it does not vanish: dropping it would pull every increment toward
+$x^{(k)}$ instead of $x_b$, and the iteration would no longer converge
+to the 4DVar minimum.
+
+Outer update: $x^{(k+1)} = x^{(k)} + \delta x^*$. Relinearise.
 
 This pattern converges in a handful of outer iterations (typically
 3–5) regardless of nonlinearity strength, because each outer step
@@ -146,33 +162,38 @@ Inputs:
    batch         — observations y_t for t = 0, …, T
    config        — IncrementalConfig
 
-x ← x_b
+x ← x_b                       # x⁽⁰⁾ = x_b; x_b itself never changes
 for k in range(config.n_outer):
 
-    # 1. Linearise M_t and H_t at the current outer iterate
-    M_lin = jax.linearize(lambda s: forward.step(s, dt), x)
-    H_lin = obs_op.linearize(forward_trajectory(x, batch))
+    # 1. Tangent of the observed trajectory G(x) = [H_t(M_t(x))]_t at x⁽ᵏ⁾
+    #    G'δx = [H'_t M'_t δx]_t   (jax.linearize; Gᵀ via jax.vjp)
+    G_x, G_lin = jax.linearize(observed_trajectory, x)
 
-    # 2. Compute innovations
-    d = batch.y - H_lin(forward_trajectory(x, batch))
+    # 2. Innovations at the current iterate
+    #    d_tᵏ = y_t − H_t(M_t(x⁽ᵏ⁾))
+    d = batch.y - G_x
 
-    # 3. Inner solve via lineax.CG (χ-space shown; not implemented yet)
-    if use_cvt:
+    # 3. Right-hand side: the negative gradient of the full cost at x⁽ᵏ⁾
+    #    −∇J(x⁽ᵏ⁾) = −B⁻¹(x⁽ᵏ⁾ − x_b) + G'ᵀ R⁻¹ d
+    rhs = -B_inv @ (x - x_b) + G_lin.T @ (R_inv @ d)
+
+    # 4. Inner solve via lineax.CG
+    if use_cvt:                  # χ-space shown; not implemented yet
         B_half = B_op.half()
-        # Solve  (I + B^{1/2} (H'M')ᵀ R⁻¹ (H'M') B^{1/2}) χ = B^{1/2} (H'M')ᵀ R⁻¹ d
-        preconditioned_hessian = identity_op + B_half @ sum_t_hmrhm @ B_half
-        rhs = B_half @ adj_innovation
+        # (I + B^{1/2}ᵀ G'ᵀ R⁻¹ G' B^{1/2}) δχ = B^{1/2}ᵀ (−∇J(x⁽ᵏ⁾))
+        preconditioned_hessian = identity_op + B_half.T @ GtRG @ B_half
         chi = lineax.linear_solve(
-            preconditioned_hessian, rhs,
+            preconditioned_hessian, B_half.T @ rhs,
             solver=lineax.CG(atol=config.cg_atol, rtol=config.cg_rtol,
                               max_steps=config.n_inner),
         )
+        # δx = B^{1/2} δχ
         dx = B_half @ chi
     else:
-        # Identity preconditioner — slower but works without B^{1/2}
-        dx = lineax.linear_solve(...)
+        # (B⁻¹ + G'ᵀ R⁻¹ G') δx = −∇J(x⁽ᵏ⁾)
+        dx = lineax.linear_solve(B_inv + GtRG, rhs, solver=lineax.CG(...))
 
-    # 4. Outer update
+    # 5. Outer update: x⁽ᵏ⁺¹⁾ = x⁽ᵏ⁾ + δx*
     x = x + dx
 
 return x
