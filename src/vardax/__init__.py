@@ -74,10 +74,10 @@ from vardax._src.model import (
     FourDVarNet2D,
 )
 from vardax._src.models import (
-    Incremental4DVar,
     IncrementalConfig,
     IncrementalFourDVar,
     OptimalInterpolation,
+    ReducedBasisFourDVar,
     SpaceTimeFieldResult,
     SpaceTimeFieldVar,
     StrongFourDVar,
@@ -279,10 +279,10 @@ __all__ = [
     "FourDVarNet1D",
     "FourDVarNet2D",
     # Classical DA methods (Decision D14)
-    "Incremental4DVar",
     "IncrementalConfig",
     "IncrementalFourDVar",
     "OptimalInterpolation",
+    "ReducedBasisFourDVar",
     "SpaceTimeFieldResult",
     "SpaceTimeFieldVar",
     "StrongFourDVar",
@@ -322,3 +322,33 @@ __all__ = [
     "plot_l96_trajectories",
     "plot_reconstruction_comparison",
 ]
+
+
+# Deprecated names, resolved lazily so that only code that still uses
+# them sees the warning. Each maps to its replacement; the object is the
+# same, so ``isinstance`` checks keep working.
+_DEPRECATED_ALIASES = {
+    "Incremental4DVar": (
+        "ReducedBasisFourDVar",
+        (
+            "it minimises the full nonlinear cost over basis coefficients and "
+            "is not Gauss-Newton; the Gauss-Newton method is IncrementalFourDVar"
+        ),
+    ),
+}
+
+
+def __getattr__(name: str):
+    """Resolve a deprecated public name to its replacement, with a warning."""
+    if name not in _DEPRECATED_ALIASES:
+        raise AttributeError(f"module 'vardax' has no attribute {name!r}")
+    import warnings
+
+    new_name, reason = _DEPRECATED_ALIASES[name]
+    warnings.warn(
+        f"vardax.{name} is deprecated and will be removed in the next minor "
+        f"release; use vardax.{new_name} ({reason}).",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return globals()[new_name]

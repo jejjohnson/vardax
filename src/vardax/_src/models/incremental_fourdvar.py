@@ -21,7 +21,7 @@ This implementation applies $M'_t$, $H'_t$ through ``jax.linearize`` /
 with ``lineax.CG`` on a positive-semidefinite-tagged operator, in state
 space. There is no control-variable-transform option; for a
 reduced-basis or other reparameterised control use
-[`Incremental4DVar`][vardax.Incremental4DVar] with ``basis=`` or
+[`ReducedBasisFourDVar`][vardax.ReducedBasisFourDVar] with ``basis=`` or
 ``parameterization=``.
 """
 

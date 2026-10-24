@@ -54,6 +54,8 @@ All seven ship today, and all seven satisfy
 | `FourDVarNet1D` / `FourDVarNet2D` | Learned prior $\varphi_\theta$ + learned solver | $x$ | Dense training data, no trusted model |
 | `AmortizedPosterior` | Direct head $q_\phi(x \mid y)$ | — | Real-time, many-event regimes |
 
+`ReducedBasisFourDVar` is `StrongFourDVar` with the control moved into a reduced basis, $x_0 = x_b + \Phi X$ (see [docs/06](docs/06_strong_4dvar.md#reduced-basis-4dvar)). It was called `Incremental4DVar` before 0.1.11; that name is deprecated.
+
 Each is a specialisation of one cost:
 
 ```math

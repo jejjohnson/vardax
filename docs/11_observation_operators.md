@@ -269,7 +269,7 @@ Two operators evaluate $\mathcal H(x)$ at the points:
   $f(s)$, such as a neural field. It returns $\hat y_i = f(s_i)$ and
   passes all `D` columns to the field, a time column included.
 
-`ThreeDVar`, `StrongFourDVar`, `WeakFourDVar`, `Incremental4DVar` and
+`ThreeDVar`, `StrongFourDVar`, `WeakFourDVar`, `ReducedBasisFourDVar` and
 `IncrementalFourDVar` choose their path from the batch type. A
 `PointObsBatch` needs `obs_op=GridPointObs(...)`, and the per-observation
 $\sigma_i$ replaces `obs_cov_op`, which must be `None` (or an identity

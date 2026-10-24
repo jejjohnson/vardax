@@ -15,13 +15,13 @@ from vardax import (
     Batch1D,
     FieldPointObs,
     GridPointObs,
-    Incremental4DVar,
     IncrementalFourDVar,
     MaskedIdentity,
     NeuralFieldParameterization,
     OptaxMinimiser,
     OptimalInterpolation,
     PointObsBatch,
+    ReducedBasisFourDVar,
     StrongFourDVar,
     ThreeDVar,
     WeakFourDVar,
@@ -315,7 +315,7 @@ def test_point_batch_linear_gaussian_agreement(which):
         xa, eta = WeakFourDVar(**common, model_err_cov_op=_psd(jnp.eye(N)))(points)
         assert eta.shape == (0, N)
     elif which == "incremental":
-        xa = Incremental4DVar(**common)(points)
+        xa = ReducedBasisFourDVar(**common)(points)
     else:
         xa = IncrementalFourDVar(**common)(points)
     # Linear-Gaussian: every method minimises the same quadratic as OI
@@ -609,7 +609,7 @@ def test_scattered_time_points_match_grid_batch(which):
     cls, extra = {
         "strong": (StrongFourDVar, {}),
         "weak": (WeakFourDVar, {"model_err_cov_op": eye}),
-        "incremental": (Incremental4DVar, {}),
+        "incremental": (ReducedBasisFourDVar, {}),
         "incremental_gn": (IncrementalFourDVar, {}),
     }[which]
     xg = cls(obs_op=MaskedIdentity(), obs_cov_op=eye, **common, **extra)(grid)

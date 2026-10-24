@@ -80,7 +80,7 @@ sees a fresh tangent linearisation.
     `IncrementalFourDVar` does not implement the CVT yet: its inner CG
     solve runs in state space with no preconditioner. The section below
     describes the method. To minimise over a transformed control today,
-    use `Incremental4DVar` with `basis=` (a reduced basis) or
+    use `ReducedBasisFourDVar` with `basis=` (a reduced basis) or
     `parameterization=` (any [`StateParameterization`](api/protocols.md)).
 
 The Hessian $\mathbf{H}_\text{GN}$ has condition number set by the
