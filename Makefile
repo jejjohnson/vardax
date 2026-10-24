@@ -35,16 +35,17 @@ install_precommit: ## Install precommit tools
 
 ##@ Formatting
 .PHONY: uv-format
-uv-format: ## Run ruff formatter
+uv-format: ## Run ruff formatter and autofixes over the whole repo (src, tests, docs scripts)
 	@printf "$(YELLOW)>>> Formatting code with ruff...$(RESET)\n"
-	@uv run ruff format $(PKGROOT)
-	@uv run ruff check --fix $(PKGROOT)
+	@uv run ruff format .
+	@uv run ruff check --fix .
 	@printf "$(GREEN)>>> Codebase formatted successfully.$(RESET)\n"
 
 .PHONY: uv-lint
-uv-lint: ## Run ruff check and ty
+uv-lint: ## Run the CI Format, Lint and Type Check jobs (ruff on the whole repo, ty on the package)
 	@printf "$(YELLOW)>>> Executing static analysis and type checking...$(RESET)\n"
-	@uv run ruff check $(PKGROOT)
+	@uv run ruff format --check .
+	@uv run ruff check --no-fix .
 	@uv run ty check $(PKGROOT)
 	@printf "$(GREEN)>>> Linting checks passed.$(RESET)\n"
 
