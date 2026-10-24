@@ -37,6 +37,7 @@ from jaxtyping import Array, Float
 import lineax as lx
 
 from vardax._src._types import Batch1D, PointObsBatch
+from vardax._src.models._rollout import checkpoint_every, resolve_forward, rollout
 from vardax._src.obs_operators.point import (
     check_point_obs_cov,
     map_point_batch,
@@ -78,6 +79,13 @@ class IncrementalFourDVar(eqx.Module):
         prior_cov_op: $B$.
         obs_cov_op: $R$.
         config: [`IncrementalConfig`][vardax.IncrementalConfig].
+        forward_adjoint: As in [`StrongFourDVar`][vardax.StrongFourDVar]:
+            a ``diffrax.AbstractAdjoint`` for a forward implementing
+            [`SupportsForwardAdjoint`][vardax.SupportsForwardAdjoint].
+        checkpoint: As in [`StrongFourDVar`][vardax.StrongFourDVar]:
+            ``False``, ``True`` or a block length ``k`` for
+            ``jax.checkpoint`` over the rollout (the
+            outer nonlinear run and its tangent-linear / adjoint).
 
     Examples:
         Trivial dynamics ($M_t(x) = x$) and a single timestep reduce
@@ -112,6 +120,8 @@ class IncrementalFourDVar(eqx.Module):
     prior_cov_op: lx.AbstractLinearOperator
     obs_cov_op: lx.AbstractLinearOperator
     config: IncrementalConfig
+    forward_adjoint: Any = eqx.field(static=True, default=None)
+    checkpoint: bool | int = eqx.field(static=True, default=False)
 
     def __init__(
         self,
@@ -121,27 +131,28 @@ class IncrementalFourDVar(eqx.Module):
         prior_cov_op: lx.AbstractLinearOperator,
         obs_cov_op: lx.AbstractLinearOperator,
         config: IncrementalConfig | None = None,
+        forward_adjoint: Any = None,
+        checkpoint: bool | int = False,
     ) -> None:
+        # fail at construction, not on the first traced call
+        checkpoint_every(checkpoint)
+        resolve_forward(forward, forward_adjoint)
         self.forward = forward
         self.obs_op = obs_op
         self.prior_mean = prior_mean
         self.prior_cov_op = prior_cov_op
         self.obs_cov_op = obs_cov_op
         self.config = config or IncrementalConfig()
+        self.forward_adjoint = forward_adjoint
+        self.checkpoint = checkpoint
 
     def _rollout(
         self,
         x_0: Float[Array, N],  # ty:ignore[unresolved-reference]
         n_steps: int,
     ) -> Float[Array, "T_plus_1 N"]:
-        dt = self.forward.dt
-
-        def step_fn(x, _):
-            x_new = self.forward.step(x, dt)
-            return x_new, x_new
-
-        _, trajectory = jax.lax.scan(step_fn, x_0, None, length=n_steps)
-        return jnp.concatenate([x_0[None, :], trajectory], axis=0)
+        forward = resolve_forward(self.forward, self.forward_adjoint)
+        return rollout(forward, x_0, n_steps, checkpoint=self.checkpoint)
 
     def __call__(self, batch: Batch1D | PointObsBatch) -> Float[Array, "B N"]:
         """Incremental-4DVar analysis: GN outer + CG inner.

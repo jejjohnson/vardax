@@ -1,7 +1,7 @@
 r"""Runtime-checkable protocols used across vardax.
 
 vardax re-exports the three core ``pipekit_cycle`` protocols
-(`ForwardModel`, `ObservationOperator`, `AnalysisStep`) and adds seven
+(`ForwardModel`, `ObservationOperator`, `AnalysisStep`) and adds eight
 vardax-specific protocols that ``pipekit-cycle`` doesn't name:
 
 - [`Prior`][vardax.Prior] — $\varphi: x \mapsto x_\text{prior}$
@@ -20,6 +20,8 @@ vardax-specific protocols that ``pipekit-cycle`` doesn't name:
 - [`StateParameterization`][vardax.StateParameterization] —
   $\theta \mapsto \psi(\theta)$, a (possibly nonlinear) control-to-state
   map with its own penalty
+- [`SupportsForwardAdjoint`][vardax.SupportsForwardAdjoint] — a
+  ``ForwardModel`` that accepts a ``diffrax`` adjoint for its rollout
 
 All protocols are ``@runtime_checkable`` so ``isinstance(obj, Protocol)``
 works for structural conformance checking — used by
@@ -260,3 +262,47 @@ __all__ = [
     "StateParameterization",
     "TemporalPrior",
 ]
+
+
+@runtime_checkable
+class SupportsForwardAdjoint(Protocol):
+    r"""A ``ForwardModel`` whose integrator can take a ``diffrax`` adjoint.
+
+    The 4DVar models' ``forward_adjoint=`` slot calls
+    ``forward.with_adjoint(adjoint)`` and rolls out the returned forward.
+    A forward that integrates with ``diffrax.diffeqsolve`` implements it
+    by storing the adjoint and passing it as ``diffeqsolve(...,
+    adjoint=adjoint)``. A per-step forward cannot, and a 4DVar model given
+    ``forward_adjoint=`` with such a forward raises ``ValueError``; bound
+    its memory with ``checkpoint=`` instead.
+
+    Members:
+        ``dt`` — step length.
+        ``step(state, dt) -> state`` — the ``ForwardModel`` contract.
+        ``with_adjoint(adjoint) -> forward`` — a copy that integrates with
+        ``adjoint``.
+
+    Examples:
+        >>> import dataclasses
+        >>> import vardax
+        >>> @dataclasses.dataclass(frozen=True)
+        ... class Decay:
+        ...     dt: float = 1.0
+        ...     adjoint: object = None
+        ...
+        ...     def step(self, x, dt):
+        ...         return 0.5 * x
+        ...
+        ...     def with_adjoint(self, adjoint):
+        ...         return dataclasses.replace(self, adjoint=adjoint)
+        >>> isinstance(Decay(), vardax.SupportsForwardAdjoint)
+        True
+        >>> Decay().with_adjoint("backsolve").adjoint
+        'backsolve'
+    """
+
+    dt: float
+
+    def step(self, state: Any, dt: float) -> Any: ...
+
+    def with_adjoint(self, adjoint: Any) -> Any: ...

@@ -48,16 +48,21 @@ model = StrongFourDVar(
     obs_cov_op=R_op,
     minimiser=optx.NonlinearCG(rtol=1e-5, atol=1e-5),
     minimiser_adjoint=optx.ImplicitAdjoint(),
-    forward_adjoint=dfx.RecursiveCheckpointAdjoint(),
+    checkpoint=True,                                  # recompute steps in reverse mode
 )
 x_0_star = model(batch)
 ```
 
-Two adjoint slots, two purposes:
+Three slots control the gradient:
 
-- **`forward_adjoint`** — controls how gradients flow back through the
-  dynamics rollout (chapter 3). For long windows, switch to
-  `dfx.BacksolveAdjoint()` for constant memory.
+- **`checkpoint`** — rematerialises the rollout in reverse mode
+  (`True`, or a block length `k`), for any per-step forward. Same
+  gradient, less memory (chapter 3).
+- **`forward_adjoint`** — a `diffrax.AbstractAdjoint` for a forward that
+  integrates with `diffrax` and implements `with_adjoint(adjoint)`
+  ([`SupportsForwardAdjoint`](api/protocols.md)); for example
+  `dfx.BacksolveAdjoint()` for constant memory over long windows. Any
+  other forward raises `ValueError`.
 - **`minimiser_adjoint`** — controls how gradients flow back through
   the outer minimiser if the model itself is differentiated through
   (e.g., for training hyperparameters of $B$). `ImplicitAdjoint` is
@@ -293,20 +298,25 @@ Part of the Decision D14 invariant.
 ## When the window is long
 
 For $T = 100$+ assimilation cycles, the forward trajectory dominates
-memory. Three strategies:
+memory. Four strategies:
 
-1. **`dfx.BacksolveAdjoint()`** — solve the adjoint ODE backwards in
+1. **`checkpoint=True` (or a block length).** Works with any per-step
+   forward: reverse mode recomputes each block of steps instead of
+   storing its intermediates. 3–4× less gradient memory on Lorenz-96
+   (chapter 3).
+2. **`dfx.BacksolveAdjoint()`** (via `forward_adjoint=`, for a
+   [`SupportsForwardAdjoint`](api/protocols.md) forward) — solve the adjoint ODE backwards in
    time. $O(1)$ memory in the trajectory length. Caveat: reverse-time
    stiffness can require an implicit integrator (`dfx.Kvaerno5`,
    `dfx.ImplicitEuler`).
-2. **`dfx.RecursiveCheckpointAdjoint(checkpoints=N)`** — store $N$
-   checkpoints, recompute segments between them. $O(\sqrt{T})$ memory.
-3. **Shorter windows.** Run multiple `StrongFourDVar` analyses with
+3. **`dfx.RecursiveCheckpointAdjoint(checkpoints=N)`** (also via
+   `forward_adjoint=`) — store $N$ checkpoints, recompute segments between them. $O(\sqrt{T})$ memory.
+4. **Shorter windows.** Run multiple `StrongFourDVar` analyses with
    shorter windows and cycle them via `pipekit_cycle.DACycle`. This is
    what operational systems do.
 
-For most research-scale problems with $T \le 20$, the default
-`RecursiveCheckpointAdjoint` is fine.
+For most research-scale problems with $T \le 20$, the defaults
+(plain reverse mode, the forward's own adjoint) are fine.
 
 ## When the dynamics are nonlinear
 

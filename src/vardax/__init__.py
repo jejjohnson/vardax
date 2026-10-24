@@ -134,6 +134,7 @@ from vardax._src.protocols import (
     Prior,
     ReducedBasis,
     StateParameterization,
+    SupportsForwardAdjoint,
     TemporalPrior,
 )
 from vardax._src.solver import (
@@ -196,6 +197,7 @@ __all__ = [
     "Prior",
     "ReducedBasis",
     "StateParameterization",
+    "SupportsForwardAdjoint",
     "TemporalPrior",
     # State parameterizations (issue #84)
     "LinearParameterization",

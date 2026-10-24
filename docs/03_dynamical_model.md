@@ -69,8 +69,12 @@ several flavours.
 
 vardax exposes `forward_adjoint: diffrax.AbstractAdjoint` as a
 constructor slot on `StrongFourDVar`, `WeakFourDVar`,
-`IncrementalFourDVar`, and `FourDVarNet` (when the prior is a
-`DynamicalPrior`). The choice flows directly through to `diffrax`.
+`IncrementalFourDVar` and `ReducedBasisFourDVar`. It reaches `diffrax`
+through the forward: the model calls `forward.with_adjoint(adjoint)`
+(the [`SupportsForwardAdjoint`](api/protocols.md) protocol) and rolls
+out the forward it returns. A per-step forward has no integrator to hand
+the adjoint to, so passing `forward_adjoint=` with one raises
+`ValueError`; bound its memory with `checkpoint=` instead (below).
 
 | Adjoint | Memory | Time | Convergence requirement | When |
 |---|---|---|---|---|
@@ -151,10 +155,43 @@ def rollout(x_0, forward, n_steps, dt, *, adjoint):
     return sol.ys     # shape (n_steps + 1, *state_shape)
 ```
 
-Inside vardax, the rollout is composed inside the cost function. The
-`forward_adjoint` slot is threaded into `diffeqsolve` so that when
-`jax.grad(J)(x_0)` is called, the gradient flows back through the
-chosen adjoint path.
+Inside vardax, the rollout is composed inside the cost function. Give
+the forward a `with_adjoint` method that stores the adjoint and passes
+it to `diffeqsolve`; the model's `forward_adjoint` slot then calls it,
+so that when `jax.grad(J)(x_0)` is called, the gradient flows back
+through the chosen adjoint path:
+
+```python
+import dataclasses
+
+@dataclasses.dataclass(frozen=True)
+class DiffraxForward:
+    dt: float
+    adjoint: dfx.AbstractAdjoint = dfx.RecursiveCheckpointAdjoint()
+
+    def step(self, x, dt):
+        sol = dfx.diffeqsolve(term, dfx.Tsit5(), t0=0.0, t1=dt, dt0=dt,
+                              y0=x, adjoint=self.adjoint)
+        return sol.ys[-1]
+
+    def with_adjoint(self, adjoint):
+        return dataclasses.replace(self, adjoint=adjoint)
+```
+
+## Per-step forwards: `checkpoint=`
+
+Most forwards are a single `step(x, dt)` (an RK4 step of a finite-volume
+model, a learned emulator). Reverse mode through a `lax.scan` of such
+steps stores every intermediate of every step. The 4DVar models'
+`checkpoint=` slot wraps blocks of steps in `jax.checkpoint`, so the
+backward pass recomputes them instead: `True` checkpoints every step, an
+integer `k` every block of `k` steps. The gradient is unchanged.
+
+On Lorenz-96 ($N = 40$, RK4, 500 steps, float64, CPU) the compiled
+gradient's temporary memory drops from 1.61 MB to 0.49 MB with
+`checkpoint=True` and to 0.37 MB with `checkpoint=10`. What remains is
+mostly the trajectory itself, which the observation cost reads at every
+time.
 
 ## Performance considerations
 

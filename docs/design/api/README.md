@@ -82,7 +82,8 @@ constructor slots passed straight through to the upstream library:
 
 | Slot | Type | Used by | Default |
 |---|---|---|---|
-| `forward_adjoint` | `diffrax.AbstractAdjoint` | `StrongFourDVar`, `WeakFourDVar`, `IncrementalFourDVar`, `FourDVarNet` (if dynamical prior) | `RecursiveCheckpointAdjoint()` |
+| `checkpoint` | `bool \| int` | `StrongFourDVar`, `WeakFourDVar`, `IncrementalFourDVar`, `ReducedBasisFourDVar` | `False` |
+| `forward_adjoint` | `diffrax.AbstractAdjoint`, applied via `forward.with_adjoint` | the same four | `None` (forward's own) |
 | `minimiser_adjoint` | `optimistix.AbstractAdjoint` | `ThreeDVar`, `StrongFourDVar`, `WeakFourDVar` | `ImplicitAdjoint()` |
 | `solver_adjoint` | `optimistix.AbstractAdjoint` | `FourDVarNet` (through the learned inner solver) | `RecursiveCheckpointAdjoint()` |
 
