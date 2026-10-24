@@ -76,67 +76,77 @@ sees a fresh tangent linearisation.
 
 ## Control-variable transform (CVT)
 
-!!! note
-    `IncrementalFourDVar` does not implement the CVT yet: its inner CG
-    solve runs in state space with no preconditioner. The section below
-    describes the method. To minimise over a transformed control today,
-    use `ReducedBasisFourDVar` with `basis=` (a reduced basis) or
-    `parameterization=` (any [`StateParameterization`](api/protocols.md)).
+The Hessian $\mathbf{H}_\text{GN}$ inherits the condition number of
+$B^{-1}$: a smooth (long-correlation) $B$ has tiny eigenvalues, which
+become huge ones of $B^{-1}$. In state space every Hessian product also
+needs $B^{-1}v$, which `IncrementalFourDVar` would have to compute by a
+nested CG solve.
 
-The Hessian $\mathbf{H}_\text{GN}$ has condition number set by the
-prior covariance eigenvalues spread over the correlation length scales
-of $B$. For a Matérn $B$ on a 2D grid, this can be hundreds of orders
-of magnitude — CG converges slowly without preconditioning.
-
-CVT changes variables:
+The CVT changes variables. Let $S$ be a square root of $B$, $S S^\top = B$,
+and write the departure from the background as
 
 $$
-\chi = B^{-1/2}(\delta x),
+x_0 - x_b = S \chi .
 $$
 
-so $\delta x = B^{1/2} \chi$. In $\chi$-space the prior cost is
+The background term becomes $\tfrac{1}{2}\|x_0 - x_b\|^2_{B^{-1}} =
+\tfrac{1}{2}\|\chi\|^2$, and the inner system at the outer iterate
+$\chi^{(k)}$ becomes
 
 $$
-\tfrac{1}{2} \|\delta x\|^2_{B^{-1}} = \tfrac{1}{2} \|\chi\|^2,
+\big(I + S^\top G'^\top R^{-1} G' S\big)\, \delta\chi^*
+  = -\nabla_\chi J\big(\chi^{(k)}\big)
+  = -\chi^{(k)} + S^\top G'^\top R^{-1} d^{(k)},
 $$
 
-and the Hessian becomes
+where $G'$ stacks $H'_t M'_t$ over the window. Its eigenvalues are all
+$\ge 1$, close to 1 in directions the observations barely see, and no
+$B^{-1}$ appears anywhere. The outer update is
+$\chi^{(k+1)} = \chi^{(k)} + \delta\chi^*$, and the analysis is
+$x_0^* = x_b + S\chi^*$.
 
-$$
-\tilde{\mathbf{H}}_\text{GN} = I + B^{1/2} \Big(\sum_t (H'_t M'_t)^\top R_t^{-1} (H'_t M'_t)\Big) B^{1/2}.
-$$
+`IncrementalConfig(cvt=True)` (the default) uses it. $S$ is
+`prior_sqrt_op=` when given (a Cholesky factor, a structured
+operator's own square root, or `gaussx.sqrt(B, lanczos_order=k)` for a
+large unstructured $B$), else `gaussx.sqrt(prior_cov_op)`: closed form
+for diagonal, Kronecker and block-diagonal $B$, a dense
+eigendecomposition otherwise. `cvt=False` keeps the state-space solve,
+with $B^{-1}$ and $R^{-1}$ applied by CG at tolerance
+`covariance_tol`.
 
-The spectrum of $\tilde{\mathbf{H}}_\text{GN}$ is bunched around 1 — CG
-converges in tens of iterations regardless of grid resolution.
+**How much it helps.** A linear problem with 20 states, 4 times, every
+third site observed, a Gaussian-kernel $B$ of length scale 3 sites plus
+a diagonal jitter that sets its condition number; inner CG iterations to
+reach $10^{-4}$ relative error on the exact analysis:
 
-$B^{1/2}$ comes from `gaussx.MaternLinearOperator.half()`:
+| $\kappa(B)$ | CVT | state space |
+|---:|---:|---:|
+| $7 \times 10^1$ | 10 | 8 |
+| $7 \times 10^2$ | 9 | 14 |
+| $7 \times 10^3$ | 9 | 20 |
 
-```python
-import gaussx as gx
-
-B_half = gx.MaternLinearOperator(
-    grid_coords=coords, length_scale=10.0, nu=1.5, sigma=1.0,
-).half()
-```
-
-For non-Matérn structured priors, factorise via Cholesky (small grids)
-or Lanczos (large grids).
+The CVT count does not grow with $\kappa(B)$, and each state-space
+iteration also runs a nested CG for $B^{-1}v$. For a well-conditioned
+$B$ the two are comparable.
 
 ## Implementation in vardax
 
 ```python
 import gaussx as gx
 import lineax as lx
-from vardax.models import IncrementalFourDVar
-from vardax import IncrementalConfig
+from vardax import AveragingKernel, IncrementalConfig, IncrementalFourDVar
+
+# separable B on an (ny, nx) grid: B = B_y ⊗ B_x, whose square root
+# gaussx.sqrt computes factor by factor
+B_op = gx.Kronecker(B_y_op, B_x_op)
 
 model = IncrementalFourDVar(
     forward=somax_model,
     obs_op=AveragingKernel(A=A, x_a=xa, h=h),
     prior_mean=x_b,
-    prior_cov_op=gx.MaternLinearOperator(coords, length_scale=10.0, sigma=0.1),
+    prior_cov_op=B_op,
     obs_cov_op=lx.DiagonalLinearOperator(obs_uncertainty),
-    config=IncrementalConfig(n_outer=3, n_inner=20),
+    config=IncrementalConfig(n_outer=3, n_inner=20, cvt=True),
 )
 x_star = model(batch)
 
@@ -147,15 +157,19 @@ posterior = model.posterior(batch)
 `IncrementalConfig`:
 
 - `n_outer` — number of Gauss-Newton outer iterations (typical: 3)
-- `n_inner` — max CG iterations per outer (typical: 20–50)
-- `cg_atol`, `cg_rtol` — CG convergence tolerances
+- `n_inner` — max CG iterations per outer (typical: 20–50); the inner
+  solve is truncated there
+- `cg_atol`, `cg_rtol` — inner CG convergence tolerances
+- `cvt` — solve over $\chi$, $x_0 = x_b + B^{1/2}\chi$ (default `True`)
+- `covariance_tol` — tolerance of the CG solves that apply $R^{-1}$ (and
+  $B^{-1}$ when `cvt=False`)
 
 ## Algorithm
 
 ```
 Inputs:
    x_b           — background mean
-   B_op          — prior covariance (gaussx; supports .half())
+   B_op          — prior covariance; B^{1/2} from gaussx.sqrt or prior_sqrt_op
    R_op          — observation-error covariance
    forward       — pipekit_cycle.ForwardModel
    obs_op        — pipekit_cycle.ObservationOperator
@@ -178,8 +192,8 @@ for k in range(config.n_outer):
     rhs = -B_inv @ (x - x_b) + G_lin.T @ (R_inv @ d)
 
     # 4. Inner solve via lineax.CG
-    if use_cvt:                  # χ-space shown; not implemented yet
-        B_half = B_op.half()
+    if config.cvt:
+        B_half = gaussx.sqrt(B_op)    # or prior_sqrt_op
         # (I + B^{1/2}ᵀ G'ᵀ R⁻¹ G' B^{1/2}) δχ = B^{1/2}ᵀ (−∇J(x⁽ᵏ⁾))
         preconditioned_hessian = identity_op + B_half.T @ GtRG @ B_half
         chi = lineax.linear_solve(
@@ -226,15 +240,40 @@ relinearisation needed), and the inner CG produces the closed-form
 Kalman update:
 
 ```python
+import jax
+import jax.numpy as jnp
+import lineax as lx
+import vardax
+
+
+class Static:
+    """M(x) = x: a single-time window reduces 4DVar to OI."""
+
+    dt = 1.0
+
+    def step(self, x, dt):
+        return x
+
+
 def test_incremental_recovers_oi():
-    oi = OptimalInterpolation(linear_H, x_b, B_op, R_op)
-    inc = IncrementalFourDVar(
-        forward=static_forward, obs_op=linear_H,
-        prior_mean=x_b, prior_cov_op=B_op, obs_cov_op=R_op,
-        config=IncrementalConfig(n_outer=2, n_inner=50, cvt=True),
+    n = 4
+    x_b = jnp.zeros(n)
+    B_op = lx.DiagonalLinearOperator(jnp.full(n, 2.0))
+    R_op = lx.DiagonalLinearOperator(jnp.full(n, 0.5))
+    batch = vardax.Batch1D(
+        input=jnp.arange(1.0, n + 1)[None, None], mask=jnp.ones((1, 1, n))
     )
-    batch = make_linear_gaussian_batch(T=0)
-    assert jnp.allclose(oi(batch), inc(batch), atol=1e-3)
+    oi = vardax.OptimalInterpolation(
+        obs_op=vardax.MaskedIdentity(), prior_mean=x_b[None],
+        prior_cov_op=lx.DiagonalLinearOperator(jnp.full((1, n), 2.0)),
+        obs_cov_op=lx.DiagonalLinearOperator(jnp.full((1, n), 0.5)),
+    )
+    inc = vardax.IncrementalFourDVar(
+        forward=Static(), obs_op=vardax.MaskedIdentity(),
+        prior_mean=x_b, prior_cov_op=B_op, obs_cov_op=R_op,
+        config=vardax.IncrementalConfig(n_outer=2, n_inner=50, cvt=True),
+    )
+    assert jnp.allclose(oi(batch)[0, 0], inc(batch)[0], atol=1e-3)
 ```
 
 Part of the Decision D14 invariant.
@@ -267,9 +306,10 @@ Hessian is already there.
 Almost never, for operational work. `IncrementalFourDVar` is faster
 and produces the same answer. Use `StrongFourDVar` only when:
 
-- The prior is exotic (not Matérn / Kronecker / structured) and
-  `gaussx.MaternLinearOperator.half()` doesn't apply. The CVT
-  preconditioner is then unavailable.
+- $B$ is large, unstructured and has no cheap square root, so
+  `gaussx.sqrt` would fall back to a dense eigendecomposition. Pass a
+  Lanczos square root (`prior_sqrt_op=gaussx.sqrt(B, lanczos_order=k)`)
+  or use `cvt=False` before giving up on the incremental solver.
 - You want to swap in a custom optimistix minimiser (e.g.
   `optx.LevenbergMarquardt` for very nonlinear cases). Incremental
   uses a fixed GN+CG; the rest of the optimistix zoo isn't compatible

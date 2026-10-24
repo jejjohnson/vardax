@@ -18,15 +18,19 @@ iterate $x^{(k)}$ (the background $x_b$ stays fixed):
 
 This implementation applies $M'_t$, $H'_t$ through ``jax.linearize`` /
 ``jax.vjp`` (autodiff-derived, matrix-free) and solves the inner system
-with ``lineax.CG`` on a positive-semidefinite-tagged operator, in state
-space. There is no control-variable-transform option; for a
-reduced-basis or other reparameterised control use
+with ``lineax.CG`` on a positive-semidefinite-tagged operator. By default
+it does so over the control variable $\chi$, $x_0 = x_b + B^{1/2}\chi$
+(the control-variable transform, ``IncrementalConfig.cvt``), where the
+inner Hessian is $I + B^{1/2\top} G'^\top R^{-1} G' B^{1/2}$ and no
+$B^{-1}$ is needed. For a reduced-basis or other reparameterised control
+use
 [`ReducedBasisFourDVar`][vardax.ReducedBasisFourDVar] with ``basis=`` or
 ``parameterization=``.
 """
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 import equinox as eqx
@@ -57,15 +61,29 @@ class IncrementalConfig(eqx.Module):
 
     Attributes:
         n_outer: Number of Gauss-Newton outer iterations (typical: 3).
-        n_inner: Max CG iterations per outer (typical: 20-50).
-        cg_atol: CG absolute tolerance.
-        cg_rtol: CG relative tolerance.
+        n_inner: Max CG iterations per outer (typical: 20-50). The inner
+            solve stops there whether or not it has met the tolerance
+            (truncated CG, as in operational incremental 4DVar).
+        cg_atol: Inner CG absolute tolerance.
+        cg_rtol: Inner CG relative tolerance.
+        cvt: Solve the inner system over the control variable χ with
+            $x_0 = x_b + B^{1/2} \\chi$ (default). The background term is
+            $\tfrac12 \\lVert \\chi \rVert^2$, the inner Hessian
+            $I + B^{1/2\top} G'^\top R^{-1} G' B^{1/2}$ has eigenvalues
+            ≥ 1, and $B$ is never solved against. ``False`` solves in
+            state space with $B^{-1}$ applied by CG at every Hessian
+            product.
+        covariance_tol: Absolute and relative tolerance of the CG solves
+            that apply $R^{-1}$ (and $B^{-1}$ when ``cvt=False``). Outer
+            accuracy cannot beat it.
     """
 
     n_outer: int = eqx.field(static=True, default=3)
     n_inner: int = eqx.field(static=True, default=30)
     cg_atol: float = eqx.field(static=True, default=1e-6)
     cg_rtol: float = eqx.field(static=True, default=1e-6)
+    cvt: bool = eqx.field(static=True, default=True)
+    covariance_tol: float = eqx.field(static=True, default=1e-6)
 
 
 class IncrementalFourDVar(eqx.Module):
@@ -84,6 +102,13 @@ class IncrementalFourDVar(eqx.Module):
         prior_cov_op: $B$.
         obs_cov_op: $R$.
         config: [`IncrementalConfig`][vardax.IncrementalConfig].
+        prior_sqrt_op: Optional square root $S$ of $B$ ($S S^\top = B$),
+            used by the control-variable transform: a Cholesky factor, a
+            structured operator's own square root, or a Lanczos
+            ``gaussx.sqrt(B, lanczos_order=k)`` for a large unstructured
+            $B$. Default ``None``: ``gaussx.sqrt(prior_cov_op)``, closed
+            form for diagonal / Kronecker / block-diagonal $B$ and a dense
+            eigendecomposition otherwise.
         forward_adjoint: As in [`StrongFourDVar`][vardax.StrongFourDVar]:
             a ``diffrax.AbstractAdjoint`` for a forward implementing
             [`SupportsForwardAdjoint`][vardax.SupportsForwardAdjoint].
@@ -125,6 +150,7 @@ class IncrementalFourDVar(eqx.Module):
     prior_cov_op: lx.AbstractLinearOperator
     obs_cov_op: lx.AbstractLinearOperator
     config: IncrementalConfig
+    prior_sqrt_op: lx.AbstractLinearOperator | None = None
     forward_adjoint: Any = eqx.field(static=True, default=None)
     checkpoint: bool | int = eqx.field(static=True, default=False)
 
@@ -138,6 +164,7 @@ class IncrementalFourDVar(eqx.Module):
         config: IncrementalConfig | None = None,
         forward_adjoint: Any = None,
         checkpoint: bool | int = False,
+        prior_sqrt_op: lx.AbstractLinearOperator | None = None,
     ) -> None:
         # fail at construction, not on the first traced call
         checkpoint_every(checkpoint)
@@ -148,6 +175,7 @@ class IncrementalFourDVar(eqx.Module):
         self.prior_cov_op = prior_cov_op
         self.obs_cov_op = obs_cov_op
         self.config = config or IncrementalConfig()
+        self.prior_sqrt_op = prior_sqrt_op
         self.forward_adjoint = forward_adjoint
         self.checkpoint = checkpoint
 
@@ -173,100 +201,35 @@ class IncrementalFourDVar(eqx.Module):
             n_steps = window_steps(batch)
             return map_point_batch(lambda b: self._analyse_points(b, n_steps), batch)
 
-        T = batch.input.shape[1] - 1
+        tol = self.config.covariance_tol
+        obs_cov = _as_covariance(self.obs_cov_op)
 
-        def _one(input_i, mask_i):
-            x_b = self.prior_mean
+        def apply_obs_precision(
+            residuals: Float[Array, "T_plus_1 N"],
+        ) -> Float[Array, "T_plus_1 N"]:
+            # R⁻¹ rₜ at each time
+            def solve_one(residual_t: Float[Array, " N"]) -> Float[Array, " N"]:
+                solver = lx.CG(atol=tol, rtol=tol)
+                return lx.linear_solve(obs_cov, residual_t, solver=solver).value
 
-            def cost_grad_for_outer(x_iter):
-                """Gradient of the full nonlinear cost at ``x_iter``."""
+            return jax.vmap(solve_one)(residuals)
 
-                def cost_full(x_0):
-                    dx = x_0 - self.prior_mean
-                    B_inv_dx = lx.linear_solve(
-                        self.prior_cov_op,
-                        dx,
-                        solver=lx.CG(atol=1e-6, rtol=1e-6),
-                    ).value
-                    j_bg = 0.5 * jnp.sum(dx * B_inv_dx)
-                    trajectory = self._rollout(x_0, n_steps=T)
+        def analyse_one(
+            input_i: Float[Array, "T_plus_1 N"], mask_i: Float[Array, "T_plus_1 N"]
+        ) -> Float[Array, " N"]:
+            # G(x₀) = [mₜ ⊙ Hₜ(Mₜ(x₀))]ₜ, shared with the posterior adapters
+            observed = observed_trajectory(self, mask_i)
+            masked_observations = mask_i * input_i
 
-                    def _per_step(x_t, y_t, m_t):
-                        y_pred = (
-                            self.obs_op(x_t, mask=m_t)
-                            if _accepts_mask(self.obs_op)
-                            else self.obs_op(x_t)
-                        )
-                        residual = m_t * (y_t - y_pred)
-                        R_inv_r = lx.linear_solve(
-                            self.obs_cov_op,
-                            residual,
-                            solver=lx.CG(atol=1e-6, rtol=1e-6),
-                        ).value
-                        return 0.5 * jnp.sum(residual * R_inv_r)
+            def residual(
+                initial_state: Float[Array, " N"],
+            ) -> Float[Array, "T_plus_1 N"]:
+                # rₜ = mₜ ⊙ (yₜ - Hₜ(Mₜ(x₀)))
+                return masked_observations - observed(initial_state)
 
-                    per_step = jax.vmap(_per_step)(trajectory, input_i, mask_i)
-                    return j_bg + jnp.sum(per_step)
+            return self._gauss_newton(residual, apply_obs_precision)
 
-                return jax.grad(cost_full)(x_iter)
-
-            # Gauss-Newton outer iterations on the nonlinear cost.
-            for _ in range(self.config.n_outer):
-                # G(x₀) = [mₜ ⊙ Hₜ(Mₜ(x₀))]ₜ, shared with the posterior
-                # adapters so both use the same tangent-linear operator
-                J_full = observed_trajectory(self, mask_i)
-
-                # GN Hessian as a hand-rolled mat-vec on the state
-                # space (N,). Uses jax.linearize + jax.vjp to apply
-                # H^T R^{-1} H v plus B^{-1} v without forming dense
-                # matrices.
-                _, jvp_fn = jax.linearize(J_full, x_b)
-                _, vjp_fn = jax.vjp(J_full, x_b)
-
-                def gn_hessian_matvec(v, _jvp_fn=jvp_fn, _vjp_fn=vjp_fn):
-                    Hv = _jvp_fn(v)
-
-                    # Apply per-time-step R^{-1}: vmap CG over time
-                    def _r_inv(y):
-                        return lx.linear_solve(
-                            self.obs_cov_op,
-                            y,
-                            solver=lx.CG(atol=1e-6, rtol=1e-6),
-                        ).value
-
-                    R_inv_Hv = jax.vmap(_r_inv)(Hv)
-                    (HtR_inv_H_v,) = _vjp_fn(R_inv_Hv)
-                    B_inv_v = lx.linear_solve(
-                        self.prior_cov_op,
-                        v,
-                        solver=lx.CG(atol=1e-6, rtol=1e-6),
-                    ).value
-                    return HtR_inv_H_v + B_inv_v
-
-                gn_op = lx.FunctionLinearOperator(
-                    gn_hessian_matvec,
-                    jax.ShapeDtypeStruct(x_b.shape, x_b.dtype),
-                    lx.positive_semidefinite_tag,
-                )
-
-                # RHS = -grad J(x_b)
-                rhs = -cost_grad_for_outer(x_b)
-
-                # Inner CG solve: GN_Hessian @ dx = rhs
-                dx_star = lx.linear_solve(
-                    gn_op,
-                    rhs,
-                    solver=lx.CG(
-                        atol=self.config.cg_atol,
-                        rtol=self.config.cg_rtol,
-                        max_steps=self.config.n_inner,
-                    ),
-                ).value
-                x_b = x_b + dx_star
-
-            return x_b
-
-        return jax.vmap(_one)(batch.input, batch.mask)
+        return jax.vmap(analyse_one)(batch.input, batch.mask)
 
     def _analyse_points(self, batch: PointObsBatch, T: int) -> Float[Array, " N"]:
         r"""GN outer + CG inner on a point batch.
@@ -275,73 +238,145 @@ class IncrementalFourDVar(eqx.Module):
         $r_i(x_0) = m_i (y_i - \mathcal H(M^{\tau_i}(x_0))(s_i)) / \sigma_i$,
         the cost is $\tfrac12 \lVert x_0 - x_b \rVert^2_{B^{-1}} +
         \tfrac12 \lVert r \rVert^2$ and the Gauss-Newton Hessian is
-        $B^{-1} + r'^\top r'$.
+        $B^{-1} + r'^\top r'$ ($I + S^\top r'^\top r' S$ with the
+        control-variable transform).
         """
         obs_op = require_grid_point_obs(self.obs_op)
 
-        def residual(x_0):
-            preds = obs_op(self._rollout(x_0, n_steps=T), batch)
-            return whitened_residual(preds, batch)
+        def residual(initial_state: Float[Array, " N"]) -> Float[Array, " n_obs"]:
+            predictions = obs_op(self._rollout(initial_state, n_steps=T), batch)
+            return whitened_residual(predictions, batch)
 
-        def b_inv(v):
-            return lx.linear_solve(
-                self.prior_cov_op, v, solver=lx.CG(atol=1e-6, rtol=1e-6)
-            ).value
+        def identity(residuals: Float[Array, " n_obs"]) -> Float[Array, " n_obs"]:
+            # the residual is already whitened: R = I
+            return residuals
 
-        def cost_full(x_0):
-            dx = x_0 - self.prior_mean
-            return 0.5 * jnp.sum(dx * b_inv(dx)) + 0.5 * jnp.sum(residual(x_0) ** 2)
+        return self._gauss_newton(residual, identity)
 
-        x_b = self.prior_mean
-        for _ in range(self.config.n_outer):
-            _, jvp_fn = jax.linearize(residual, x_b)
-            _, vjp_fn = jax.vjp(residual, x_b)
+    def _gauss_newton(
+        self,
+        residual: Callable[[Array], Array],
+        apply_obs_precision: Callable[[Array], Array],
+    ) -> Float[Array, " N"]:
+        r"""Gauss–Newton outer loop with a CG inner solve, for one window.
 
-            def gn_hessian_matvec(v, _jvp_fn=jvp_fn, _vjp_fn=vjp_fn):
-                (jt_j_v,) = _vjp_fn(_jvp_fn(v))
-                return jt_j_v + b_inv(v)
+        J(x₀) = ½ ‖x₀ − x_b‖²_{B⁻¹} + ½ r(x₀)ᵀ W r(x₀),  W = R⁻¹.
 
-            gn_op = lx.FunctionLinearOperator(
-                gn_hessian_matvec,
-                jax.ShapeDtypeStruct(x_b.shape, x_b.dtype),
-                lx.positive_semidefinite_tag,
+        Algorithm:
+            1. Pick the control c and its map to the state: c = x₀
+               (state space), or c = χ with x₀ = x_b + S χ, S Sᵀ = B
+               (control-variable transform), where the background term
+               becomes ½ ‖χ‖².
+            2. At the current control c⁽ᵏ⁾, linearise the residual,
+               r(c⁽ᵏ⁾ + δc) ≈ r(c⁽ᵏ⁾) + r' δc.
+            3. Solve (P + r'ᵀ W r') δc = −∇J(c⁽ᵏ⁾) by CG, with P = B⁻¹ in
+               state space and P = I under the transform.
+            4. Update c⁽ᵏ⁺¹⁾ = c⁽ᵏ⁾ + δc and repeat ``n_outer`` times.
+
+        Args:
+            residual: x₀ ↦ r(x₀), masked or whitened observation misfits.
+            apply_obs_precision: r ↦ W r.
+
+        Returns:
+            The analysis x₀*.
+        """
+        config = self.config
+        background = self.prior_mean
+        tol = config.covariance_tol
+
+        if config.cvt:
+            prior_sqrt = self._prior_sqrt()
+
+            def to_state(control: Float[Array, " N"]) -> Float[Array, " N"]:
+                # x₀ = x_b + S χ
+                return background + prior_sqrt.mv(control)
+
+            def background_cost(control: Float[Array, " N"]) -> Float[Array, ""]:
+                # ½ ‖χ‖²
+                return 0.5 * jnp.sum(control**2)
+
+            def apply_prior_precision(direction: Float[Array, " N"]):
+                # the prior Hessian in χ is the identity
+                return direction
+
+            control = jnp.zeros_like(background)
+        else:
+
+            def to_state(control: Float[Array, " N"]) -> Float[Array, " N"]:
+                return control
+
+            prior_cov = _as_covariance(self.prior_cov_op)
+
+            def apply_prior_precision(direction: Float[Array, " N"]):
+                # B⁻¹ v
+                solver = lx.CG(atol=tol, rtol=tol)
+                return lx.linear_solve(prior_cov, direction, solver=solver).value
+
+            def background_cost(control: Float[Array, " N"]) -> Float[Array, ""]:
+                # ½ (x₀ - x_b)ᵀ B⁻¹ (x₀ - x_b)
+                departure = control - background
+                return 0.5 * jnp.sum(departure * apply_prior_precision(departure))
+
+            control = background
+
+        def control_residual(control: Float[Array, " N"]) -> Array:
+            return residual(to_state(control))
+
+        def cost(control: Float[Array, " N"]) -> Float[Array, ""]:
+            # J = background + ½ rᵀ W r
+            misfit = control_residual(control)
+            weighted = apply_obs_precision(misfit)
+            return background_cost(control) + 0.5 * jnp.sum(misfit * weighted)
+
+        structure = jax.ShapeDtypeStruct(control.shape, control.dtype)
+        inner_solver = lx.CG(
+            atol=config.cg_atol, rtol=config.cg_rtol, max_steps=config.n_inner
+        )
+        for _ in range(config.n_outer):
+            # --- linearise at c⁽ᵏ⁾ ---
+            _, residual_tangent = jax.linearize(control_residual, control)
+            _, residual_adjoint = jax.vjp(control_residual, control)
+
+            def hessian_mv(
+                direction: Float[Array, " N"],
+                tangent: Callable = residual_tangent,
+                adjoint: Callable = residual_adjoint,
+            ) -> Float[Array, " N"]:
+                # (P + r'ᵀ W r') v
+                weighted = apply_obs_precision(tangent(direction))
+                (data_term,) = adjoint(weighted)
+                return apply_prior_precision(direction) + data_term
+
+            hessian = lx.FunctionLinearOperator(
+                hessian_mv, structure, lx.positive_semidefinite_tag
             )
-            dx_star = lx.linear_solve(
-                gn_op,
-                -jax.grad(cost_full)(x_b),
-                solver=lx.CG(
-                    atol=self.config.cg_atol,
-                    rtol=self.config.cg_rtol,
-                    max_steps=self.config.n_inner,
-                ),
-            ).value
-            x_b = x_b + dx_star
-        return x_b
+
+            # --- inner solve: (P + r'ᵀ W r') δc = -∇J(c⁽ᵏ⁾) ---
+            negative_gradient = -jax.grad(cost)(control)
+            # truncated CG: stop at n_inner whether or not it has converged
+            solution = lx.linear_solve(
+                hessian, negative_gradient, solver=inner_solver, throw=False
+            )
+            # c⁽ᵏ⁺¹⁾ = c⁽ᵏ⁾ + δc
+            control = control + solution.value
+
+        return to_state(control)
+
+    def _prior_sqrt(self) -> lx.AbstractLinearOperator:
+        """S with S Sᵀ = B: the given ``prior_sqrt_op``, else ``gaussx.sqrt(B)``."""
+        if self.prior_sqrt_op is not None:
+            return self.prior_sqrt_op
+        return gaussx.sqrt(_as_covariance(self.prior_cov_op))
 
     def as_analysis_step(self) -> _IncrementalFourDVarAnalysisStep:
         return _IncrementalFourDVarAnalysisStep(self)
 
 
-def _inv(op: lx.AbstractLinearOperator) -> lx.AbstractLinearOperator:
-    """Lazy PSD inverse — gaussx.inv (structured closed forms, CG fallback).
-
-    Re-wrapped as a ``FunctionLinearOperator`` so lineax can linearise
-    it inside composed operators that are themselves solved.
-    """
-    inv_op = gaussx.inv(
-        lx.TaggedLinearOperator(op, lx.positive_semidefinite_tag),
-        solver=lx.CG(atol=1e-6, rtol=1e-6, max_steps=200),
-    )
-    return lx.FunctionLinearOperator(inv_op.mv, op.in_structure())
-
-
-def _accepts_mask(obs_op: Any) -> bool:
-    import inspect
-
-    try:
-        return "mask" in inspect.signature(obs_op.__call__).parameters
-    except (TypeError, ValueError):
-        return False
+def _as_covariance(operator: lx.AbstractLinearOperator) -> lx.AbstractLinearOperator:
+    """Tag a covariance operator PSD, so CG accepts e.g. a plain diagonal."""
+    if lx.is_positive_semidefinite(operator):
+        return operator
+    return lx.TaggedLinearOperator(operator, lx.positive_semidefinite_tag)
 
 
 class _IncrementalFourDVarAnalysisStep(eqx.Module):
