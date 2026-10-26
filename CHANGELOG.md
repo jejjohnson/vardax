@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.1.11](https://github.com/jejjohnson/vardax/compare/v0.1.10...v0.1.11) (2026-10-26)
+
+
+### Features
+
+* control-variable transform for IncrementalFourDVar's inner loop ([#104](https://github.com/jejjohnson/vardax/issues/104)) ([1a0e396](https://github.com/jejjohnson/vardax/commit/1a0e3961b98794d959df0a8213952c7656eebd57))
+
+
+### Bug Fixes
+
+* honour forward_adjoint and add checkpointed rollouts to the 4D-Var models ([#102](https://github.com/jejjohnson/vardax/issues/102)) ([553b8c7](https://github.com/jejjohnson/vardax/commit/553b8c7b9099d50619a487cdb48524ca0ad40cde))
+* use the tangent-linear model in the 4D-Var posterior adapters ([#103](https://github.com/jejjohnson/vardax/issues/103)) ([8718a75](https://github.com/jejjohnson/vardax/commit/8718a75eb5602ba3352816ffa62e89f3f02ad053))
+
 ## [0.1.10](https://github.com/jejjohnson/vardax/compare/v0.1.9...v0.1.10) (2026-10-23)
 
 
