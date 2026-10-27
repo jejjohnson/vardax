@@ -101,8 +101,24 @@ from `batch`, which must hold a single window. It returns `cov` as an
 `AbstractLinearOperator`: each mat-vec is a Krylov solve (`lineax.CG`
 by default, `solver=` to change it), and each Krylov iteration is one
 tangent-linear plus one adjoint pass through the rollout. Nothing is
-materialised. Models with a `basis=` or `parameterization=` control
-raise `ValueError`, since their prior is not $B$.
+materialised.
+
+A linear control, `parameterization=LinearParameterization(basis, x_b)`
+or `ReducedBasisFourDVar(basis=...)`, has $x = x_b + \Phi\theta$ and the
+penalty $\tfrac12 \theta^\top Q^{-1} \theta$ in place of $B$. The adapters
+then build the precision in coefficient space and map it to the state:
+
+```math
+P_\theta = \left(Q^{-1} + \Phi^\top G'^\top R^{-1} G' \Phi\right)^{-1},
+\qquad
+P_x = \Phi P_\theta \Phi^\top,
+```
+
+with $G'$ the single-time $H'$ or the strong-constraint window map. The
+whitened control $\Phi = L$, $Q = I$ with $B = LL^\top$ gives exactly the
+state-space posterior. Any other parameterization (a
+`NeuralFieldParameterization`, say) and a parameterized `WeakFourDVar`
+raise `ValueError`: their prior is not $B$, and their decode is not affine.
 
 **Gaussian-likelihood only.** For non-Gaussian likelihoods (heavy
 tails, censored, count data), the Laplace approximation is wrong; use

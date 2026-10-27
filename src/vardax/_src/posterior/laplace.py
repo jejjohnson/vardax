@@ -57,7 +57,8 @@ class LaplaceCovariance(eqx.Module):
 
     Attributes:
         prior_cov_op: Background-error covariance $B$. Default ``None``:
-            the model's ``prior_cov_op``.
+            the model's ``prior_cov_op``. Unused for a linear control,
+            whose prior is the basis's $Q$.
         obs_cov_op: Observation-error covariance $R$ at one time. Default
             ``None``: the model's ``obs_cov_op``.
         solver: Linear solver for the lazy inverses (default CG,
@@ -109,8 +110,10 @@ class LaplaceCovariance(eqx.Module):
 
         Raises:
             AttributeError: If the model exposes no ``obs_op``.
-            ValueError: For a point batch, a multi-sample batch, or a
-                ``basis=`` / ``parameterization=`` control.
+            ValueError: For a point batch, a multi-sample batch, a
+                nonlinear ``parameterization=``, or a parameterized
+                ``WeakFourDVar``. A ``LinearParameterization`` (or
+                ``basis=``) control gives $\Phi P_\theta \Phi^\top$.
         """
         mean, covariance, structure = gauss_newton_covariance(
             analysis,

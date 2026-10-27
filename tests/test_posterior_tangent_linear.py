@@ -16,6 +16,7 @@ precision B⁻¹ + ∑ₜ (H'ₜ M'ₜ)ᵀ R⁻¹ (H'ₜ M'ₜ):
 
 from __future__ import annotations
 
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 import lineax as lx
@@ -282,19 +283,18 @@ class TestMisuseRaises:
         with pytest.raises(ValueError, match="needs the window's Batch1D"):
             adapter(jnp.zeros(N_STATE), _strong(problem), None)
 
-    def test_reduced_basis_control(self):
+    def test_nonlinear_parameterization(self):
+        # a linear basis= / LinearParameterization control is supported
+        # (tests/test_linear_control_posterior.py); a non-affine one raises
         problem = _problem()
         B_op, R_op = _ops(problem)
-        model = vdx.ReducedBasisFourDVar(
-            forward=LinearForward(problem["A"]),
-            obs_op=vdx.MaskedIdentity(),
-            prior_mean=jnp.zeros(N_STATE),
-            prior_cov_op=B_op,
-            obs_cov_op=R_op,
-            basis=vdx.linear_basis(jnp.eye(N_STATE)[:, :2]),
+        field = eqx.nn.MLP(1, 1, 4, 1, key=jax.random.key(0))
+        param = vdx.NeuralFieldParameterization(
+            field, jnp.linspace(0.0, 1.0, N_STATE)[:, None], 1e-3
         )
+        model = _strong(problem, parameterization=param)
         adapter = vdx.LaplaceCovariance(prior_cov_op=B_op, obs_cov_op=R_op)
-        with pytest.raises(ValueError, match="basis= or parameterization="):
+        with pytest.raises(ValueError, match="decode is not affine"):
             adapter(jnp.zeros(N_STATE), model, _batch(problem))
 
     def test_weak_needs_the_pair(self):

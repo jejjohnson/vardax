@@ -37,6 +37,7 @@ class GaussNewtonHessian(eqx.Module):
 
     Attributes:
         prior_cov_op: $B$. Default ``None``: the model's ``prior_cov_op``.
+            Unused for a linear control, whose prior is the basis's $Q$.
         obs_cov_op: $R$ at one time. Default ``None``: the model's
             ``obs_cov_op``.
         n_krylov: Maximum CG iterations per covariance mat-vec.
@@ -92,8 +93,10 @@ class GaussNewtonHessian(eqx.Module):
 
         Raises:
             AttributeError: If the model exposes no ``obs_op``.
-            ValueError: For a point batch, a multi-sample batch, or a
-                ``basis=`` / ``parameterization=`` control.
+            ValueError: For a point batch, a multi-sample batch, a
+                nonlinear ``parameterization=``, or a parameterized
+                ``WeakFourDVar``. A ``LinearParameterization`` (or
+                ``basis=``) control gives $\Phi P_\theta \Phi^\top$.
         """
         solver = lx.CG(atol=self.tol, rtol=self.tol, max_steps=self.n_krylov)
         mean, covariance, structure = gauss_newton_covariance(
