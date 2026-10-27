@@ -16,6 +16,8 @@ Public surface:
 - [`InterpObs`][vardax.InterpObs] — sparse bilinear grid-to-points
   interpolation
 - [`LinearObs`][vardax.LinearObs] — $H(x) = H_\text{mat} \cdot x$
+- [`CallableObs`][vardax.CallableObs] — $H(x) = f(x)$ for any
+  differentiable JAX function, linearised by autodiff
 - [`AveragingKernel`][vardax.AveragingKernel] —
   $H(x) = A(h \cdot x + (1-h) x_a)$
 - [`MultiInstrumentFusion`][vardax.MultiInstrumentFusion] —
@@ -35,6 +37,7 @@ Public surface:
 from __future__ import annotations
 
 from .averaging_kernel import AveragingKernel
+from .callable import CallableObs
 from .interp_obs import InterpObs, interp_obs_from_coords
 from .linear import LinearObs
 from .masked import MaskedIdentity
@@ -47,6 +50,7 @@ from .point import FieldPointObs, GridPointObs, point_obs_cost
 
 __all__ = [
     "AveragingKernel",
+    "CallableObs",
     "FieldPointObs",
     "GridPointObs",
     "InstrumentRegistry",

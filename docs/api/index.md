@@ -10,7 +10,7 @@ reference is organised by area rather than dumped as one flat page:
 |---------|---------------|
 | [Models](models.md) | The seven peer analysis methods — `OptimalInterpolation`, `ThreeDVar`, `StrongFourDVar`, `WeakFourDVar`, `IncrementalFourDVar`, `FourDVarNet1D`, `FourDVarNet2D` |
 | [Amortized Inference](amortized.md) | `AmortizedPosterior` and its observation encoders and posterior heads (regression, conditional flow, score diffusion) |
-| [Observation Operators](obs_operators.md) | `LinearObs`, `MaskedIdentity`, `AveragingKernel`, multi-instrument fusion, and the instrument registry |
+| [Observation Operators](obs_operators.md) | `LinearObs`, `CallableObs`, `MaskedIdentity`, `AveragingKernel`, multi-instrument fusion, and the instrument registry |
 | [Posterior Covariance](posterior.md) | The `Posterior` container and the Laplace / Gauss-Newton / ensemble adapters that build it |
 | [Costs, Priors & Solvers](costs_priors.md) | Variational cost functions, learned and analytic priors, and the 4DVarNet inner-loop solver functions |
 | [Training & Adjoints](training.md) | Loss functions and train/eval steps, adjoint strategies, and ConvLSTM gradient modulators |
