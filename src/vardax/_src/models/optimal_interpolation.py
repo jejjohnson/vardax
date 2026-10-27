@@ -11,8 +11,11 @@ $$
 
 Implementation notes:
 
-- The inversion is solved by ``lineax.CG`` against an
-  ``AbstractLinearOperator``; we never materialise $HBH^\top + R$.
+- By default the inversion is solved by ``lineax.CG`` against an
+  ``AbstractLinearOperator``, so $HBH^\top + R$ is never materialised.
+  Pass ``solver=`` (e.g. ``lineax.Cholesky()``) for an exact direct
+  factorisation when that matrix fits in memory: CG at a fixed tolerance
+  is inexact and can stall on an ill-conditioned innovation system.
 - ``B_op`` and ``R_op`` are supplied as ``lineax.AbstractLinearOperator``
   (typically ``gaussx`` structured operators for Matérn priors and
   diagonal $R$).
@@ -48,6 +51,10 @@ class OptimalInterpolation(eqx.Module):
         cg_atol: CG absolute tolerance for the inner solve.
         cg_rtol: CG relative tolerance for the inner solve.
         cg_max_steps: CG iteration cap.
+        solver: Optional linear solver for the innovation system, used
+            instead of CG (the ``cg_*`` fields are then ignored), e.g.
+            ``lineax.Cholesky()`` to factorise $HBH^\top + R$ exactly. It
+            is also the default solver of the ``posterior`` adapter.
 
     Examples:
         With $B = R = I$, identity $H$ and everything observed, the
@@ -76,6 +83,7 @@ class OptimalInterpolation(eqx.Module):
     cg_atol: float = eqx.field(static=True, default=1e-6)
     cg_rtol: float = eqx.field(static=True, default=1e-6)
     cg_max_steps: int = eqx.field(static=True, default=200)
+    solver: lx.AbstractLinearSolver | None = eqx.field(static=True, default=None)
 
     def __call__(self, batch: Batch1D) -> Float[Array, "B T N"]:
         """BLUE analysis for each sample in the batch."""
@@ -119,7 +127,7 @@ class OptimalInterpolation(eqx.Module):
         inner_raw = H @ self.prior_cov_op @ H.transpose() + obs_cov_op
         inner_op = lx.TaggedLinearOperator(inner_raw, lx.positive_semidefinite_tag)
 
-        solver = lx.CG(
+        solver = self.solver or lx.CG(
             atol=self.cg_atol,
             rtol=self.cg_rtol,
             max_steps=self.cg_max_steps,
@@ -134,7 +142,8 @@ class OptimalInterpolation(eqx.Module):
 
         Runs the analysis, then ``adapter(analysis, self, batch)``; the
         default adapter is [`LaplaceCovariance`][vardax.LaplaceCovariance]
-        with this model's $B$ and $R$.
+        with this model's $B$ and $R$, and with this model's ``solver``
+        when one is set.
 
         Args:
             batch: A ``Batch1D`` holding one window.
@@ -149,6 +158,10 @@ class OptimalInterpolation(eqx.Module):
         """
         from vardax._src.posterior._precision import model_posterior
 
+        if adapter is None and self.solver is not None:
+            from vardax._src.posterior.laplace import LaplaceCovariance
+
+            adapter = LaplaceCovariance(solver=self.solver)
         return model_posterior(self, batch, adapter)
 
     def as_analysis_step(self) -> _OIAnalysisStep:

@@ -81,6 +81,15 @@ The linear system $(H B H^\top + R) v = (y - H x_b)$ is then solved by
 iteration count (typically tens). The analysis $x^* = x_b + B H^\top v$
 is one more mat-vec.
 
+CG runs at a fixed tolerance with a step cap, so its analysis is
+approximate, and an ill-conditioned $H B H^\top + R$ (small $R$, smooth
+$B$) can exhaust the cap. When the innovation system is small enough to
+factor, pass a direct solver instead:
+`OptimalInterpolation(..., solver=lx.Cholesky())` (or
+`lx.AutoLinearSolver(well_posed=True)`) gives the BLUE to machine
+precision, and `posterior()` then uses the same solver for its Laplace
+covariance.
+
 A full OI on a 2D Matérn prior with 50,000 grid cells and 5,000
 observations takes seconds on a single GPU. No materialised matrices,
 no $O(n^3)$ factorisations.
