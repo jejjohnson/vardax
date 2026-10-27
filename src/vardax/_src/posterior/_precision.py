@@ -161,6 +161,19 @@ def _linear_control(model: Any) -> Any:
     )
 
 
+def _marginalises_masked_obs(model: Any) -> bool:
+    """Whether ``model``'s cost weights masked residuals by (R_oo)⁻¹.
+
+    ``ReducedBasisFourDVar`` solves each time against
+    Mₜ R Mₜ + (I − Mₜ), so a missing observation drops out of the
+    likelihood exactly even when R is correlated; the other rollout
+    models apply R⁻¹ to the zeroed residual.
+    """
+    from vardax._src.models.reduced_basis_fourdvar import ReducedBasisFourDVar
+
+    return isinstance(model, ReducedBasisFourDVar)
+
+
 def _basis_operator(
     basis: Any, analysis: Float[Array, ...]
 ) -> lx.FunctionLinearOperator:
@@ -273,11 +286,30 @@ def gauss_newton_covariance(
 
     mask = window_mask(batch)
 
-    def apply_obs_precision(
-        observed_vector: Float[Array, "T_plus_1 N"],
-    ) -> Float[Array, "T_plus_1 N"]:
-        # R⁻¹ at each time
-        return jax.vmap(obs_precision.mv)(observed_vector)
+    if _marginalises_masked_obs(underlying):
+        # The cost solves each time against R̃ₜ = Mₜ R Mₜ + (I - Mₜ), whose
+        # inverse on the observed block is (R_oo)⁻¹: weight with the same.
+        def apply_obs_precision(
+            observed_vector: Float[Array, "T_plus_1 N"],
+        ) -> Float[Array, "T_plus_1 N"]:
+            def solve(vector_t: Array, mask_t: Array) -> Array:
+                mask_op = lx.DiagonalLinearOperator(mask_t)
+                marginal = lx.TaggedLinearOperator(
+                    mask_op @ obs_cov_op @ mask_op
+                    + lx.DiagonalLinearOperator(1.0 - mask_t),
+                    lx.positive_semidefinite_tag,
+                )
+                return lx.linear_solve(marginal, vector_t, solver=solver).value
+
+            return jax.vmap(solve)(observed_vector, mask)
+
+    else:
+
+        def apply_obs_precision(
+            observed_vector: Float[Array, "T_plus_1 N"],
+        ) -> Float[Array, "T_plus_1 N"]:
+            # R⁻¹ at each time
+            return jax.vmap(obs_precision.mv)(observed_vector)
 
     # --- 3. weak 4DVar: augmented control ---
     if hasattr(underlying, "_rollout_with_error"):
