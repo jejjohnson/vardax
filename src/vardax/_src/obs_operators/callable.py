@@ -40,16 +40,25 @@ class CallableObs(eqx.Module):
     or structured matrix you want to reuse; use this for a model run, a
     simulator or an emulator.
 
-    Pass ``jac="bwd"`` for a model that defines only a reverse-mode rule:
-    any ``jax.custom_vjp`` function, including a ``diffrax`` solve under its
-    default ``RecursiveCheckpointAdjoint``. Forward mode raises on those as
-    soon as an analysis or posterior linearises the operator.
+    Pass ``jac="bwd"`` for a model that defines only a reverse-mode rule
+    (a ``jax.custom_vjp`` function): forward mode raises on it as soon as
+    an analysis or posterior linearises the operator. Matrix-free, lineax
+    then applies $H'v$ by transposing the VJP, which fails when the
+    backward pass contains a loop JAX cannot transpose, as a ``diffrax``
+    solve's does (``RecursiveCheckpointAdjoint`` runs a ``while_loop``).
+    For those, also pass ``materialise=True``: ``linearize`` then forms the
+    Jacobian once, with one VJP per observation (``jax.jacrev``), and both
+    $H'$ and $H'^\top$ are dense products. That suits a small control, the
+    usual case for source and parameter estimation.
 
     Attributes:
         fn: The observation map $f$, from a state of any shape to an
             observation of any shape.
         jac: How ``linearize`` differentiates ``fn``: ``None`` (lineax's
             default, forward mode), ``"fwd"`` or ``"bwd"`` (reverse mode).
+        materialise: Form the Jacobian in ``linearize`` instead of keeping
+            it matrix-free, with ``jax.jacrev`` for ``jac="bwd"`` and
+            ``jax.jacfwd`` otherwise. Default ``False``.
 
     Examples:
         A linear $f(x) = F x$ on a ``(1, N)`` state with $M \ne N$
@@ -78,6 +87,7 @@ class CallableObs(eqx.Module):
 
     fn: Callable[[Float[Array, ...]], Float[Array, ...]]
     jac: Literal["fwd", "bwd"] | None = eqx.field(static=True, default=None)
+    materialise: bool = eqx.field(static=True, default=False)
 
     def __call__(self, x: Float[Array, ...]) -> Float[Array, ...]:
         """Forward map $f(x)$."""
@@ -85,4 +95,8 @@ class CallableObs(eqx.Module):
 
     def linearize(self, x: Float[Array, ...]) -> lx.AbstractLinearOperator:
         r"""Tangent-linear operator $H'(x) = \partial f / \partial x$ at ``x``."""
-        return lx.JacobianLinearOperator(lambda z, _: self.fn(z), x, jac=self.jac)
+        tangent = lx.JacobianLinearOperator(lambda z, _: self.fn(z), x, jac=self.jac)
+        if self.materialise:
+            # dense ∂f/∂x: one VJP per output (jac="bwd") or JVP per input
+            return lx.materialise(tangent)
+        return tangent
