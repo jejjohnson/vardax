@@ -141,3 +141,121 @@ class TestTransforms:
         grads = eqx.filter_grad(loss)(op)
         assert grads.fn.weight.shape == (2, 3)
         assert jnp.any(grads.fn.weight != 0.0)
+
+
+class TestReverseModeOnly:
+    """``jac="bwd"`` linearises a model that defines only a VJP (#115)."""
+
+    @staticmethod
+    def _vjp_only(matrix):
+        @jax.custom_vjp
+        def f(x):
+            return jnp.tanh(x @ matrix.T)
+
+        def fwd(x):
+            y = f(x)
+            return y, (x, y)
+
+        def bwd(res, g):
+            _, y = res
+            return (((1.0 - y**2) * g) @ matrix,)
+
+        f.defvjp(fwd, bwd)
+        return f
+
+    def test_forward_mode_fails_and_bwd_matches_jacrev(self, x64):
+        matrix = jax.random.normal(jax.random.key(0), (4, 3))
+        f = self._vjp_only(matrix)
+        x = jnp.linspace(-0.5, 0.5, 3)
+        v = jnp.asarray([0.3, -1.0, 0.7])
+        with pytest.raises(TypeError, match="custom_vjp"):
+            CallableObs(fn=f).linearize(x).mv(v)
+        lin = CallableObs(fn=f, jac="bwd").linearize(x)
+        assert jnp.allclose(lin.mv(v), jax.jacrev(f)(x) @ v, rtol=1e-12)
+
+    def test_posterior_with_vjp_only_model(self, x64):
+        p = _problem()
+        footprint = p["obs_op"].fn(jnp.eye(6)).T  # recover F (M, N)
+
+        @jax.custom_vjp
+        def g(q):
+            return q @ footprint.T
+
+        g.defvjp(lambda q: (g(q), None), lambda _, ct: (ct @ footprint,))
+        three = ThreeDVar(
+            obs_op=CallableObs(fn=g, jac="bwd"),
+            prior_mean=p["prior_mean"],
+            prior_cov_op=p["prior_cov_op"],
+            obs_cov_op=p["obs_cov_op"],
+        )
+        analysis = three(p["batch"])[0]
+        posterior = LaplaceCovariance(
+            prior_cov_op=p["prior_cov_op"], obs_cov_op=p["obs_cov_op"]
+        )(analysis, three, p["batch"])
+        cov = jax.vmap(lambda e: posterior.cov.mv(e[None])[0])(jnp.eye(6))
+        assert jnp.max(jnp.abs(cov - p["cov"])) / jnp.max(jnp.abs(p["cov"])) < 1e-8
+        assert jnp.allclose(analysis[0], p["mean"], rtol=1e-8)
+
+
+class TestMaterialise:
+    """``materialise=True`` for a backward pass JAX cannot transpose (#115).
+
+    A ``diffrax`` solve's VJP runs a ``while_loop``; lineax's matrix-free
+    ``jac="bwd"`` applies ``H'v`` by transposing that VJP and fails. The
+    stand-in below has the same structure: a ``custom_vjp`` whose backward
+    pass accumulates ``Fᵀ g`` row by row in a ``lax.while_loop``.
+    """
+
+    @staticmethod
+    def _while_loop_vjp(matrix):
+        @jax.custom_vjp
+        def f(x):
+            return x @ matrix.T
+
+        def bwd(_, g):
+            def body(carry):
+                i, acc = carry
+                return i + 1, acc + g[..., i, None] * matrix[i]
+
+            rows = matrix.shape[0]
+            zero = jnp.zeros((*g.shape[:-1], matrix.shape[1]), g.dtype)
+            _, out = jax.lax.while_loop(lambda c: c[0] < rows, body, (0, zero))
+            return (out,)
+
+        f.defvjp(lambda x: (f(x), None), bwd)
+        return f
+
+    def test_matrix_free_bwd_cannot_transpose_a_while_loop(self, x64):
+        f = self._while_loop_vjp(jax.random.normal(jax.random.key(0), (4, 3)))
+        lin = CallableObs(fn=f, jac="bwd").linearize(jnp.ones((1, 3)))
+        with pytest.raises(ValueError, match="while_loop"):
+            lin.mv(jnp.ones((1, 3)))
+
+    def test_materialised_bwd_is_the_jacobian(self, x64):
+        matrix = jax.random.normal(jax.random.key(0), (4, 3))
+        f = self._while_loop_vjp(matrix)
+        lin = CallableObs(fn=f, jac="bwd", materialise=True).linearize(jnp.ones((1, 3)))
+        v = jnp.asarray([[0.3, -1.0, 0.7]])
+        w = jnp.asarray([[1.0, 0.5, -0.2, 2.0]])
+        assert jnp.allclose(lin.mv(v), v @ matrix.T, rtol=1e-12)
+        assert jnp.allclose(lin.transpose().mv(w), w @ matrix, rtol=1e-12)
+
+    def test_posterior_through_a_while_loop_vjp(self, x64):
+        p = _problem()
+        footprint = p["obs_op"].fn(jnp.eye(6)).T  # recover F (M, N)
+        obs = CallableObs(
+            fn=self._while_loop_vjp(footprint), jac="bwd", materialise=True
+        )
+        three = ThreeDVar(
+            obs_op=obs,
+            prior_mean=p["prior_mean"],
+            prior_cov_op=p["prior_cov_op"],
+            obs_cov_op=p["obs_cov_op"],
+        )
+        analysis = three(p["batch"])[0]
+        posterior = LaplaceCovariance(
+            prior_cov_op=p["prior_cov_op"], obs_cov_op=p["obs_cov_op"]
+        )(analysis, three, p["batch"])
+        cov = jax.vmap(lambda e: posterior.cov.mv(e[None])[0])(jnp.eye(6))
+        assert jnp.max(jnp.abs(cov - p["cov"])) / jnp.max(jnp.abs(p["cov"])) < 1e-8
+        assert jnp.allclose(analysis[0], p["mean"], rtol=1e-8)
