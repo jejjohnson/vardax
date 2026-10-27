@@ -195,6 +195,11 @@ The observation shape need not match the state shape. Prefer
 `LinearObs` when you already hold an explicit or structured matrix you
 want to reuse.
 
+For a model that defines only a reverse-mode rule (a `jax.custom_vjp`,
+or a `diffrax` solve under its default `RecursiveCheckpointAdjoint`),
+pass `CallableObs(fn=..., jac="bwd")`: forward-mode linearisation raises
+on those as soon as an analysis or a posterior needs $H'$.
+
 ## Tangent-linear and adjoint contract
 
 For incremental 4DVar (chapter 8), every observation operator must
