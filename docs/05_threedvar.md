@@ -189,7 +189,10 @@ likely causes:
   covariances are $O(1)$. The 4D-Var models take the same `cov_solver=`.
 
 vardax does not retry or fall back automatically — if your minimiser
-fails, that's information. Diagnose, don't hide.
+fails, that's information. Diagnose, don't hide. `three.analyse(batch)`
+returns the analysis together with a `MinimiseResult` per sample: the
+cost and gradient norm at the minimum and the number of steps taken, so a
+solve that hit its step cap is visible (`num_steps == max_steps`).
 
 ## See also
 

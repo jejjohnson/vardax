@@ -31,7 +31,7 @@ import lineax as lx
 import optimistix as optx
 
 from vardax._src._types import Batch1D, PointObsBatch
-from vardax._src.minimisers import minimise
+from vardax._src.minimisers import MinimiseResult, minimise, minimise_with_result
 from vardax._src.models._analysis_step import analyse_forecast
 from vardax._src.obs_operators.point import (
     FieldPointObs,
@@ -158,6 +158,42 @@ class ThreeDVar(eqx.Module):
 
         return jax.vmap(_one)(batch.input, batch.mask)
 
+    def analyse(self, batch: Batch1D) -> tuple[Float[Array, "B T N"], MinimiseResult]:
+        r"""The analysis, as ``__call__``, with the minimiser's diagnostics.
+
+        Args:
+            batch: A gridded [`Batch1D`][vardax.Batch1D].
+
+        Returns:
+            ``(analysis, result)``: the analysis ``(B, T, N)`` and a
+            [`MinimiseResult`][vardax.MinimiseResult] whose leaves carry a
+            leading sample axis: ``cost`` $J$ and ``grad_norm``
+            $\lVert \nabla J \rVert_2$ at the minimum, ``num_steps`` (``-1``
+            for a custom minimiser) and ``value``, the minimising control
+            (the state, or $\theta$ under a ``parameterization``).
+
+        Raises:
+            TypeError: For a ``PointObsBatch``.
+        """
+        if not isinstance(batch, Batch1D):
+            raise TypeError(
+                f"ThreeDVar.analyse takes a Batch1D; got {type(batch).__name__}."
+            )
+
+        def _one(
+            input_i: Float[Array, "T N"], mask_i: Float[Array, "T N"]
+        ) -> tuple[Float[Array, "T N"], MinimiseResult]:
+            return self._analyse(
+                self.prior_mean,
+                input_i,
+                mask_i,
+                self.obs_op,
+                self.obs_cov_op,
+                with_result=True,
+            )
+
+        return jax.vmap(_one)(batch.input, batch.mask)
+
     def _analyse(
         self,
         x_b: Float[Array, "T N"],
@@ -165,7 +201,9 @@ class ThreeDVar(eqx.Module):
         mask_i: Float[Array, "T N"],
         obs_op: Any,
         obs_cov_op: lx.AbstractLinearOperator,
-    ) -> Float[Array, "T N"]:
+        *,
+        with_result: bool = False,
+    ) -> Any:
         """Minimise the 3D-Var cost of one sample around the background ``x_b``."""
 
         def obs_cost(x: Float[Array, "T N"]) -> Float[Array, ""]:
@@ -183,7 +221,7 @@ class ThreeDVar(eqx.Module):
             ).value
             return 0.5 * jnp.sum(residual * R_inv_r)
 
-        return self._solve(x_b, obs_cost)
+        return self._solve(x_b, obs_cost, with_result=with_result)
 
     def _analyse_points(
         self, x_b: Float[Array, "T N"], batch: PointObsBatch
@@ -214,8 +252,14 @@ class ThreeDVar(eqx.Module):
         obs_cost: Callable[[Array], Array] | None,
         *,
         control_obs_cost: Callable[[Any], Array] | None = None,
-    ) -> Float[Array, "T N"]:
-        """Minimise background (or penalty) plus ``obs_cost`` from ``x_b``."""
+        with_result: bool = False,
+    ) -> Any:
+        """Minimise background (or penalty) plus ``obs_cost`` from ``x_b``.
+
+        Returns the analysis, or ``(analysis, MinimiseResult)`` when
+        ``with_result``.
+        """
+        run = minimise_with_result if with_result else minimise
         param = self.parameterization
         if param is not None:
             # J(θ) = pen(θ) + J_o(ψ(θ)): the penalty replaces the B term.
@@ -228,14 +272,16 @@ class ThreeDVar(eqx.Module):
                 assert obs_cost is not None
                 return param.penalty(theta) + obs_cost(decode(theta))
 
-            theta_star = minimise(
+            out = run(
                 self.minimiser,
                 param_cost,
                 param.init_control(),
                 adjoint=self.minimiser_adjoint,
                 max_steps=self.max_steps,
             )
-            return decode(theta_star)
+            if with_result:
+                return decode(out.value), out
+            return decode(out)
 
         def cost(x: Float[Array, "T N"], _args: Any) -> Float[Array, ""]:
             # Background term — apply B^{-1} via lineax solve.
@@ -249,14 +295,16 @@ class ThreeDVar(eqx.Module):
             assert obs_cost is not None
             return j_bg + obs_cost(x)
 
-        x_star = minimise(
+        out = run(
             self.minimiser,
             cost,
             x_b,
             adjoint=self.minimiser_adjoint,
             max_steps=self.max_steps,
         )
-        return x_star
+        if with_result:
+            return out.value, out
+        return out
 
     def posterior(self, batch: Batch1D, adapter: Any = None) -> Any:
         """Analyse one window and return its [`Posterior`][vardax.Posterior].
