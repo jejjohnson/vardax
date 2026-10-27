@@ -205,3 +205,56 @@ def test_weak_fourdvar_parameterization_still_raises(x64):
     analysis = (jnp.zeros(N_STATE), jnp.zeros((N_STEPS, N_STATE)))
     with pytest.raises(ValueError, match="basis= or parameterization="):
         vdx.LaplaceCovariance()(analysis, model, batch)
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Correlated R with a missing observation: the posterior uses the same
+# per-time precision as the cost
+# ──────────────────────────────────────────────────────────────────────
+
+
+class _Stay:
+    dt = 1.0
+
+    def step(self, x, dt):
+        return x
+
+
+def _two_site(cls, **extra):
+    """One time, identity H, R = [[1, ½], [½, 1]], site 1 unobserved."""
+    R = jnp.asarray([[1.0, 0.5], [0.5, 1.0]])
+    mask = jnp.asarray([[1.0, 0.0]])
+    model = cls(
+        forward=_Stay(),
+        obs_op=vdx.MaskedIdentity(),
+        prior_mean=jnp.zeros(2),
+        prior_cov_op=lx.MatrixLinearOperator(jnp.eye(2), lx.positive_semidefinite_tag),
+        obs_cov_op=lx.MatrixLinearOperator(R, lx.positive_semidefinite_tag),
+        **extra,
+    )
+    batch = vdx.Batch1D(input=mask[None], mask=mask[None])
+    return model, batch, R
+
+
+def test_reduced_basis_marginalises_missing_observations(x64):
+    """Φ = [1, 0]ᵀ, Q = 1: the cost sees only R_oo = 1, so P_θ = ½ (not 3/7)."""
+    basis = vdx.linear_basis(jnp.asarray([[1.0], [0.0]]), variance=1.0)
+    model, batch, _ = _two_site(vdx.ReducedBasisFourDVar, basis=basis)
+    cov = _dense(vdx.LaplaceCovariance()(jnp.zeros(2), model, batch).cov, 2)
+    assert jnp.allclose(cov, jnp.asarray([[0.5, 0.0], [0.0, 0.0]]), atol=1e-12)
+
+
+def test_reduced_basis_state_control_marginalises_too(x64):
+    """B = I: P = (I + Hᵀ R_oo⁻¹ H)⁻¹ = diag(½, 1)."""
+    model, batch, _ = _two_site(vdx.ReducedBasisFourDVar)
+    cov = _dense(vdx.LaplaceCovariance()(jnp.zeros(2), model, batch).cov, 2)
+    assert jnp.allclose(cov, jnp.diag(jnp.asarray([0.5, 1.0])), atol=1e-12)
+
+
+def test_strong_fourdvar_keeps_full_r_inverse(x64):
+    """StrongFourDVar's cost applies R⁻¹ to the zeroed residual; unchanged."""
+    model, batch, R = _two_site(vdx.StrongFourDVar)
+    cov = _dense(vdx.LaplaceCovariance()(jnp.zeros(2), model, batch).cov, 2)
+    H = jnp.diag(jnp.asarray([1.0, 0.0]))
+    expected = jnp.linalg.inv(jnp.eye(2) + H.T @ jnp.linalg.inv(R) @ H)
+    assert jnp.allclose(cov, expected, atol=1e-12)
