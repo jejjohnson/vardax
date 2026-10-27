@@ -258,3 +258,52 @@ def test_strong_fourdvar_keeps_full_r_inverse(x64):
     H = jnp.diag(jnp.asarray([1.0, 0.0]))
     expected = jnp.linalg.inv(jnp.eye(2) + H.T @ jnp.linalg.inv(R) @ H)
     assert jnp.allclose(cov, expected, atol=1e-12)
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Single time with a missing observation: the posterior uses M H'
+# ──────────────────────────────────────────────────────────────────────
+
+
+def _single_time_masked(cls, **extra):
+    """Identity H on two sites, B = R = I, site 1 unobserved."""
+    eye = lx.IdentityLinearOperator(jax.ShapeDtypeStruct((1, 2), jnp.float64))
+    model = cls(
+        obs_op=vdx.MaskedIdentity(),
+        prior_mean=jnp.zeros((1, 2)),
+        prior_cov_op=eye,
+        obs_cov_op=eye,
+        **extra,
+    )
+    mask = jnp.asarray([[[1.0, 0.0]]])
+    batch = vdx.Batch1D(input=mask, mask=mask)
+    return model, batch
+
+
+EXPECTED_MASKED = jnp.diag(jnp.asarray([0.5, 1.0]))
+
+
+@pytest.mark.parametrize("make_adapter", ADAPTERS)
+def test_single_time_linear_control_masks_missing_obs(x64, make_adapter):
+    """Φ = I, Q = R = I, mask [1, 0]: diag(½, 1), not diag(½, ½)."""
+    param = vdx.LinearParameterization(
+        vdx.linear_basis(jnp.eye(2), variance=1.0), x_b=jnp.zeros((1, 2))
+    )
+    model, batch = _single_time_masked(vdx.ThreeDVar, parameterization=param)
+    eye = lx.IdentityLinearOperator(jax.ShapeDtypeStruct((1, 2), jnp.float64))
+    posterior = make_adapter(eye)(jnp.zeros((1, 2)), model, batch)
+    assert jnp.allclose(_dense(posterior.cov, 2, (1, 2)), EXPECTED_MASKED, atol=1e-10)
+
+
+@pytest.mark.parametrize("cls", [vdx.ThreeDVar, vdx.OptimalInterpolation])
+def test_single_time_state_control_masks_missing_obs(x64, cls):
+    model, batch = _single_time_masked(cls)
+    posterior = vdx.LaplaceCovariance()(jnp.zeros((1, 2)), model, batch)
+    assert jnp.allclose(_dense(posterior.cov, 2, (1, 2)), EXPECTED_MASKED, atol=1e-10)
+
+
+def test_multi_window_batch_with_missing_obs_raises(x64):
+    model, batch = _single_time_masked(vdx.ThreeDVar)
+    two = jax.tree.map(lambda a: jnp.concatenate([a, a]), batch)
+    with pytest.raises(ValueError, match="windows with missing observations"):
+        vdx.LaplaceCovariance()(jnp.zeros((1, 2)), model, two)

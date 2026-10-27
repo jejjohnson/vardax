@@ -27,6 +27,7 @@ from typing import Any
 
 import gaussx
 import jax
+import jax.core
 import jax.numpy as jnp
 from jaxtyping import Array, Float
 import lineax as lx
@@ -161,6 +162,47 @@ def _linear_control(model: Any) -> Any:
     )
 
 
+def _masked_tangent(
+    tangent: lx.AbstractLinearOperator, batch: Any
+) -> lx.AbstractLinearOperator:
+    """M H' for a single-time ``Batch1D``; H' unchanged without one.
+
+    A batch of several fully observed windows is accepted (its mask is all
+    ones); several windows with missing entries raise, since the mask of
+    the analysed sample is ambiguous. Under tracing that check cannot run
+    and the mask is not applied.
+
+    ``OptimalInterpolation`` and ``ThreeDVar`` observe M ⊙ H(x), but
+    ``obs_op.linearize`` knows no mask (``MaskedIdentity.linearize`` is the
+    identity). The mask is composed as its own operator, so ``tangent``
+    keeps its own transpose (a materialised Jacobian stays a dense
+    product).
+    """
+    if not isinstance(batch, Batch1D):
+        return tangent
+    if batch.mask.ndim == 3 and batch.mask.shape[0] != 1:
+        # several windows: only a fully observed batch says nothing about
+        # this sample's mask (the single-time adapters always accepted it)
+        if isinstance(batch.mask, jax.core.Tracer) or bool(jnp.all(batch.mask == 1)):
+            return tangent
+        raise ValueError(
+            f"The batch holds {batch.mask.shape[0]} windows with missing "
+            "observations but the analysis is one state; pass that sample's "
+            "batch, e.g. jax.tree.map(lambda a: a[i:i + 1], batch)."
+        )
+    mask = window_mask(batch)
+    out = tangent.out_structure()
+    if mask.shape != out.shape:
+        raise ValueError(
+            f"The batch mask has shape {mask.shape} but the observation "
+            f"operator returns {out.shape}."
+        )
+    mask_op = lx.FunctionLinearOperator(
+        lambda observed: mask * observed, out, lx.symmetric_tag
+    )
+    return mask_op @ tangent
+
+
 def _marginalises_masked_obs(model: Any) -> bool:
     """Whether ``model``'s cost weights masked residuals by (R_oo)⁻¹.
 
@@ -214,7 +256,7 @@ def gauss_newton_covariance(
 
     Algorithm:
         1. Without a rollout (single time), linearise ``obs_op`` at the
-           analysis: P*⁻¹ = B⁻¹ + H'ᵀ R⁻¹ H'.
+           analysis and apply the batch mask: P*⁻¹ = B⁻¹ + (M H')ᵀ R⁻¹ (M H').
         2. Strong 4DVar: build G(x₀) from the model's own rollout and form
            v ↦ B⁻¹ v + G'ᵀ R⁻¹ G' v, with R⁻¹ applied at each time.
         3. Weak 4DVar: the same over z = (x₀, η), with Q⁻¹ on each ηₜ; the
@@ -270,8 +312,9 @@ def gauss_newton_covariance(
 
     # --- 1. single time ---
     if not rollout:
-        # H' at the analysis
-        tangent = underlying.obs_op.linearize(analysis)
+        # H' at the analysis; the cost observes M ⊙ H(x), so the tangent is
+        # M H' (missing entries carry no information)
+        tangent = _masked_tangent(underlying.obs_op.linearize(analysis), batch)
         if basis is None:
             # P*⁻¹ = H'ᵀ R⁻¹ H' + B⁻¹
             precision = tangent.transpose() @ obs_precision @ tangent + prior_precision
