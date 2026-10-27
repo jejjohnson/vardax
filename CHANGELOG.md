@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.12](https://github.com/jejjohnson/vardax/compare/v0.1.11...v0.1.12) (2026-10-27)
+
+
+### Features
+
+* **obs_operators:** add CallableObs, any JAX function as an observation operator ([#113](https://github.com/jejjohnson/vardax/issues/113)) ([68b411b](https://github.com/jejjohnson/vardax/commit/68b411bf9b04dc88038224f9c643ef751d03de6c)), closes [#112](https://github.com/jejjohnson/vardax/issues/112)
+
 ## [0.1.11](https://github.com/jejjohnson/vardax/compare/v0.1.10...v0.1.11) (2026-10-26)
 
 
