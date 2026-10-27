@@ -86,6 +86,7 @@ from vardax._src.models import (
 )
 from vardax._src.obs_operators import (
     AveragingKernel,
+    CallableObs,
     FieldPointObs,
     GridPointObs,
     InstrumentRegistry,
@@ -213,6 +214,7 @@ __all__ = [
     "wavelet_basis",
     # Observation operators (Decision D9)
     "AveragingKernel",
+    "CallableObs",
     "InstrumentRegistry",
     "InstrumentSpec",
     "InterpObs",

@@ -12,7 +12,9 @@ Reference for the modelling background.
 
 ## Core operators
 
-`LinearObs` wraps an explicit observation matrix; `MaskedIdentity` handles
+`LinearObs` wraps an explicit observation matrix; `CallableObs` turns any
+differentiable JAX function (a model run, a simulator, an emulator) into an
+operator, with its tangent-linear map from autodiff; `MaskedIdentity` handles
 the ubiquitous "observe a subset of grid points" case (satellite tracks,
 sparse sensor networks); `AveragingKernel` implements the smoothing kernels
 of retrieval products such as atmospheric-composition column averages.
@@ -21,7 +23,7 @@ of retrieval products such as atmospheric-composition column averages.
     options:
       show_root_heading: false
       show_root_toc_entry: false
-      members: [LinearObs, MaskedIdentity, AveragingKernel, InterpObs, interp_obs_from_coords]
+      members: [LinearObs, CallableObs, MaskedIdentity, AveragingKernel, InterpObs, interp_obs_from_coords]
 
 ## Scattered point observations
 

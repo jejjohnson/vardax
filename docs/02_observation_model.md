@@ -47,7 +47,7 @@ overrides are common). The transpose / adjoint comes for free from
 This contract is the same regardless of whether the operator is a
 masked identity, an averaging kernel, or a multi-instrument fusion.
 
-## Four operator families
+## Five operator families
 
 ### Masked identity
 
@@ -163,6 +163,37 @@ predicted observations); the cost function consumes the dict. For
 strict `pipekit_cycle.ObservationOperator` contexts, the
 `.to_observation_operator()` adapter flattens to a single concatenated
 output with a block-diagonal linear operator.
+
+### Any differentiable model — parameter estimation
+
+When the control is not the state but a source, a forcing or a parameter
+vector $q$, the observation operator is a downstream model run
+$\mathcal{G}(q)$: a transport model followed by its receptors, a
+radiative-transfer forward, a neural emulator. The cost is then
+
+$$
+J(q) = \tfrac{1}{2} (q - q_b)^\top B^{-1} (q - q_b)
+     + \tfrac{1}{2} (y - \mathcal{G}(q))^\top R^{-1} (y - \mathcal{G}(q)),
+$$
+
+which is exactly 3DVar (chapter 5) with $\mathcal{G}$ as $H$, or OI
+(chapter 4) when $\mathcal{G}$ is linear. `CallableObs` wraps any
+differentiable JAX function as that operator; `linearize(x)` is a
+matrix-free `lineax.JacobianLinearOperator`, so the tangent-linear map is
+a JVP and its adjoint a VJP.
+
+```python
+from vardax import CallableObs, ThreeDVar
+
+obs_op = CallableObs(fn=lambda q: run_model(q))   # (1, N) → (1, M)
+analysis = ThreeDVar(
+    obs_op=obs_op, prior_mean=q_b, prior_cov_op=B, obs_cov_op=R,
+)(batch)
+```
+
+The observation shape need not match the state shape. Prefer
+`LinearObs` when you already hold an explicit or structured matrix you
+want to reuse.
 
 ## Tangent-linear and adjoint contract
 
