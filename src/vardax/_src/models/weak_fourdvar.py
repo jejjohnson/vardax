@@ -61,6 +61,13 @@ class WeakFourDVar(eqx.Module):
         minimiser: As in [`StrongFourDVar`][vardax.StrongFourDVar].
         minimiser_adjoint: As in [`StrongFourDVar`][vardax.StrongFourDVar].
         max_steps: As in [`StrongFourDVar`][vardax.StrongFourDVar].
+        cov_solver: ``lineax`` solver for the covariance solves in the
+            cost ($B^{-1}$, $R^{-1}$, $Q^{-1}$). Default
+            ``lx.CG(atol=1e-6, rtol=1e-6)``, which suits large
+            matrix-free operators but is inexact on an ill-conditioned
+            covariance (for example a tiny $R$); pass
+            ``lx.AutoLinearSolver(well_posed=True)`` or ``lx.Cholesky()``
+            for an exact solve when the operator can be materialised.
         parameterization: Optional
             [`StateParameterization`][vardax.StateParameterization] of the
             initial state. When given, the control is $(\theta, \eta)$,
@@ -108,6 +115,7 @@ class WeakFourDVar(eqx.Module):
     model_err_cov_op: lx.AbstractLinearOperator
     minimiser: optx.AbstractMinimiser | Minimiser = eqx.field(static=True)
     minimiser_adjoint: optx.AbstractAdjoint = eqx.field(static=True)
+    cov_solver: lx.AbstractLinearSolver = eqx.field(static=True)
     max_steps: int = eqx.field(static=True, default=200)
     parameterization: StateParameterization | None = None
     forward_adjoint: Any = eqx.field(static=True, default=None)
@@ -127,6 +135,7 @@ class WeakFourDVar(eqx.Module):
         parameterization: StateParameterization | None = None,
         forward_adjoint: Any = None,
         checkpoint: bool | int = False,
+        cov_solver: lx.AbstractLinearSolver | None = None,
     ) -> None:
         # fail at construction, not on the first traced call
         checkpoint_every(checkpoint)
@@ -140,6 +149,7 @@ class WeakFourDVar(eqx.Module):
         self.minimiser = minimiser or optx.BFGS(rtol=1e-6, atol=1e-6)
         self.minimiser_adjoint = minimiser_adjoint or optx.ImplicitAdjoint()
         self.max_steps = max_steps
+        self.cov_solver = cov_solver or lx.CG(atol=1e-6, rtol=1e-6)
         self.parameterization = parameterization
         self.forward_adjoint = forward_adjoint
         self.checkpoint = checkpoint
@@ -210,7 +220,7 @@ class WeakFourDVar(eqx.Module):
                     R_inv_r = lx.linear_solve(
                         self.obs_cov_op,
                         residual,
-                        solver=lx.CG(atol=1e-6, rtol=1e-6),
+                        solver=self.cov_solver,
                     ).value
                     return 0.5 * jnp.sum(residual * R_inv_r)
 
@@ -239,7 +249,7 @@ class WeakFourDVar(eqx.Module):
                 Q_inv_eta = lx.linear_solve(
                     self.model_err_cov_op,
                     eta_t,
-                    solver=lx.CG(atol=1e-6, rtol=1e-6),
+                    solver=self.cov_solver,
                 ).value
                 return 0.5 * jnp.sum(eta_t * Q_inv_eta)
 
@@ -286,7 +296,7 @@ class WeakFourDVar(eqx.Module):
             B_inv_dx = lx.linear_solve(
                 self.prior_cov_op,
                 dx,
-                solver=lx.CG(atol=1e-6, rtol=1e-6),
+                solver=self.cov_solver,
             ).value
             j_bg = 0.5 * jnp.sum(dx * B_inv_dx)
             return j_bg + model_and_obs_cost(x_0, etas)
