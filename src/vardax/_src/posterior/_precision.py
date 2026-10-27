@@ -13,6 +13,11 @@ depend on the control:
 - **Weak 4DVar** (``WeakFourDVar``): the control is z = (x₀, η₁ … η_T);
   its precision is blockdiag(B⁻¹, Q⁻¹ …) + G_z'ᵀ R⁻¹ G_z', and the
   covariance of x₀ is the x₀ block of its inverse.
+- **Linear control** (``parameterization=LinearParameterization(basis,
+  x_b)``, or ``ReducedBasisFourDVar(basis=...)``): x = x* + Φθ with
+  pen(θ) = ½ θᵀ Q⁻¹ θ, so the precision lives in coefficient space,
+  P_θ = (Q⁻¹ + Φᵀ G'ᵀ R⁻¹ G' Φ)⁻¹, and the state covariance is
+  P_x = Φ P_θ Φᵀ. Single time and strong 4DVar only.
 """
 
 from __future__ import annotations
@@ -22,6 +27,7 @@ from typing import Any
 
 import gaussx
 import jax
+import jax.core
 import jax.numpy as jnp
 from jaxtyping import Array, Float
 import lineax as lx
@@ -125,6 +131,119 @@ def _check_state_space_control(model: Any) -> None:
         )
 
 
+def _linear_control(model: Any) -> Any:
+    """The `ReducedBasis` of a linear control, ``None`` for a state control.
+
+    Args:
+        model: The underlying analysis model.
+
+    Returns:
+        ``parameterization.basis`` for a
+        [`LinearParameterization`][vardax.LinearParameterization], the
+        model's ``basis`` for ``ReducedBasisFourDVar(basis=...)``, or
+        ``None`` when the control is the state itself.
+
+    Raises:
+        ValueError: For any other parameterization: its decode is not
+            affine, so Φ P_θ Φᵀ is not its posterior covariance.
+    """
+    from vardax._src.parameterization import LinearParameterization
+
+    parameterization = getattr(model, "parameterization", None)
+    if parameterization is None:
+        return getattr(model, "basis", None)
+    if isinstance(parameterization, LinearParameterization):
+        return parameterization.basis
+    raise ValueError(
+        "The posterior adapters support a state control or a "
+        f"LinearParameterization; this {type(model).__name__} has a "
+        f"{type(parameterization).__name__}, whose decode is not affine. Use "
+        "EnsembleCovariance, or the posterior of the control coefficients."
+    )
+
+
+def _masked_tangent(
+    tangent: lx.AbstractLinearOperator, batch: Any
+) -> lx.AbstractLinearOperator:
+    """M H' for a single-time ``Batch1D``; H' unchanged without one.
+
+    A batch of several fully observed windows is accepted (its mask is all
+    ones); several windows with missing entries raise, since the mask of
+    the analysed sample is ambiguous. Under tracing that check cannot run
+    and the mask is not applied.
+
+    ``OptimalInterpolation`` and ``ThreeDVar`` observe M ⊙ H(x), but
+    ``obs_op.linearize`` knows no mask (``MaskedIdentity.linearize`` is the
+    identity). The mask is composed as its own operator, so ``tangent``
+    keeps its own transpose (a materialised Jacobian stays a dense
+    product).
+    """
+    if not isinstance(batch, Batch1D):
+        return tangent
+    if batch.mask.ndim == 3 and batch.mask.shape[0] != 1:
+        # several windows: only a fully observed batch says nothing about
+        # this sample's mask (the single-time adapters always accepted it)
+        if isinstance(batch.mask, jax.core.Tracer) or bool(jnp.all(batch.mask == 1)):
+            return tangent
+        raise ValueError(
+            f"The batch holds {batch.mask.shape[0]} windows with missing "
+            "observations but the analysis is one state; pass that sample's "
+            "batch, e.g. jax.tree.map(lambda a: a[i:i + 1], batch)."
+        )
+    mask = window_mask(batch)
+    out = tangent.out_structure()
+    if mask.shape != out.shape:
+        raise ValueError(
+            f"The batch mask has shape {mask.shape} but the observation "
+            f"operator returns {out.shape}."
+        )
+    mask_op = lx.FunctionLinearOperator(
+        lambda observed: mask * observed, out, lx.symmetric_tag
+    )
+    return mask_op @ tangent
+
+
+def _marginalises_masked_obs(model: Any) -> bool:
+    """Whether ``model``'s cost weights masked residuals by (R_oo)⁻¹.
+
+    ``ReducedBasisFourDVar`` solves each time against
+    Mₜ R Mₜ + (I − Mₜ), so a missing observation drops out of the
+    likelihood exactly even when R is correlated; the other rollout
+    models apply R⁻¹ to the zeroed residual.
+    """
+    from vardax._src.models.reduced_basis_fourdvar import ReducedBasisFourDVar
+
+    return isinstance(model, ReducedBasisFourDVar)
+
+
+def _basis_operator(
+    basis: Any, analysis: Float[Array, ...]
+) -> lx.FunctionLinearOperator:
+    """Φ: θ ↦ the state increment Φ(0) θ, shaped like ``analysis``."""
+    coefficients = jax.ShapeDtypeStruct((basis.nbasis,), analysis.dtype)
+    return lx.FunctionLinearOperator(
+        lambda theta: (
+            basis.operg(0.0, theta).reshape(analysis.shape).astype(analysis.dtype)
+        ),
+        coefficients,
+    )
+
+
+def _state_covariance(
+    basis_op: lx.AbstractLinearOperator, coefficient_cov: lx.AbstractLinearOperator
+) -> lx.AbstractLinearOperator:
+    """P_x = Φ P_θ Φᵀ, lazily."""
+    adjoint = basis_op.transpose()
+
+    def covariance_mv(direction: Array) -> Array:
+        # Φ P_θ Φᵀ v
+        return basis_op.mv(coefficient_cov.mv(adjoint.mv(direction)))
+
+    return lx.FunctionLinearOperator(
+        covariance_mv, basis_op.out_structure(), lx.positive_semidefinite_tag
+    )
+
+
 def gauss_newton_covariance(
     analysis: Any,
     model: Any,
@@ -137,12 +256,16 @@ def gauss_newton_covariance(
 
     Algorithm:
         1. Without a rollout (single time), linearise ``obs_op`` at the
-           analysis: P*⁻¹ = B⁻¹ + H'ᵀ R⁻¹ H'.
+           analysis and apply the batch mask: P*⁻¹ = B⁻¹ + (M H')ᵀ R⁻¹ (M H').
         2. Strong 4DVar: build G(x₀) from the model's own rollout and form
            v ↦ B⁻¹ v + G'ᵀ R⁻¹ G' v, with R⁻¹ applied at each time.
         3. Weak 4DVar: the same over z = (x₀, η), with Q⁻¹ on each ηₜ; the
            covariance of x₀ solves P_z u = (v, 0) and keeps u's x₀ part.
         4. Invert lazily with ``solver``.
+
+        A linear control x = x* + Φθ (``LinearParameterization`` or a
+        ``basis=``) replaces B⁻¹ by Q⁻¹ and G' by G'Φ in steps 1–2, and
+        returns P_x = Φ P_θ Φᵀ.
 
     Args:
         analysis: The analysis of one window: x₀*, or (x₀*, η*) for weak
@@ -161,9 +284,9 @@ def gauss_newton_covariance(
 
     Raises:
         AttributeError: If the model exposes no ``obs_op``.
-        ValueError: For point batches, multi-sample batches, a basis /
-            parameterized control, or a covariance neither given nor on
-            the model.
+        ValueError: For point batches, multi-sample batches, a
+            nonlinear parameterization, a parameterized weak 4DVar, or a
+            covariance neither given nor on the model.
     """
     underlying = getattr(model, "model", model)
     if getattr(underlying, "obs_op", None) is None:
@@ -171,28 +294,65 @@ def gauss_newton_covariance(
             "The posterior adapters require the model to expose `obs_op`; "
             "got a model without one."
         )
-    prior_cov_op = _model_covariance(prior_cov_op, underlying, "prior_cov_op")
+    rollout = has_rollout(underlying)
+    if rollout and hasattr(underlying, "_rollout_with_error"):
+        _check_state_space_control(underlying)
+    basis = _linear_control(underlying)
+    if basis is None:
+        prior_cov_op = _model_covariance(prior_cov_op, underlying, "prior_cov_op")
+        prior_precision = inverse_operator(prior_cov_op, solver)
     obs_cov_op = _model_covariance(obs_cov_op, underlying, "obs_cov_op")
-    prior_precision = inverse_operator(prior_cov_op, solver)
     obs_precision = inverse_operator(obs_cov_op, solver)
+    if basis is not None:
+        # x = x* + Φθ: the precision lives in θ, with prior Q⁻¹
+        basis_op = _basis_operator(basis, analysis)
+        coefficient_prior = lx.FunctionLinearOperator(
+            basis.prior_inv, basis_op.in_structure(), lx.positive_semidefinite_tag
+        )
 
     # --- 1. single time ---
-    if not has_rollout(underlying):
-        # H' at the analysis
-        tangent = underlying.obs_op.linearize(analysis)
-        # P*⁻¹ = H'ᵀ R⁻¹ H' + B⁻¹
-        precision = tangent.transpose() @ obs_precision @ tangent + prior_precision
+    if not rollout:
+        # H' at the analysis; the cost observes M ⊙ H(x), so the tangent is
+        # M H' (missing entries carry no information)
+        tangent = _masked_tangent(underlying.obs_op.linearize(analysis), batch)
+        if basis is None:
+            # P*⁻¹ = H'ᵀ R⁻¹ H' + B⁻¹
+            precision = tangent.transpose() @ obs_precision @ tangent + prior_precision
+            tagged = lx.TaggedLinearOperator(precision, lx.positive_semidefinite_tag)
+            return analysis, gaussx.inv(tagged, solver=solver), "single_time"
+        # P_θ⁻¹ = Φᵀ H'ᵀ R⁻¹ H' Φ + Q⁻¹
+        reduced = tangent @ basis_op
+        precision = reduced.transpose() @ obs_precision @ reduced + coefficient_prior
         tagged = lx.TaggedLinearOperator(precision, lx.positive_semidefinite_tag)
-        return analysis, gaussx.inv(tagged, solver=solver), "single_time"
+        coefficient_cov = gaussx.inv(tagged, solver=solver)
+        return analysis, _state_covariance(basis_op, coefficient_cov), "single_time"
 
-    _check_state_space_control(underlying)
     mask = window_mask(batch)
 
-    def apply_obs_precision(
-        observed_vector: Float[Array, "T_plus_1 N"],
-    ) -> Float[Array, "T_plus_1 N"]:
-        # R⁻¹ at each time
-        return jax.vmap(obs_precision.mv)(observed_vector)
+    if _marginalises_masked_obs(underlying):
+        # The cost solves each time against R̃ₜ = Mₜ R Mₜ + (I - Mₜ), whose
+        # inverse on the observed block is (R_oo)⁻¹: weight with the same.
+        def apply_obs_precision(
+            observed_vector: Float[Array, "T_plus_1 N"],
+        ) -> Float[Array, "T_plus_1 N"]:
+            def solve(vector_t: Array, mask_t: Array) -> Array:
+                mask_op = lx.DiagonalLinearOperator(mask_t)
+                marginal = lx.TaggedLinearOperator(
+                    mask_op @ obs_cov_op @ mask_op
+                    + lx.DiagonalLinearOperator(1.0 - mask_t),
+                    lx.positive_semidefinite_tag,
+                )
+                return lx.linear_solve(marginal, vector_t, solver=solver).value
+
+            return jax.vmap(solve)(observed_vector, mask)
+
+    else:
+
+        def apply_obs_precision(
+            observed_vector: Float[Array, "T_plus_1 N"],
+        ) -> Float[Array, "T_plus_1 N"]:
+            # R⁻¹ at each time
+            return jax.vmap(obs_precision.mv)(observed_vector)
 
     # --- 3. weak 4DVar: augmented control ---
     if hasattr(underlying, "_rollout_with_error"):
@@ -207,6 +367,21 @@ def gauss_newton_covariance(
 
     # --- 2. strong 4DVar ---
     observed = observed_trajectory(underlying, mask)
+    if basis is not None:
+        # G'Φ at x₀*: linearise θ ↦ G(x₀* + Φθ) at θ = 0
+        def observed_coefficients(theta: Array) -> Array:
+            return observed(analysis + basis_op.mv(theta))
+
+        zero = jnp.zeros(basis_op.in_structure().shape, analysis.dtype)
+        coefficient_cov = _strong_covariance(
+            zero,
+            observed_coefficients,
+            coefficient_prior,
+            apply_obs_precision,
+            solver,
+        )
+        covariance = _state_covariance(basis_op, coefficient_cov)
+        return analysis, covariance, "strong_4dvar"
     covariance = _strong_covariance(
         analysis, observed, prior_precision, apply_obs_precision, solver
     )
