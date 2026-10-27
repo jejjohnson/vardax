@@ -180,6 +180,13 @@ likely causes:
 - Obs operator has discontinuities or near-discontinuities (saturated
   retrievals, mask edges) — smooth them in preprocessing or switch to
   derivative-free `optimistix.NelderMead`
+- A linear solve inside the cost returns NaN ("A linear solver returned
+  non-finite output") — the cost applies $B^{-1}$ and $R^{-1}$ with
+  `lx.CG(atol=1e-6, rtol=1e-6)` by default, which breaks down on an
+  ill-conditioned or tiny covariance (an $R$ of $10^{-14}$, say). Pass
+  `cov_solver=lx.AutoLinearSolver(well_posed=True)` (or `lx.Cholesky()`)
+  when the operators can be materialised, or rescale the problem so the
+  covariances are $O(1)$. The 4D-Var models take the same `cov_solver=`.
 
 vardax does not retry or fall back automatically — if your minimiser
 fails, that's information. Diagnose, don't hide.

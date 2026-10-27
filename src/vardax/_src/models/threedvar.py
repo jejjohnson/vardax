@@ -63,6 +63,13 @@ class ThreeDVar(eqx.Module):
             optimum.
         max_steps: Iteration cap on the inner solver when ``minimiser``
             is an ``optimistix`` solver; a vardax `Minimiser` keeps its own.
+        cov_solver: ``lineax`` solver for the covariance solves in the
+            cost ($B^{-1}$, $R^{-1}$). Default
+            ``lx.CG(atol=1e-6, rtol=1e-6)``, which suits large
+            matrix-free operators but is inexact on an ill-conditioned
+            covariance (for example a tiny $R$); pass
+            ``lx.AutoLinearSolver(well_posed=True)`` or ``lx.Cholesky()``
+            for an exact solve when the operator can be materialised.
         parameterization: Optional
             [`StateParameterization`][vardax.StateParameterization]. When
             given, the control is $\theta$, the state is
@@ -98,6 +105,7 @@ class ThreeDVar(eqx.Module):
     obs_cov_op: lx.AbstractLinearOperator
     minimiser: optx.AbstractMinimiser | Minimiser = eqx.field(static=True)
     minimiser_adjoint: optx.AbstractAdjoint = eqx.field(static=True)
+    cov_solver: lx.AbstractLinearSolver = eqx.field(static=True)
     max_steps: int = eqx.field(static=True, default=200)
     parameterization: StateParameterization | None = None
 
@@ -111,6 +119,7 @@ class ThreeDVar(eqx.Module):
         minimiser_adjoint: optx.AbstractAdjoint | None = None,
         max_steps: int = 200,
         parameterization: StateParameterization | None = None,
+        cov_solver: lx.AbstractLinearSolver | None = None,
     ) -> None:
         self.obs_op = obs_op
         self.prior_mean = prior_mean
@@ -119,6 +128,7 @@ class ThreeDVar(eqx.Module):
         self.minimiser = minimiser or optx.BFGS(rtol=1e-6, atol=1e-6)
         self.minimiser_adjoint = minimiser_adjoint or optx.ImplicitAdjoint()
         self.max_steps = max_steps
+        self.cov_solver = cov_solver or lx.CG(atol=1e-6, rtol=1e-6)
         self.parameterization = parameterization
 
     def __call__(self, batch: Batch1D | PointObsBatch) -> Float[Array, "B T N"]:
@@ -169,7 +179,7 @@ class ThreeDVar(eqx.Module):
             R_inv_r = lx.linear_solve(
                 obs_cov_op,
                 residual,
-                solver=lx.CG(atol=1e-6, rtol=1e-6),
+                solver=self.cov_solver,
             ).value
             return 0.5 * jnp.sum(residual * R_inv_r)
 
@@ -233,7 +243,7 @@ class ThreeDVar(eqx.Module):
             B_inv_dx = lx.linear_solve(
                 self.prior_cov_op,
                 dx,
-                solver=lx.CG(atol=1e-6, rtol=1e-6),
+                solver=self.cov_solver,
             ).value
             j_bg = 0.5 * jnp.sum(dx * B_inv_dx)
             assert obs_cost is not None
