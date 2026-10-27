@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.1.13](https://github.com/jejjohnson/vardax/compare/v0.1.12...v0.1.13) (2026-10-27)
+
+
+### Features
+
+* **models:** expose the minimiser diagnostics of a ThreeDVar analysis ([#125](https://github.com/jejjohnson/vardax/issues/125)) ([dfe464c](https://github.com/jejjohnson/vardax/commit/dfe464cbf50556a4b4f335569e1b68600dede4d0)), closes [#124](https://github.com/jejjohnson/vardax/issues/124)
+* **models:** make the covariance solves configurable with cov_solver ([#121](https://github.com/jejjohnson/vardax/issues/121)) ([6189186](https://github.com/jejjohnson/vardax/commit/61891867c77ee4724c5a873aca5cc4d96c298cb7)), closes [#117](https://github.com/jejjohnson/vardax/issues/117)
+* **obs_operators:** let CallableObs linearise reverse-mode-only models ([#119](https://github.com/jejjohnson/vardax/issues/119)) ([e3d0ccd](https://github.com/jejjohnson/vardax/commit/e3d0ccd9239211ea834bf0eb95ac25019de04289))
+* **oi:** accept a linear solver for the innovation system ([#120](https://github.com/jejjohnson/vardax/issues/120)) ([65b49ed](https://github.com/jejjohnson/vardax/commit/65b49edb040d3ec7c41cf299016758917aed4070)), closes [#116](https://github.com/jejjohnson/vardax/issues/116)
+* **posterior:** add Laplace and Gauss-Newton covariance for a linear control ([#122](https://github.com/jejjohnson/vardax/issues/122)) ([5e5cae9](https://github.com/jejjohnson/vardax/commit/5e5cae909c42bff55bf904fc6fe81376188ba1d6))
+
 ## [0.1.12](https://github.com/jejjohnson/vardax/compare/v0.1.11...v0.1.12) (2026-10-27)
 
 
