@@ -556,9 +556,53 @@ def minimise(
     return minimiser(cost_fn, x0, None)
 
 
+def minimise_with_result(
+    minimiser: Any,
+    cost_fn: Callable[[Any, Any], Float[Array, ""]],
+    x0: PyTree[Array],
+    *,
+    adjoint: optx.AbstractAdjoint,
+    max_steps: int,
+) -> MinimiseResult:
+    r"""``minimise``, returning its diagnostics too.
+
+    The same dispatch and the same iterate, plus $J(\theta^\star)$,
+    $\lVert \nabla J(\theta^\star) \rVert_2$ and the step count. A
+    custom [`Minimiser`][vardax.Minimiser] does not report its steps, so
+    ``num_steps`` is ``-1`` for it. Costs one extra cost and gradient
+    evaluation at the minimum, which is why the models' ``__call__`` uses
+    ``minimise``.
+    """
+    if isinstance(minimiser, optx.AbstractMinimiser):
+        solution = optx.minimise(
+            fn=cost_fn,
+            solver=minimiser,
+            y0=x0,
+            args=None,
+            max_steps=max_steps,
+            adjoint=adjoint,
+            throw=False,
+        )
+        cost, grad_norm = _cost_and_grad_norm(cost_fn, solution.value, None)
+        return MinimiseResult(
+            value=solution.value,
+            cost=cost,
+            grad_norm=grad_norm,
+            num_steps=solution.stats["num_steps"],
+        )
+    if isinstance(minimiser, OptaxMinimiser | OptimistixMinimiser):
+        return minimiser.run(cost_fn, x0, None, adjoint=adjoint)
+    value = minimiser(cost_fn, x0, None)
+    cost, grad_norm = _cost_and_grad_norm(cost_fn, value, None)
+    return MinimiseResult(
+        value=value, cost=cost, grad_norm=grad_norm, num_steps=jnp.asarray(-1)
+    )
+
+
 __all__ = [
     "MinimiseResult",
     "OptaxMinimiser",
     "OptimistixMinimiser",
     "minimise",
+    "minimise_with_result",
 ]
