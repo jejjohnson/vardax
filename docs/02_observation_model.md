@@ -195,10 +195,19 @@ The observation shape need not match the state shape. Prefer
 `LinearObs` when you already hold an explicit or structured matrix you
 want to reuse.
 
-For a model that defines only a reverse-mode rule (a `jax.custom_vjp`,
-or a `diffrax` solve under its default `RecursiveCheckpointAdjoint`),
+For a model that defines only a reverse-mode rule (a `jax.custom_vjp`),
 pass `CallableObs(fn=..., jac="bwd")`: forward-mode linearisation raises
-on those as soon as an analysis or a posterior needs $H'$.
+on those as soon as an analysis or a posterior needs $H'$. Matrix-free,
+lineax then applies $H'v$ by transposing the VJP, which fails when the
+backward pass holds a loop JAX cannot transpose. A `diffrax` solve is
+the common case: `RecursiveCheckpointAdjoint` runs a `while_loop`. Add
+`materialise=True` and `linearize` forms the Jacobian once, with one VJP
+per observation; that is cheap when the control is small, as a source or
+parameter vector usually is:
+
+```python
+obs = vdx.CallableObs(fn=simulate, jac="bwd", materialise=True)
+```
 
 ## Tangent-linear and adjoint contract
 
