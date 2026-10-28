@@ -37,7 +37,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.tree_util as jtu
-from jaxtyping import Array, Float, Int, PyTree
+from jaxtyping import Array, Bool, Float, Int, PyTree
 import optax
 import optimistix as optx
 
@@ -53,12 +53,19 @@ class MinimiseResult(eqx.Module):
             only when this is (close to) zero.
         num_steps: Number of optimiser steps taken (both phases, for
             `OptaxMinimiser` with a polish), an integer scalar.
+        converged: Whether the minimiser met its own convergence test, a
+            boolean scalar: optimistix's ``result == successful``, or for
+            `OptaxMinimiser` a small gradient or ``step_patience`` small
+            steps (in the polish phase, when there is one); stopping on
+            ``patience`` or ``max_steps`` is ``False``. ``None`` for a custom
+            [`Minimiser`][vardax.Minimiser], which reports no status.
     """
 
     value: PyTree[Array]
     cost: Float[Array, ""]
     grad_norm: Float[Array, ""]
     num_steps: Int[Array, ""]
+    converged: Bool[Array, ""] | None = None
 
 
 def _tree_l2_norm(tree: PyTree[Array]) -> Float[Array, ""]:
@@ -166,6 +173,7 @@ class OptimistixMinimiser(eqx.Module):
             cost=cost,
             grad_norm=grad_norm,
             num_steps=solution.stats["num_steps"],
+            converged=solution.result == optx.RESULTS.successful,
         )
 
     def __call__(
@@ -364,12 +372,16 @@ class OptaxMinimiser(eqx.Module):
         x0 = jtu.tree_map(jnp.asarray, x0)
         fn = _close_over(cost_fn, x0, batch)
         inputs = (fn, self, x0, batch)
-        value, num_steps = (adjoint or optx.ImplicitAdjoint()).apply(
+        value, (num_steps, converged) = (adjoint or optx.ImplicitAdjoint()).apply(
             _optax_primal, _optax_rewrite, inputs, frozenset()
         )
         cost, grad_norm = _cost_and_grad_norm(cost_fn, value, batch)
         return MinimiseResult(
-            value=value, cost=cost, grad_norm=grad_norm, num_steps=num_steps
+            value=value,
+            cost=cost,
+            grad_norm=grad_norm,
+            num_steps=num_steps,
+            converged=converged,
         )
 
     def __call__(
@@ -398,7 +410,7 @@ def _cost_and_grad_norm(cost_fn, value, batch):
 
 
 def _optax_loop(fn, batch, x0, optimizer, max_steps, tols, patience, while_loop):
-    """One early-stopped optimisation loop; returns (best iterate, steps taken)."""
+    """One early-stopped loop; returns (best iterate, steps, converged)."""
     gtol, rtol, atol, step_patience = tols
     optimizer = optax.with_extra_args_support(optimizer)
 
@@ -477,18 +489,18 @@ def _optax_loop(fn, batch, x0, optimizer, max_steps, tols, patience, while_loop)
         zero,
         jnp.asarray(False),
     )
-    step, x_last, _, best_x, best_f, best_g, *_ = while_loop(
+    step, x_last, _, best_x, best_f, best_g, *_, converged = while_loop(
         cond, body, init, max_steps=max_steps
     )
     # The last iterate may not have been evaluated: keep it if it is better.
     f_last, g_last = jax.value_and_grad(fn)(x_last, batch)
     take_last = better(f_last, _tree_l2_norm(g_last), best_f, best_g)
-    return select(take_last, x_last, best_x), step
+    return select(take_last, x_last, best_x), step, converged
 
 
 def _optax_primal(inputs):
     fn, minimiser, x0, batch, while_loop = inputs
-    x, steps = _optax_loop(
+    x, steps, converged = _optax_loop(
         fn,
         batch,
         x0,
@@ -499,7 +511,7 @@ def _optax_primal(inputs):
         while_loop,
     )
     if minimiser.polish is not None:
-        x, polish_steps = _optax_loop(
+        x, polish_steps, converged = _optax_loop(
             fn,
             batch,
             x,
@@ -515,7 +527,7 @@ def _optax_primal(inputs):
             while_loop,
         )
         steps = steps + polish_steps
-    return x, steps
+    return x, (steps, converged)
 
 
 def _optax_rewrite(root, _residual, inputs):
@@ -589,6 +601,7 @@ def minimise_with_result(
             cost=cost,
             grad_norm=grad_norm,
             num_steps=solution.stats["num_steps"],
+            converged=solution.result == optx.RESULTS.successful,
         )
     if isinstance(minimiser, OptaxMinimiser | OptimistixMinimiser):
         return minimiser.run(cost_fn, x0, None, adjoint=adjoint)
