@@ -22,7 +22,7 @@ class Lorenz63(eqx.Module):
 
     The module is a diffrax-compatible right-hand side ``f(t, y, args)``.
 
-    Args:
+    Attributes:
         sigma: Prandtl number $\sigma$ (classically 10).
         rho: Rayleigh number $\rho$ (classically 28).
         beta: Geometric factor $\beta$ (classically 8/3).
@@ -201,7 +201,7 @@ class Lorenz96(eqx.Module):
 
     The module is a diffrax-compatible right-hand side ``f(t, y, args)``.
 
-    Args:
+    Attributes:
         F: Forcing constant $F$ (classically 8).
 
     Examples:
