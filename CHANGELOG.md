@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.2.0](https://github.com/jejjohnson/vardax/compare/v0.1.13...v0.2.0) (2026-10-28)
+
+
+### ⚠ BREAKING CHANGES
+
+* public fields and keyword arguments are renamed, with no deprecated aliases:
+
+### Features
+
+* get_config / from_config for hyperparameter-only modules ([#135](https://github.com/jejjohnson/vardax/issues/135)) ([7023b81](https://github.com/jejjohnson/vardax/commit/7023b81f3fe9fb426a4337e243b4d479a0e01363))
+* **minimisers:** report whether the minimiser converged ([#128](https://github.com/jejjohnson/vardax/issues/128)) ([24fbc72](https://github.com/jejjohnson/vardax/commit/24fbc727b42e3d66dd2633b1458bfda450402afe)), closes [#127](https://github.com/jejjohnson/vardax/issues/127)
+
+
+### Code Refactoring
+
+* descriptive names for public fields and parameters ([#139](https://github.com/jejjohnson/vardax/issues/139)) ([d002e43](https://github.com/jejjohnson/vardax/commit/d002e4379d35e3109e394f6da737fe32c8a2c458))
+
 ## [0.1.13](https://github.com/jejjohnson/vardax/compare/v0.1.12...v0.1.13) (2026-10-27)
 
 
