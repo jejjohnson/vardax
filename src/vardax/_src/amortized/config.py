@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import equinox as eqx
 
 from vardax._src.errors import ConfigurationError
@@ -54,3 +56,13 @@ class AmortizedConfig(eqx.Module):
                 f"AmortizedConfig.head_type must be one of {sorted(valid)}; "
                 f"got {self.head_type!r}."
             )
+
+    def get_config(self) -> dict[str, Any]:
+        return {
+            "head_type": self.head_type,
+            "n_samples": self.n_samples,
+        }
+
+    @classmethod
+    def from_config(cls, config: dict[str, Any]) -> AmortizedConfig:
+        return cls(**config)

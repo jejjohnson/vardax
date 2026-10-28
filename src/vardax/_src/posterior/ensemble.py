@@ -129,3 +129,13 @@ class EnsembleCovariance(eqx.Module):
                 "inflation": float(self.inflation),
             },
         )
+
+    def get_config(self) -> dict[str, Any]:
+        return {
+            "n_members": self.n_members,
+            "inflation": self.inflation,
+        }
+
+    @classmethod
+    def from_config(cls, config: dict[str, Any]) -> EnsembleCovariance:
+        return cls(**config)
