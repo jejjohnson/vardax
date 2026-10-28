@@ -12,7 +12,7 @@ from vardax._src.errors import ConfigurationError
 class AmortizedConfig(eqx.Module):
     """Configuration for an ``AmortizedPosterior``.
 
-    Args:
+    Attributes:
         head_type: One of ``"regression"``, ``"flow"``, ``"score"``.
             Determines the density family used by the head. Currently
             only ``"regression"`` is fully implemented;  ``"flow"``
