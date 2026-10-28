@@ -58,3 +58,13 @@ training. Run these before believing any uncertainty estimate.
       show_root_heading: false
       show_root_toc_entry: false
       members: [plot_l96_trajectories, plot_l96_grid, plot_reconstruction_comparison]
+
+## Errors
+
+Every error vardax raises on purpose derives from `VardaxError`, and each subclass names what failed. Each one also inherits the builtin it replaced (`ValueError`, or `TypeError` for `InputTypeError`), so existing `except ValueError` handlers keep working.
+
+::: vardax
+    options:
+      show_root_heading: false
+      show_root_toc_entry: false
+      members: [VardaxError, ConfigurationError, ShapeError, GridError, ObservationError, DataError, MissingInputError, UnsupportedInputError, InputTypeError]

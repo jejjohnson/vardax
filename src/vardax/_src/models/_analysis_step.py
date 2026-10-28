@@ -18,10 +18,13 @@ import jax.numpy as jnp
 from jaxtyping import Array, Float
 import lineax as lx
 
+from vardax._src.errors import InputTypeError, ShapeError
+from vardax._src.obs_operators.point import require_obs_cov
+
 #: ``analyse_one(x_b, y, mask, obs_op, obs_cov_op)`` for one sample.
 AnalyseOne = Callable[
-    [Float[Array, "T N"], Array, Array, Any, lx.AbstractLinearOperator],
-    Float[Array, "T N"],
+    [Float[Array, "*state"], Array, Array, Any, lx.AbstractLinearOperator],
+    Float[Array, "*state"],
 ]
 
 
@@ -30,7 +33,7 @@ def analyse_forecast(
     *,
     state_shape: tuple[int, ...],
     default_obs_op: Any,
-    default_obs_cov_op: lx.AbstractLinearOperator,
+    default_obs_cov_op: lx.AbstractLinearOperator | None,
     forecast: Float[Array, ...],
     obs: Array,
     obs_op: Any,
@@ -73,12 +76,12 @@ def analyse_forecast(
     elif forecast.ndim == len(state_shape) + 1 and forecast.shape[1:] == state_shape:
         batched = True
         if obs.ndim == 0 or obs.shape[0] != forecast.shape[0]:
-            raise ValueError(
+            raise ShapeError(
                 f"A batch of {forecast.shape[0]} forecasts needs observations "
                 f"with the same leading axis; got shape {obs.shape}."
             )
     else:
-        raise ValueError(
+        raise ShapeError(
             f"forecast must be one state of shape {state_shape} or a batch of "
             f"them, (B, *{state_shape}); got shape {forecast.shape}."
         )
@@ -91,7 +94,7 @@ def analyse_forecast(
     mask = finite.astype(obs.dtype)
     obs_clean = jnp.where(finite, obs, jnp.zeros((), obs.dtype))
 
-    def _one(x_b: Float[Array, "T N"], y: Array, m: Array) -> Float[Array, "T N"]:
+    def _one(x_b: Float[Array, "*state"], y: Array, m: Array) -> Float[Array, "*state"]:
         return analyse_one(x_b, y, m, H, R)
 
     if batched:
@@ -101,17 +104,17 @@ def analyse_forecast(
 
 def _resolve_obs_err_cov(
     obs_err_cov: Any,
-    default: lx.AbstractLinearOperator,
+    default: lx.AbstractLinearOperator | None,
     obs_shape: tuple[int, ...],
     dtype: Any,
 ) -> lx.AbstractLinearOperator:
     """Map the cycle's ``obs_err_cov`` onto a ``lineax`` operator $R$."""
     if obs_err_cov is None:
-        return default
+        return require_obs_cov(default)
     if isinstance(obs_err_cov, lx.AbstractLinearOperator):
         in_shape = obs_err_cov.in_structure().shape
         if in_shape != tuple(obs_shape):
-            raise ValueError(
+            raise ShapeError(
                 f"obs_err_cov acts on shape {in_shape}, but one observation "
                 f"sample has shape {tuple(obs_shape)}."
             )
@@ -119,14 +122,14 @@ def _resolve_obs_err_cov(
     try:
         variances = jnp.asarray(obs_err_cov, dtype=dtype)
     except TypeError as exc:
-        raise TypeError(
+        raise InputTypeError(
             "obs_err_cov must be None, a lineax.AbstractLinearOperator or an "
             f"array of error variances; got {type(obs_err_cov).__name__}."
         ) from exc
     try:
         variances = jnp.broadcast_to(variances, obs_shape)
     except ValueError as exc:
-        raise ValueError(
+        raise ShapeError(
             f"obs_err_cov variances of shape {variances.shape} do not "
             f"broadcast to one observation sample, {tuple(obs_shape)}; pass "
             "a lineax operator for a non-diagonal R."

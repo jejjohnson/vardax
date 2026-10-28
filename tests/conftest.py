@@ -1,10 +1,38 @@
 """Shared pytest fixtures for vardax tests."""
 
+import sys
+
 import jax
 import jax.numpy as jnp
+import jaxtyping
+from jaxtyping import install_import_hook
 import pytest
 
+# The hook only instruments modules imported after it is installed, so
+# vardax must not be imported before this point.
+assert "vardax" not in sys.modules, "vardax imported before the jaxtyping hook"
+with install_import_hook("vardax", "beartype.beartype"):
+    import vardax  # noqa: F401
+
 from vardax import Batch1D, Batch2D, Batch2DMultivar
+
+
+@pytest.fixture(autouse=True)
+def _unchecked_types(request):
+    """Switch the runtime type checks off for ``@pytest.mark.unchecked_types``.
+
+    Validation tests pass deliberately malformed inputs to check vardax's
+    own errors, which users without the import hook see; the type checker
+    would otherwise reject those inputs first.
+    """
+    if request.node.get_closest_marker("unchecked_types") is None:
+        yield
+        return
+    jaxtyping.config.update("jaxtyping_disable", True)
+    try:
+        yield
+    finally:
+        jaxtyping.config.update("jaxtyping_disable", False)
 
 
 @pytest.fixture

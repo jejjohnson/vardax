@@ -11,14 +11,16 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import jax.numpy as jnp
-from jaxtyping import Array, Float
+from jaxtyping import Array, ArrayLike, Float
 import numpy as np
+
+from vardax._src.errors import DataError
 
 if TYPE_CHECKING:
     import xarray as xr
 
 
-def time_patches(ts: Float[Array, T]) -> Float[Array, "T-1 2"]:  # type: ignore[unresolved-reference]  # ty:ignore[unresolved-reference]
+def time_patches(ts: Float[Array, " T"]) -> Float[Array, "T-1 2"]:
     """Overlapping consecutive time pairs for one-step increment losses.
 
     Reimplements the legacy ``kernex.kmap(kernel_size=(2,), relative=True)``
@@ -44,8 +46,8 @@ def time_patches(ts: Float[Array, T]) -> Float[Array, "T-1 2"]:  # type: ignore[
 
 
 def trajectory_to_xr_dataset(
-    states: Float[Array, "T F"],
-    time_coords: Float[Array, T],  # type: ignore[unresolved-reference]  # ty:ignore[unresolved-reference]
+    states: Float[ArrayLike, "T F"],
+    time_coords: Float[ArrayLike, " T"],
     *,
     feature_names: list[str] | None = None,
 ) -> xr.Dataset:
@@ -108,7 +110,7 @@ def extract_patches(
 
     if n_timesteps > n_time:
         msg = f"n_timesteps ({n_timesteps}) > available time steps ({n_time})"
-        raise ValueError(msg)
+        raise DataError(msg)
 
     max_start = n_time - n_timesteps
     starts = rng.integers(0, max_start + 1, size=n_patches)

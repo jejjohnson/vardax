@@ -15,6 +15,8 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, Float
 
+from vardax._src.errors import ConfigurationError, UnsupportedInputError
+
 
 def checkpoint_every(checkpoint: bool | int) -> int:
     """Number of steps per rematerialised block; ``0`` means no checkpointing.
@@ -36,13 +38,15 @@ def checkpoint_every(checkpoint: bool | int) -> int:
         >>> checkpoint_every(0)  # doctest: +IGNORE_EXCEPTION_DETAIL
         Traceback (most recent call last):
         ...
-        ValueError: checkpoint must be a bool or an int >= 1, got 0
+        ConfigurationError: checkpoint must be a bool or an int >= 1, got 0
     """
     # bool is a subclass of int, so test it first
     if isinstance(checkpoint, bool):
         return int(checkpoint)
     if not isinstance(checkpoint, int) or checkpoint < 1:
-        raise ValueError(f"checkpoint must be a bool or an int >= 1, got {checkpoint}")
+        raise ConfigurationError(
+            f"checkpoint must be a bool or an int >= 1, got {checkpoint}"
+        )
     return checkpoint
 
 
@@ -79,13 +83,13 @@ def resolve_forward(forward: Any, forward_adjoint: Any) -> Any:
         >>> resolve_forward(fwd, "backsolve")  # doctest: +IGNORE_EXCEPTION_DETAIL
         Traceback (most recent call last):
         ...
-        ValueError: forward_adjoint was set but PerStep has no with_adjoint
+        UnsupportedInputError: forward_adjoint was set but PerStep has no with_adjoint
     """
     if forward_adjoint is None:
         return forward
     with_adjoint = getattr(forward, "with_adjoint", None)
     if with_adjoint is None:
-        raise ValueError(
+        raise UnsupportedInputError(
             f"forward_adjoint was set but {type(forward).__name__} has no "
             "with_adjoint(adjoint) method, so the adjoint cannot reach its "
             "integrator. Per-step forwards are differentiated by reverse-mode "

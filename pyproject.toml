@@ -102,6 +102,8 @@ packages = ["src/vardax"]
 [dependency-groups]
 test = [
     "pytest>=8.0.0",
+    # tests/conftest.py checks every jaxtyping annotation at runtime.
+    "beartype>=0.18",
     # tests/test_docstrings.py parses docstrings the way mkdocstrings does.
     "griffe>=1.0",
     "pytest-cov>=5.0.0",
@@ -154,7 +156,10 @@ filterwarnings = ["error", "ignore::DeprecationWarning"]
 testpaths = ["src/vardax", "tests"]
 xfail_strict = true
 addopts = ["-ra", "--strict-markers", "--tb=short"]
-markers = ["slow: marks tests as slow (deselect with '-m \"not slow\"')"]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "unchecked_types: switch off the runtime jaxtyping checks (validation tests)",
+]
 
 [tool.ruff]
 fix = true

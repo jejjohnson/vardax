@@ -87,6 +87,7 @@ def test_advection_diffusion_tuple_velocity():
     assert jnp.allclose(a, b)
 
 
+@pytest.mark.unchecked_types
 @pytest.mark.parametrize(
     ("velocity", "kappa"), [(jnp.ones(3), 0.1), ((1.0, 0.0), -0.1)]
 )

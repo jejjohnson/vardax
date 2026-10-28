@@ -55,12 +55,14 @@ import lineax as lx
 import optimistix as optx
 
 from vardax._src._types import Batch1D, PointObsBatch
+from vardax._src.errors import ConfigurationError
 from vardax._src.minimisers import minimise
 from vardax._src.models._rollout import checkpoint_every, resolve_forward, rollout
 from vardax._src.obs_operators.point import (
     check_point_obs_cov,
     grid_point_obs_cost,
     map_point_batch,
+    require_obs_cov,
     window_steps,
 )
 from vardax._src.protocols import Minimiser, StateParameterization
@@ -149,7 +151,7 @@ class ReducedBasisFourDVar(eqx.Module):
     obs_op: Any
     prior_mean: Float[Array, " N"]
     prior_cov_op: lx.AbstractLinearOperator
-    obs_cov_op: lx.AbstractLinearOperator
+    obs_cov_op: lx.AbstractLinearOperator | None
     basis: Any
     parameterization: StateParameterization | None
     minimiser: optx.AbstractMinimiser | Minimiser = eqx.field(static=True)
@@ -165,7 +167,7 @@ class ReducedBasisFourDVar(eqx.Module):
         obs_op: Any,
         prior_mean: Float[Array, " N"],
         prior_cov_op: lx.AbstractLinearOperator,
-        obs_cov_op: lx.AbstractLinearOperator,
+        obs_cov_op: lx.AbstractLinearOperator | None,
         *,
         basis: Any = None,
         parameterization: StateParameterization | None = None,
@@ -185,7 +187,7 @@ class ReducedBasisFourDVar(eqx.Module):
         self.prior_cov_op = prior_cov_op
         self.obs_cov_op = obs_cov_op
         if basis is not None and parameterization is not None:
-            raise ValueError(
+            raise ConfigurationError(
                 "Pass basis= or parameterization=, not both; "
                 "LinearParameterization(basis, prior_mean) is the basis path."
             )
@@ -207,7 +209,7 @@ class ReducedBasisFourDVar(eqx.Module):
         forward = resolve_forward(self.forward, self.forward_adjoint)
         return rollout(forward, x_0, n_steps, checkpoint=self.checkpoint)
 
-    def __call__(self, batch: Batch1D | PointObsBatch) -> Float[Array, "B N"]:
+    def __call__(self, batch: Batch1D | PointObsBatch) -> Float[Array, "*batch N"]:
         """Reduced-basis 4DVar analysis: minimise over ``x_0`` (or ``X``).
 
         A [`PointObsBatch`][vardax.PointObsBatch] needs
@@ -230,6 +232,7 @@ class ReducedBasisFourDVar(eqx.Module):
 
             return map_point_batch(_one_points, batch)
 
+        obs_cov_op = require_obs_cov(self.obs_cov_op)
         T = batch.input.shape[1] - 1
 
         def _one(
@@ -255,7 +258,7 @@ class ReducedBasisFourDVar(eqx.Module):
                     # R^{-1}, biasing the analysis when R is correlated.
                     mask_op = lx.DiagonalLinearOperator(m_t)
                     r_masked = lx.TaggedLinearOperator(
-                        mask_op @ self.obs_cov_op @ mask_op
+                        mask_op @ obs_cov_op @ mask_op
                         + lx.DiagonalLinearOperator(1.0 - m_t),
                         lx.positive_semidefinite_tag,
                     )

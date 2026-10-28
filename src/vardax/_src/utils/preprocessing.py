@@ -9,6 +9,7 @@ import numpy as np
 import xarray as xr
 
 from vardax._src._types import Batch1D
+from vardax._src.errors import DataError
 
 
 def train_test_split(
@@ -37,7 +38,7 @@ def train_test_split(
             f"n_train + n_test ({n_train + n_test}) exceeds available "
             f"patches ({n_patches})"
         )
-        raise ValueError(msg)
+        raise DataError(msg)
 
     indices = rng.permutation(n_patches)
     train_idx = indices[:n_train]

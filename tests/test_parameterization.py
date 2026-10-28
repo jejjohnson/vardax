@@ -92,7 +92,9 @@ def _closed_form(batch, x_b, basis):
     """
     phi = np.asarray(_phi(basis), dtype=np.float64)
     m = phi.shape[1]
-    q_inv = np.stack([np.asarray(basis.prior_inv(e)) for e in np.eye(m)], axis=1)
+    q_inv = np.stack(
+        [np.asarray(basis.prior_inv(jnp.asarray(e))) for e in np.eye(m)], axis=1
+    )
     y = np.asarray(batch.input[0], dtype=np.float64)
     mask = np.asarray(batch.mask[0], dtype=np.float64)
     xb = np.asarray(x_b, dtype=np.float64)
@@ -308,6 +310,7 @@ class TestNeuralFieldParameterization:
         sq = sum(jnp.sum(leaf**2) for leaf in jax.tree.leaves(theta))
         assert jnp.allclose(param.penalty(theta), 0.05 * sq)
 
+    @pytest.mark.unchecked_types
     def test_validation(self):
         siren = geonnax.SIREN.init(2, 8, 1, depth=2, key=jax.random.PRNGKey(0))
         with pytest.raises(ValueError, match="coords"):

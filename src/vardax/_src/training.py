@@ -23,6 +23,8 @@ import jax.numpy as jnp
 from jaxtyping import Array, Float
 import optax
 
+from vardax._src.errors import MissingInputError
+
 from ._types import Batch1D, Batch2D
 
 
@@ -58,7 +60,7 @@ def train_loss_fn(
     pred = model(batch)
     target = batch.target
     if target is None:
-        raise ValueError("train_loss_fn requires batch.target to be set.")
+        raise MissingInputError("train_loss_fn requires batch.target to be set.")
     return reconstruction_loss(pred, target)
 
 
@@ -110,7 +112,7 @@ def eval_step(
     pred = model(batch)
     target = batch.target
     if target is None:
-        raise ValueError("eval_step requires batch.target to be set.")
+        raise MissingInputError("eval_step requires batch.target to be set.")
     return reconstruction_loss(pred, target)
 
 
@@ -137,7 +139,7 @@ def amortized_nll_loss_fn(
     """
     target = batch.target
     if target is None:
-        raise ValueError(
+        raise MissingInputError(
             "amortized_nll_loss_fn requires batch.target (the true x) to be set."
         )
     log_p = model.log_prob(target, batch)

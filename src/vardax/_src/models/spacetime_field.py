@@ -33,11 +33,19 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, Float, Int, PRNGKeyArray, PyTree
+from jaxtyping import Array, Float, Int, PRNGKeyArray, PyTree, Real
 import numpy as np
 
 from vardax._src._types import PointObsBatch
 from vardax._src.costs import ResidualPenalty
+from vardax._src.errors import (
+    ConfigurationError,
+    GridError,
+    InputTypeError,
+    MissingInputError,
+    ObservationError,
+    ShapeError,
+)
 from vardax._src.minimisers import OptaxMinimiser, OptimistixMinimiser
 from vardax._src.obs_operators.point import FieldPointObs, point_obs_cost
 from vardax._src.parameterization import NeuralFieldParameterization
@@ -83,7 +91,7 @@ class SpaceTimeFieldResult(eqx.Module):
         """
         return _evaluate(self.field, jnp.asarray(coords))
 
-    def initial_condition(self, grid: Float[Array, "N D"]) -> Float[Array, "N ..."]:
+    def initial_condition(self, grid: Real[Array, "N D"]) -> Float[Array, "N ..."]:
         r"""The analysis at the window start, $u(t_0, s_j)$, on a grid.
 
         This is the initial state for a forecast with a ``ForwardModel``.
@@ -96,7 +104,7 @@ class SpaceTimeFieldResult(eqx.Module):
         """
         grid = jnp.asarray(grid)
         if grid.ndim != 2:
-            raise ValueError(f"grid must be 2-D (N, D); got shape {grid.shape}.")
+            raise GridError(f"grid must be 2-D (N, D); got shape {grid.shape}.")
         if not jnp.issubdtype(grid.dtype, jnp.inexact):
             # An integer grid would truncate t0 in the time column.
             grid = grid.astype(jnp.result_type(float))
@@ -222,7 +230,7 @@ class SpaceTimeFieldVar(eqx.Module):
         t0: float = 0.0,
     ) -> None:
         if jnp.ndim(weight_decay) != 0:
-            raise ValueError(
+            raise ShapeError(
                 f"weight_decay must be a scalar; got shape {jnp.shape(weight_decay)}."
             )
         try:
@@ -230,16 +238,16 @@ class SpaceTimeFieldVar(eqx.Module):
         except jax.errors.ConcretizationTypeError:
             negative = False  # built under a transform: the sign is not known
         if negative:
-            raise ValueError(f"weight_decay must be >= 0, got {weight_decay}.")
+            raise ConfigurationError(f"weight_decay must be >= 0, got {weight_decay}.")
         if residual is not None and not isinstance(residual, ResidualPenalty):
-            raise TypeError(
+            raise InputTypeError(
                 "residual must be a vardax.ResidualPenalty or None; got "
                 f"{type(residual).__name__}."
             )
         if minimiser is None:
             minimiser = OptaxMinimiser()
         if not isinstance(minimiser, OptaxMinimiser | OptimistixMinimiser):
-            raise TypeError(
+            raise InputTypeError(
                 "minimiser must be a vardax.OptaxMinimiser or "
                 f"vardax.OptimistixMinimiser; got {type(minimiser).__name__}."
             )
@@ -269,7 +277,7 @@ class SpaceTimeFieldVar(eqx.Module):
         if residual is None or residual.sampler is None:
             return residual
         if key is None:
-            raise ValueError(
+            raise MissingInputError(
                 "The residual penalty has a sampler: pass key= to draw its "
                 "collocation points."
             )
@@ -301,11 +309,11 @@ class SpaceTimeFieldVar(eqx.Module):
                 needs a key and none is given.
         """
         if not isinstance(obs, PointObsBatch):
-            raise TypeError(
+            raise InputTypeError(
                 f"obs must be a vardax.PointObsBatch; got {type(obs).__name__}."
             )
         if obs.values.ndim != 1:
-            raise ValueError(
+            raise ShapeError(
                 "SpaceTimeFieldVar fits one sample: obs.values must be "
                 f"(N_obs,), got shape {obs.values.shape}; use eqx.filter_vmap "
                 "for a batch."
@@ -347,7 +355,7 @@ class SpaceTimeFieldVar(eqx.Module):
             ValueError: If ``n_members < 1``.
         """
         if n_members < 1:
-            raise ValueError(f"n_members must be >= 1, got {n_members}.")
+            raise ConfigurationError(f"n_members must be >= 1, got {n_members}.")
 
         def member(k: PRNGKeyArray) -> SpaceTimeFieldResult:
             k_init, k_colloc = jax.random.split(k)
@@ -397,10 +405,10 @@ class SpaceTimeFieldVar(eqx.Module):
         if grid is not None:
             grid = jnp.asarray(grid)
             if grid.ndim != 2:
-                raise ValueError(f"grid must be 2-D (N, D); got shape {grid.shape}.")
+                raise GridError(f"grid must be 2-D (N, D); got shape {grid.shape}.")
         if self.residual is not None and self.residual.sampler is not None:
             if key is None:
-                raise ValueError(
+                raise MissingInputError(
                     "The residual penalty has a sampler: pass key= to "
                     "as_analysis_step to draw the collocation points, which "
                     "every cycle then reuses."
@@ -413,7 +421,7 @@ class SpaceTimeFieldVar(eqx.Module):
         )
         window = _collocation_window(model.residual)
         if window is not None and not window[0] <= self.t0 <= window[1]:
-            raise ValueError(
+            raise ConfigurationError(
                 f"t0 = {self.t0} is outside the collocation time window "
                 f"[{window[0]:.4g}, {window[1]:.4g}]: the initial condition "
                 "would be unconstrained by the physics."
@@ -461,8 +469,12 @@ def _fit(
     """Fit ``model`` to one sample: compiled once per model structure and shapes."""
     param = model._parameterization
     residual = model._fixed_residual(key)
+    # __init__ skips the sign check when weight_decay is traced; catch it here
+    weight_decay = eqx.error_if(
+        model.weight_decay, model.weight_decay < 0, "weight_decay must be >= 0"
+    )
     out = model.minimiser.run(
-        _cost, param.init_control(), (param, obs, residual, model.weight_decay)
+        _cost, param.init_control(), (param, obs, residual, weight_decay)
     )
     return SpaceTimeFieldResult(
         field=param.as_field(out.value),
@@ -508,7 +520,7 @@ class _SpaceTimeFieldAnalysisStep(eqx.Module):
     ) -> Array | SpaceTimeFieldResult:
         del obs_op  # the field is observed at the points (FieldPointObs)
         if obs_err_cov is not None:
-            raise ValueError(
+            raise ObservationError(
                 "A PointObsBatch carries its observation errors in sigma: "
                 "pass obs_err_cov=None."
             )
@@ -520,7 +532,7 @@ class _SpaceTimeFieldAnalysisStep(eqx.Module):
             return xa
         forecast = jnp.asarray(forecast)
         if forecast.size != xa.size:
-            raise ValueError(
+            raise ShapeError(
                 f"forecast has shape {forecast.shape}, but the analysis on the "
                 f"grid has {xa.size} values."
             )
@@ -541,7 +553,7 @@ class _SpaceTimeFieldAnalysisStep(eqx.Module):
             return
         times = times[valid]
         if times.size and (times.min() < window[0] or times.max() > window[1]):
-            raise ValueError(
+            raise ObservationError(
                 f"Observation times span [{times.min():.4g}, {times.max():.4g}], "
                 f"outside the collocation window [{window[0]:.4g}, "
                 f"{window[1]:.4g}]: give each cycle window-relative times."

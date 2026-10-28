@@ -60,6 +60,17 @@ from vardax._src.costs import (
     variational_cost_grad,
 )
 from vardax._src.cycle import VarDACycle, VarSmootherCycle
+from vardax._src.errors import (
+    ConfigurationError,
+    DataError,
+    GridError,
+    InputTypeError,
+    MissingInputError,
+    ObservationError,
+    ShapeError,
+    UnsupportedInputError,
+    VardaxError,
+)
 from vardax._src.grad_mod import (
     ConvLSTMGradMod1D,
     ConvLSTMGradMod2D,
@@ -321,6 +332,16 @@ __all__ = [
     "simulate_lorenz96",
     "SoftBoundedForward",
     "time_patches",
+    # Errors
+    "VardaxError",
+    "ConfigurationError",
+    "DataError",
+    "GridError",
+    "InputTypeError",
+    "MissingInputError",
+    "ObservationError",
+    "ShapeError",
+    "UnsupportedInputError",
     # Visualization
     "plot_l96_grid",
     "plot_l96_trajectories",

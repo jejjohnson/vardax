@@ -29,10 +29,10 @@ class Lorenz63(eqx.Module):
 
     def __call__(
         self,
-        t: float,
-        y: Float[Array, 3],
+        t: float | Float[Array, ""],
+        y: Float[Array, " 3"],
         args: None,
-    ) -> Float[Array, 3]:
+    ) -> Float[Array, " 3"]:
         """Evaluate the vector field at state ``y`` and time ``t``."""
         x_, y_, z_ = y[0], y[1], y[2]
         dx = self.sigma * (y_ - x_)
@@ -50,8 +50,8 @@ def simulate_lorenz63(
     dt: float = 0.01,
     n_steps: int = 5000,
     n_burn_in: int = 1000,
-    x0: Float[Array, 3] | None = None,
-) -> tuple[Float[Array, T], Float[Array, "T 3"]]:  # type: ignore[unresolved-reference]  # ty:ignore[unresolved-reference]
+    x0: Float[Array, " 3"] | None = None,
+) -> tuple[Float[Array, " T"], Float[Array, "T 3"]]:
     """Simulate the Lorenz-63 system and return state trajectory.
 
     Args:
@@ -122,10 +122,10 @@ class Lorenz96(eqx.Module):
 
     def __call__(
         self,
-        t: float,
-        y: Float[Array, N],  # type: ignore[unresolved-reference]  # ty:ignore[unresolved-reference]
+        t: float | Float[Array, ""],
+        y: Float[Array, " N"],
         args: None,
-    ) -> Float[Array, N]:  # type: ignore[unresolved-reference]  # ty:ignore[unresolved-reference]
+    ) -> Float[Array, " N"]:
         """Evaluate the vector field at state ``y`` and time ``t``."""
         # Periodic shifts using jnp.roll
         y_km2 = jnp.roll(y, 2)  # x_{k-2}
@@ -142,7 +142,7 @@ def simulate_lorenz96(
     dt: float = 0.01,
     n_steps: int = 5000,
     n_burn_in: int = 1000,
-) -> tuple[Float[Array, T], Float[Array, "T N"]]:  # type: ignore[unresolved-reference]  # ty:ignore[unresolved-reference]
+) -> tuple[Float[Array, " T"], Float[Array, "T N"]]:
     """Simulate the Lorenz-96 system and return state trajectory.
 
     Args:

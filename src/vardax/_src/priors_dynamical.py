@@ -48,6 +48,7 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, PyTree
 
+from vardax._src.errors import ShapeError
 from vardax._src.utils.patches import time_patches
 
 Solver = dfx.AbstractSolver
@@ -305,7 +306,7 @@ class DynIncrements(DynamicalPrior):
                 f"len(x) - 1 == len(time_patches(ts)) == len(x_gt) - 1, got "
                 f"{len(x)} | {len(ts_pairs)} | {len(x_gt)}"
             )
-            raise ValueError(msg)
+            raise ShapeError(msg)
         fn = ft.partial(self, params=params)
         x_pred = jax.vmap(fn, in_axes=(0, 0))(x[:-1], ts_pairs)
         return jnp.sum((x_pred - x_gt[1:]) ** 2)

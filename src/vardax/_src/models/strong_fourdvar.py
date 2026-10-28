@@ -42,6 +42,7 @@ from vardax._src.obs_operators.point import (
     check_point_obs_cov,
     grid_point_obs_cost,
     map_point_batch,
+    require_obs_cov,
     window_steps,
 )
 from vardax._src.protocols import Minimiser, StateParameterization
@@ -117,9 +118,9 @@ class StrongFourDVar(eqx.Module):
 
     forward: Any
     obs_op: Any
-    prior_mean: Float[Array, N]  # ty:ignore[unresolved-reference]
+    prior_mean: Float[Array, " N"]
     prior_cov_op: lx.AbstractLinearOperator
-    obs_cov_op: lx.AbstractLinearOperator
+    obs_cov_op: lx.AbstractLinearOperator | None
     minimiser: optx.AbstractMinimiser | Minimiser = eqx.field(static=True)
     minimiser_adjoint: optx.AbstractAdjoint = eqx.field(static=True)
     forward_adjoint: Any = eqx.field(static=True)
@@ -132,9 +133,9 @@ class StrongFourDVar(eqx.Module):
         self,
         forward: Any,
         obs_op: Any,
-        prior_mean: Float[Array, N],  # ty:ignore[unresolved-reference]
+        prior_mean: Float[Array, " N"],
         prior_cov_op: lx.AbstractLinearOperator,
-        obs_cov_op: lx.AbstractLinearOperator,
+        obs_cov_op: lx.AbstractLinearOperator | None,
         minimiser: optx.AbstractMinimiser | Minimiser | None = None,
         minimiser_adjoint: optx.AbstractAdjoint | None = None,
         forward_adjoint: Any = None,
@@ -159,12 +160,12 @@ class StrongFourDVar(eqx.Module):
         self.parameterization = parameterization
         self.checkpoint = checkpoint
 
-    def _rollout(self, x_0: Float[Array, N], n_steps: int) -> Float[Array, "T N"]:  # ty:ignore[unresolved-reference]
+    def _rollout(self, x_0: Float[Array, " N"], n_steps: int) -> Float[Array, "T N"]:
         """Step the forward model ``n_steps`` times, returning ``T + 1`` states."""
         forward = resolve_forward(self.forward, self.forward_adjoint)
         return rollout(forward, x_0, n_steps, checkpoint=self.checkpoint)
 
-    def __call__(self, batch: Batch1D | PointObsBatch) -> Float[Array, "B N"]:
+    def __call__(self, batch: Batch1D | PointObsBatch) -> Float[Array, "*batch N"]:
         """Strong-4DVar analysis: minimise over $x_0$.
 
         A [`PointObsBatch`][vardax.PointObsBatch] needs
@@ -178,8 +179,8 @@ class StrongFourDVar(eqx.Module):
             check_point_obs_cov(self.obs_cov_op)
             n_steps = window_steps(batch)
 
-            def _one_points(b: PointObsBatch) -> Float[Array, N]:  # ty:ignore[unresolved-reference]
-                def obs_cost(x_0: Float[Array, N]) -> Float[Array, ""]:  # ty:ignore[unresolved-reference]
+            def _one_points(b: PointObsBatch) -> Float[Array, " N"]:
+                def obs_cost(x_0: Float[Array, " N"]) -> Float[Array, ""]:
                     trajectory = self._rollout(x_0, n_steps=n_steps)
                     return grid_point_obs_cost(self.obs_op, trajectory, b)
 
@@ -187,12 +188,13 @@ class StrongFourDVar(eqx.Module):
 
             return map_point_batch(_one_points, batch)
 
+        obs_cov_op = require_obs_cov(self.obs_cov_op)
         T = batch.input.shape[1] - 1  # rollout steps (input has T+1 timesteps)
 
         def _one(
             input_i: Float[Array, "T_plus_1 N"], mask_i: Float[Array, "T_plus_1 N"]
-        ) -> Float[Array, N]:  # ty:ignore[unresolved-reference]
-            def obs_cost(x_0: Float[Array, N]) -> Float[Array, ""]:  # ty:ignore[unresolved-reference]
+        ) -> Float[Array, " N"]:
+            def obs_cost(x_0: Float[Array, " N"]) -> Float[Array, ""]:
                 # Roll out the trajectory.
                 trajectory = self._rollout(x_0, n_steps=T)
 
@@ -205,7 +207,7 @@ class StrongFourDVar(eqx.Module):
                     )
                     residual = m_t * (y_t - y_pred)
                     R_inv_r = lx.linear_solve(
-                        self.obs_cov_op,
+                        obs_cov_op,
                         residual,
                         solver=self.cov_solver,
                     ).value
@@ -221,12 +223,12 @@ class StrongFourDVar(eqx.Module):
     def _solve(
         self,
         obs_cost: Callable[[Array], Array],
-    ) -> Float[Array, N]:  # ty:ignore[unresolved-reference]
+    ) -> Float[Array, " N"]:
         """Minimise background (or penalty) plus ``obs_cost(x_0)``."""
         param = self.parameterization
         if param is not None:
             # x_0 = ψ(θ); J(θ) = pen(θ) + J_o(M(ψ(θ))).
-            def decode(theta: Any) -> Float[Array, N]:  # ty:ignore[unresolved-reference]
+            def decode(theta: Any) -> Float[Array, " N"]:
                 return param.decode(theta).reshape(self.prior_mean.shape)
 
             def param_cost(theta: Any, _args: Any) -> Float[Array, ""]:
@@ -241,7 +243,7 @@ class StrongFourDVar(eqx.Module):
             )
             return decode(theta_star)
 
-        def cost(x_0: Float[Array, N], _args: Any) -> Float[Array, ""]:  # ty:ignore[unresolved-reference]
+        def cost(x_0: Float[Array, " N"], _args: Any) -> Float[Array, ""]:
             # Background term
             dx = x_0 - self.prior_mean
             B_inv_dx = lx.linear_solve(

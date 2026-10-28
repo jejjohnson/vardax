@@ -21,9 +21,11 @@ from __future__ import annotations
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, Float, Int
+from jaxtyping import Array, ArrayLike, Float, Int
 import lineax as lx
 import numpy as _np
+
+from vardax._src.errors import GridError, ShapeError
 
 
 class InterpObs(eqx.Module):
@@ -50,7 +52,7 @@ class InterpObs(eqx.Module):
 
     def __call__(
         self,
-        state: Float[Array, "Ny Nx"],
+        state: Float[Array, "*grid"],
         mask: Float[Array, " n_obs"] | None = None,
     ) -> Float[Array, " n_obs"]:
         """Apply ``H`` (optionally masked) to a grid state."""
@@ -83,8 +85,8 @@ class InterpObs(eqx.Module):
 
 
 def interp_obs_from_coords(
-    grid_coords: tuple[Float[Array, " Ny"], Float[Array, " Nx"]],
-    obs_coords: Float[Array, "n_obs 2"],
+    grid_coords: tuple[Float[ArrayLike, " Ny"], Float[ArrayLike, " Nx"]],
+    obs_coords: Float[ArrayLike, "n_obs 2"],
     *,
     order: int = 1,
 ) -> InterpObs:
@@ -105,7 +107,7 @@ def interp_obs_from_coords(
             f"interp_obs_from_coords supports order=1 (bilinear), got {order}."
         )
     if len(grid_coords) != 2:
-        raise ValueError(
+        raise GridError(
             "interp_obs_from_coords expects grid_coords=(y_axis, x_axis); "
             f"got len={len(grid_coords)}."
         )
@@ -114,13 +116,13 @@ def interp_obs_from_coords(
     x_axis = _np.asarray(grid_coords[1], dtype=float)
     for name, axis in (("y_axis", y_axis), ("x_axis", x_axis)):
         if axis.size < 2 or _np.any(_np.diff(axis) <= 0):
-            raise ValueError(
+            raise GridError(
                 f"{name} must be strictly increasing with at least 2 points; "
                 "reverse a descending axis before calling interp_obs_from_coords."
             )
     pts = _np.asarray(obs_coords, dtype=float)
     if pts.ndim != 2 or pts.shape[1] != 2:
-        raise ValueError(f"obs_coords must be (n_obs, 2); got {pts.shape}.")
+        raise ShapeError(f"obs_coords must be (n_obs, 2); got {pts.shape}.")
 
     ny, nx = y_axis.size, x_axis.size
     iy0, wy1 = _bracket(y_axis, pts[:, 0])
@@ -139,7 +141,8 @@ def interp_obs_from_coords(
 
     return InterpObs(
         indices=jnp.asarray(indices, dtype=jnp.int32),
-        weights=jnp.asarray(weights, dtype=jnp.float32),
+        # JAX's default float dtype, so the weights are float64 under x64
+        weights=jnp.asarray(weights),
         grid_shape=(int(ny), int(nx)),
     )
 

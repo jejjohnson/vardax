@@ -12,6 +12,8 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from vardax._src.errors import ConfigurationError
+
 if TYPE_CHECKING:
     from matplotlib.axes import Axes
     from matplotlib.figure import Figure
@@ -230,7 +232,7 @@ def plot_l96_trajectories(
 
     N = states.shape[1]
     if n_vars <= 0:
-        raise ValueError(f"n_vars must be a positive integer, got {n_vars}.")
+        raise ConfigurationError(f"n_vars must be a positive integer, got {n_vars}.")
     n_selected = min(n_vars, N)
     indices = np.unique(np.linspace(0, N - 1, n_selected, dtype=int))
     for i in indices:

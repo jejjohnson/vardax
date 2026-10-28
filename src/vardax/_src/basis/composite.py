@@ -13,6 +13,8 @@ import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array, Float
 
+from vardax._src.errors import ConfigurationError
+
 
 class CompositeBasis(eqx.Module):
     """Concatenate several reduced bases into one control vector.
@@ -61,7 +63,7 @@ class CompositeBasis(eqx.Module):
 def composite_basis(*components: Any) -> CompositeBasis:
     """Build a `CompositeBasis` from a sequence of `ReducedBasis` components."""
     if not components:
-        raise ValueError("composite_basis requires at least one component.")
+        raise ConfigurationError("composite_basis requires at least one component.")
     cuts, total = [], 0
     for c in components[:-1]:
         total += c.nbasis

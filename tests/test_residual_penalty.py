@@ -66,6 +66,7 @@ def test_needs_points_or_sampler():
         ResidualPenalty(lambda f, s: f(s), None, weight=1.0)
 
 
+@pytest.mark.unchecked_types
 def test_collocation_must_be_2d():
     with pytest.raises(ValueError, match="shape"):
         ResidualPenalty(lambda f, s: f(s), jnp.ones(3), weight=1.0)

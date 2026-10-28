@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import equinox as eqx
 
+from vardax._src.errors import ConfigurationError
+
 
 class AmortizedConfig(eqx.Module):
     """Configuration for an ``AmortizedPosterior``.
@@ -25,7 +27,7 @@ class AmortizedConfig(eqx.Module):
     def __post_init__(self) -> None:
         valid = {"regression", "flow", "score"}
         if self.head_type not in valid:
-            raise ValueError(
+            raise ConfigurationError(
                 f"AmortizedConfig.head_type must be one of {sorted(valid)}; "
                 f"got {self.head_type!r}."
             )

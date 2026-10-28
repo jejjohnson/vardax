@@ -40,14 +40,14 @@ class AveragingKernel(eqx.Module):
     """
 
     A: lx.AbstractLinearOperator
-    x_a: Float[Array, N]  # ty:ignore[unresolved-reference]
-    h: Float[Array, N]  # ty:ignore[unresolved-reference]
+    x_a: Float[Array, " N"]
+    h: Float[Array, " N"]
 
-    def __call__(self, x: Float[Array, N]) -> Float[Array, N]:  # ty:ignore[unresolved-reference]
+    def __call__(self, x: Float[Array, " N"]) -> Float[Array, " N"]:
         inner = self.h * x + (1.0 - self.h) * self.x_a
         return self.A.mv(inner)
 
-    def linearize(self, x: Float[Array, N]) -> lx.AbstractLinearOperator:  # ty:ignore[unresolved-reference]
+    def linearize(self, x: Float[Array, " N"]) -> lx.AbstractLinearOperator:
         r"""Tangent-linear operator at ``x``: $A \cdot \mathrm{diag}(h)$."""
         diag_h = lx.DiagonalLinearOperator(self.h)
         return self.A @ diag_h
@@ -55,8 +55,8 @@ class AveragingKernel(eqx.Module):
 
 def averaging_kernel_from_l2(
     A_matrix: Float[Array, "N N"],
-    x_a: Float[Array, N],  # ty:ignore[unresolved-reference]
-    h: Float[Array, N],  # ty:ignore[unresolved-reference]
+    x_a: Float[Array, " N"],
+    h: Float[Array, " N"],
 ) -> AveragingKernel:
     """Convenience constructor from a dense averaging-kernel matrix.
 
