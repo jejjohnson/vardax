@@ -25,6 +25,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
+import einx
 import gaussx
 import jax
 import jax.numpy as jnp
@@ -32,6 +33,7 @@ from jaxtyping import Array, Float, Int, PRNGKeyArray
 
 from vardax._src.errors import MissingInputError, ShapeError
 from vardax._src.posterior.container import Posterior
+from vardax._src.utils.shapes import as_shape
 
 
 def assert_posterior_agreement(
@@ -185,7 +187,9 @@ def simulation_based_calibration(
         samples = sample_posterior(y, k_post, n_samples)
         # Flatten and use the L2 norm as the scalar reduction.
         scalar_true = float(jnp.linalg.norm(x_true))
-        scalar_samples = jnp.linalg.norm(samples.reshape(n_samples, -1), axis=-1)
+        # ‖xᵢ‖₂ over every state dimension of each sample
+        squared_norms = einx.sum("n [s...]", samples**2)
+        scalar_samples = jnp.sqrt(squared_norms)
         rank = int(jnp.sum(scalar_samples < scalar_true))
         ranks.append(rank)
     return jnp.asarray(ranks, dtype=jnp.int32)
@@ -200,4 +204,6 @@ def _marginal_std(cov_op: Any, ref: Float[Array, ...]) -> Float[Array, ...]:
     for the moderate-N regime where this gate is meaningful.
     """
     diag = gaussx.diag(cov_op)
-    return jnp.sqrt(jnp.maximum(diag, 0.0)).reshape(ref.shape)
+    # σ = √max(diag Σ, 0)
+    marginal_std = jnp.sqrt(jnp.maximum(diag, 0.0))
+    return as_shape(marginal_std, ref.shape)

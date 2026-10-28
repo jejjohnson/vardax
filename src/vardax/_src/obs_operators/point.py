@@ -29,6 +29,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
+import einx
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -44,6 +45,7 @@ from vardax._src.errors import (
     ObservationError,
     ShapeError,
 )
+from vardax._src.utils.shapes import as_shape
 
 
 def _safe(batch: PointObsBatch) -> PointObsBatch:
@@ -60,7 +62,7 @@ def _safe(batch: PointObsBatch) -> PointObsBatch:
     valid = batch.valid
     first_valid = batch.coords[jnp.argmax(valid)]
     placeholder = jnp.where(jnp.any(valid), first_valid, jnp.zeros_like(first_valid))
-    coords = jnp.where(valid[:, None], batch.coords, placeholder[None, :])
+    coords = einx.where("n, n d, d -> n d", valid, batch.coords, placeholder)
     values = jnp.where(valid, batch.values, jnp.zeros_like(batch.values))
     sigma = jnp.where(valid, batch.sigma, jnp.ones_like(batch.sigma))
     time_index = (
@@ -192,7 +194,8 @@ class GridPointObs(eqx.Module):
         safe = _safe(batch)
         n_obs = safe.values.shape[0]
         grid_shape = tuple(a.shape[0] for a in self.grid_axes)
-        frames = state.reshape((state.shape[0], *grid_shape))
+        flat_frames = einx.id("t s... -> t (s...)", state)
+        frames = einx.id("t (g...) -> t g...", flat_frames, g=grid_shape)
         t_idx = (
             jnp.zeros(n_obs, dtype=jnp.int32)
             if safe.time_index is None
@@ -242,7 +245,8 @@ class FieldPointObs(eqx.Module):
         """Evaluate ``field`` at each coordinate row."""
         safe = _safe(batch)
         values = jax.vmap(field)(safe.coords)
-        return values.reshape(values.shape[0])
+        # a scalar field may return (1,) per point; one value per observation
+        return as_shape(values, (values.shape[0],))
 
 
 # --- helpers for the models' PointObsBatch path ------------------------------

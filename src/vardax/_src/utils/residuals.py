@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
+import einx
 from geonnax import diffops
 import jax.numpy as jnp
 from jaxtyping import Array, Float
@@ -29,7 +30,7 @@ def _at_time(
     f: Callable[[Float[Array, " 3"]], Float[Array, ""]], t: Float[Array, ""]
 ) -> Callable[[Float[Array, " 2"]], Float[Array, ""]]:
     """Restrict a field of $(t, x, y)$ to a field of $(x, y)$ at time ``t``."""
-    return lambda xy: f(jnp.concatenate([t[None], xy]))
+    return lambda xy: f(einx.id(", d -> (1 + d)", t, xy))
 
 
 def advection_diffusion_2d(
@@ -98,7 +99,7 @@ def advection_diffusion_2d(
         lap = diffops.laplacian(_at_time(u, s[0]))(s[1:])
         # N[u] = ∂ₜu + c·∇u - κΔu: ()
         r = du[0] + jnp.dot(c.astype(du.dtype), du[1:]) - diffusivity * lap
-        return r[None]
+        return einx.id(" -> 1", r)
 
     return residual
 
@@ -189,6 +190,6 @@ def navier_stokes_vorticity_2d(
         r = domega[0] + jnp.dot(u, domega[1:]) - viscosity * lap_omega
         if forcing is not None:
             r = r - forcing(s)
-        return r[None]
+        return einx.id(" -> 1", r)
 
     return residual
