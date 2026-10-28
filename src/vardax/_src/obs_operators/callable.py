@@ -83,6 +83,14 @@ class CallableObs(eqx.Module):
         >>> blue = jnp.linalg.solve(jnp.eye(2) + F.T @ F, F.T @ y)
         >>> bool(jnp.allclose(oi(batch)[0, 0], blue, atol=1e-4))
         True
+
+        A nonlinear map is linearised by autodiff, and ``materialise=True``
+        forms the dense Jacobian:
+
+        >>> sq = vdx.CallableObs(fn=lambda x: x**2, materialise=True)
+        >>> jac = sq.linearize(jnp.array([1.0, 2.0, 3.0])).as_matrix()
+        >>> bool(jnp.allclose(jac, jnp.diag(jnp.array([2.0, 4.0, 6.0]))))
+        True
     """
 
     fn: Callable[[Float[Array, ...]], Float[Array, ...]]
@@ -90,11 +98,26 @@ class CallableObs(eqx.Module):
     materialise: bool = eqx.field(static=True, default=False)
 
     def __call__(self, x: Float[Array, ...]) -> Float[Array, ...]:
-        """Forward map $f(x)$."""
+        """Forward map $f(x)$.
+
+        Args:
+            x: State.
+
+        Returns:
+            The observation prediction $f(x)$.
+        """
         return self.fn(x)
 
     def linearize(self, x: Float[Array, ...]) -> lx.AbstractLinearOperator:
-        r"""Tangent-linear operator $H'(x) = \partial f / \partial x$ at ``x``."""
+        r"""Tangent-linear operator $H'(x) = \partial f / \partial x$ at ``x``.
+
+        Args:
+            x: State at which to linearise.
+
+        Returns:
+            A matrix-free ``JacobianLinearOperator``, or its dense
+            materialisation when ``materialise=True``.
+        """
         tangent = lx.JacobianLinearOperator(lambda z, _: self.fn(z), x, jac=self.jac)
         if self.materialise:
             # dense ∂f/∂x: one VJP per output (jac="bwd") or JVP per input

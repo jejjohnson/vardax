@@ -58,6 +58,23 @@ class Prior(Protocol):
 
     Members:
         ``__call__(x) -> x_prior`` — apply the prior model.
+
+    Examples:
+        A callable that shrinks the state towards zero conforms.
+
+        >>> import jax.numpy as jnp, vardax
+        >>> class Shrink:
+        ...     def __call__(self, x):
+        ...         return 0.9 * x
+        >>> isinstance(Shrink(), vardax.Prior)
+        True
+
+        The built-in identity prior conforms too.
+
+        >>> isinstance(vardax.IdentityPrior(), vardax.Prior)
+        True
+        >>> float(vardax.IdentityPrior()(jnp.ones(3)).sum())
+        3.0
     """
 
     def __call__(self, x: Float[Array, ...]) -> Float[Array, ...]: ...
@@ -67,9 +84,10 @@ class Prior(Protocol):
 class TemporalPrior(Protocol):
     r"""Time-dependent prior: dynamics-aware regularisation over a window.
 
-    Unlike the static [`Prior`][vardax.Prior] seam ($\varphi: x \mapsto
-    x_\text{prior}$), a temporal prior needs the time coordinates of the
-    assimilation window: $\varphi: (x, t_s) \mapsto x_\text{pred}$, with a
+    Unlike the static [`Prior`][vardax.Prior] seam
+    ($\varphi: x \mapsto x_\text{prior}$), a temporal prior needs the time
+    coordinates of the assimilation window,
+    $\varphi: (x, t_s) \mapsto x_\text{pred}$, with a
     ``loss`` scoring dynamical consistency of a state sequence (Decision
     D18). Implementations: [`DynIncrements`][vardax.DynIncrements],
     [`DynTrajectory`][vardax.DynTrajectory].
@@ -82,6 +100,25 @@ class TemporalPrior(Protocol):
         ``__call__(x, ts) -> x_pred`` — propagate through the dynamics.
         ``loss(x, ts, x_gt=None, params=None) -> scalar`` — dynamical
         residual of the sequence ``x`` against ``x_gt``.
+
+    Examples:
+        >>> import jax.numpy as jnp, vardax
+        >>> class Persistence:
+        ...     def __call__(self, x, ts):
+        ...         return x
+        ...
+        ...     def loss(self, x, ts, x_gt=None, params=None):
+        ...         return jnp.mean((x[1:] - x[:-1]) ** 2)
+        >>> prior = Persistence()
+        >>> isinstance(prior, vardax.TemporalPrior)
+        True
+        >>> float(prior.loss(jnp.ones((4, 2)), jnp.arange(4.0)))
+        0.0
+
+        An object with only ``__call__`` is not a temporal prior.
+
+        >>> isinstance(vardax.IdentityPrior(), vardax.TemporalPrior)
+        False
     """
 
     def __call__(
@@ -110,6 +147,19 @@ class GradModulator(Protocol):
 
     Members:
         ``__call__(grad, state, carry) -> (update, new_carry)``
+
+    Examples:
+        A modulator that scales the gradient and carries nothing.
+
+        >>> import jax.numpy as jnp, vardax
+        >>> class Scale:
+        ...     def __call__(self, grad, state, carry):
+        ...         return -0.1 * grad, carry
+        >>> isinstance(Scale(), vardax.GradModulator)
+        True
+        >>> update, carry = Scale()(jnp.ones(3), jnp.zeros(3), None)
+        >>> update.shape, carry is None
+        ((3,), True)
     """
 
     def __call__(
@@ -130,6 +180,25 @@ class CostFunction(Protocol):
 
     Members:
         ``__call__(x, batch, **kwargs) -> scalar``
+
+    Examples:
+        A quadratic cost around the batch.
+
+        >>> import jax.numpy as jnp, vardax
+        >>> class Quadratic:
+        ...     def __call__(self, x, batch, **kwargs):
+        ...         return 0.5 * jnp.sum((x - batch) ** 2)
+        >>> cost = Quadratic()
+        >>> isinstance(cost, vardax.CostFunction)
+        True
+        >>> float(cost(jnp.ones(3), jnp.zeros(3)))
+        1.5
+
+        It is the argument a [`Minimiser`][vardax.Minimiser] works on.
+
+        >>> x = vardax.OptimistixMinimiser()(cost, jnp.zeros(3), jnp.ones(3))
+        >>> bool(jnp.allclose(x, 1.0, atol=1e-5))
+        True
     """
 
     def __call__(
@@ -150,6 +219,19 @@ class PosteriorAdapter(Protocol):
 
     Members:
         ``__call__(analysis, model, batch) -> Posterior``
+
+    Examples:
+        >>> import jax.numpy as jnp, vardax
+        >>> class Passthrough:
+        ...     def __call__(self, analysis, model, batch):
+        ...         return analysis
+        >>> isinstance(Passthrough(), vardax.PosteriorAdapter)
+        True
+
+        The built-in adapters conform as well.
+
+        >>> isinstance(vardax.LaplaceCovariance(), vardax.PosteriorAdapter)
+        True
     """
 
     def __call__(
@@ -174,6 +256,25 @@ class Minimiser(Protocol):
 
     Members:
         ``__call__(cost_fn, x0, batch) -> x_star``
+
+    Examples:
+        A minimiser that takes one gradient step.
+
+        >>> import jax, jax.numpy as jnp, vardax
+        >>> class OneStep:
+        ...     def __call__(self, cost_fn, x0, batch):
+        ...         return x0 - jax.grad(cost_fn)(x0, batch)
+        >>> isinstance(OneStep(), vardax.Minimiser)
+        True
+        >>> cost = lambda x, m: 0.5 * jnp.sum((x - m) ** 2)
+        >>> x = OneStep()(cost, jnp.zeros(2), jnp.ones(2))
+        >>> bool(jnp.allclose(x, 1.0))
+        True
+
+        The built-in minimisers conform.
+
+        >>> isinstance(vardax.OptaxMinimiser(), vardax.Minimiser)
+        True
     """
 
     def __call__(
@@ -206,6 +307,21 @@ class ReducedBasis(Protocol):
         ``operg(t, X, state=None) -> increment``
         ``prior_inv(X) -> Q⁻¹ X``
         ``nbasis: int`` property
+
+    Examples:
+        The basis built by ``linear_basis`` conforms.
+
+        >>> import jax.numpy as jnp, vardax
+        >>> basis = vardax.linear_basis(jnp.eye(4)[:, :2], variance=1.0)
+        >>> isinstance(basis, vardax.ReducedBasis)
+        True
+        >>> basis.nbasis
+        2
+
+        ``prior_inv`` applies $Q^{-1}$ to a coefficient vector.
+
+        >>> basis.prior_inv(jnp.ones(2)).shape
+        (2,)
     """
 
     def operg(self, t: float, X: Any, state: Any = None) -> Any: ...
@@ -238,6 +354,30 @@ class StateParameterization(Protocol):
         $\tfrac12 X^\top Q^{-1} X$.
         ``init_control(*, key=None) -> theta`` — the starting control;
         ``key`` is for parameterizations whose start is random.
+
+    Examples:
+        >>> import jax.numpy as jnp, vardax
+        >>> basis = vardax.linear_basis(jnp.eye(4)[:, :2], variance=1.0)
+        >>> param = vardax.LinearParameterization(basis, x_b=jnp.zeros(4))
+        >>> isinstance(param, vardax.StateParameterization)
+        True
+        >>> param.decode(param.init_control()).shape
+        (4,)
+
+        A minimal custom parameterization that uses the state itself as
+        the control.
+
+        >>> class Direct:
+        ...     def decode(self, theta, t=None):
+        ...         return theta
+        ...
+        ...     def penalty(self, theta):
+        ...         return 0.5 * jnp.sum(theta**2)
+        ...
+        ...     def init_control(self, *, key=None):
+        ...         return jnp.zeros(4)
+        >>> isinstance(Direct(), vardax.StateParameterization)
+        True
     """
 
     def decode(self, theta: Any, t: float | None = None) -> Float[Array, ...]: ...
@@ -273,8 +413,9 @@ class SupportsForwardAdjoint(Protocol):
     A forward that integrates with ``diffrax.diffeqsolve`` implements it
     by storing the adjoint and passing it as ``diffeqsolve(...,
     adjoint=adjoint)``. A per-step forward cannot, and a 4DVar model given
-    ``forward_adjoint=`` with such a forward raises ``ValueError``; bound
-    its memory with ``checkpoint=`` instead.
+    ``forward_adjoint=`` with such a forward raises
+    [`UnsupportedInputError`][vardax.UnsupportedInputError]; bound its
+    memory with ``checkpoint=`` instead.
 
     Members:
         ``dt`` — step length.

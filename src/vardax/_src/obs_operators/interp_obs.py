@@ -30,7 +30,9 @@ from vardax._src.utils.shapes import flatten
 
 
 class InterpObs(eqx.Module):
-    """Grid → scattered-obs sparse bilinear interpolation.
+    r"""Grid → scattered-obs sparse bilinear interpolation.
+
+    $$(Hx)_k = \sum_{i \in \mathrm{stencil}(p_k)} w_{k,i} \, x_i$$
 
     Build a precomputed sparse ``(n_obs, 4)`` weight stencil from a 2-D
     grid and an ``(n_obs, 2)`` array of obs coordinates. The forward
@@ -39,12 +41,42 @@ class InterpObs(eqx.Module):
     ``lineax.FunctionLinearOperator`` (its transpose comes from
     ``jax.vjp`` automatically).
 
+    Algorithm:
+        1. Flatten the grid state.
+        2. Gather the four stencil corners of each observation with
+           ``indices``.
+        3. Take the weighted sum of the corners with ``weights``.
+        4. Multiply by ``mask`` if one is given.
+
     Attributes:
-        indices: ``(n_obs, 4)`` int array of flat grid indices for each
-            obs's 2x2 stencil.
-        weights: ``(n_obs, 4)`` float array of bilinear weights summing
-            to 1 along each row.
-        grid_shape: static ``(ny, nx)`` of the input grid.
+        indices: Integer flat grid indices of each observation's 2x2
+            stencil.
+        weights: Bilinear weights of the four corners, summing to 1 for
+            each observation.
+        grid_shape: Static ``(ny, nx)`` extent of the input grid.
+
+    Examples:
+        Interpolate a linear field at the centre of a unit cell:
+
+        >>> import jax.numpy as jnp
+        >>> import vardax as vdx
+        >>> axis = jnp.array([0.0, 1.0])
+        >>> op = vdx.interp_obs_from_coords((axis, axis), jnp.array([[0.5, 0.5]]))
+        >>> field = jnp.array([[0.0, 1.0], [2.0, 3.0]])
+        >>> bool(jnp.allclose(op(field), 1.5))
+        True
+
+        A mask zeroes out dropped observations:
+
+        >>> pts = jnp.array([[0.0, 0.0], [1.0, 1.0]])
+        >>> op2 = vdx.interp_obs_from_coords((axis, axis), pts)
+        >>> op2(field, mask=jnp.array([1.0, 0.0]))
+        Array([0., 0.], dtype=float32)
+
+        The operator is linear, so its linearisation applies the same map:
+
+        >>> bool(jnp.allclose(op2.linearize(field).mv(field), op2(field)))
+        True
     """
 
     indices: Int[Array, "n_obs 4"]
@@ -56,7 +88,15 @@ class InterpObs(eqx.Module):
         state: Float[Array, "*grid"],
         mask: Float[Array, " n_obs"] | None = None,
     ) -> Float[Array, " n_obs"]:
-        """Apply ``H`` (optionally masked) to a grid state."""
+        """Apply ``H`` (optionally masked) to a grid state.
+
+        Args:
+            state: Grid state, either ``(ny, nx)`` or flattened.
+            mask: Optional observation mask multiplying the predictions.
+
+        Returns:
+            The interpolated observations, one per location.
+        """
         flat = flatten(state)
         corners = flat[self.indices]
         # yₒ = Σₖ wₒₖ x[iₒₖ]: bilinear weights over the four corners;
@@ -83,6 +123,12 @@ class InterpObs(eqx.Module):
         layouts — variational models that carry flat state vectors then
         get a flat-shaped ``H`` instead of being forced through the
         grid shape.
+
+        Args:
+            x: State whose shape and dtype define the operator input.
+
+        Returns:
+            The operator $H$, which does not depend on ``x`` otherwise.
         """
         in_struct = jax.ShapeDtypeStruct(x.shape, x.dtype)
         return lx.FunctionLinearOperator(self.__call__, in_struct)
@@ -96,15 +142,50 @@ def interp_obs_from_coords(
 ) -> InterpObs:
     """Build an `InterpObs` from grid axis arrays + obs locations.
 
+    Locates each observation in its grid cell and caches the four corner
+    indices and bilinear weights. Points outside the grid are clamped to
+    the edge.
+
     Args:
         grid_coords: ``(y_axis, x_axis)`` tuple of 1-D axis arrays.
-        obs_coords: ``(n_obs, 2)`` array of ``(y, x)`` obs locations.
+        obs_coords: ``(y, x)`` observation locations, one row each.
         order: interpolation order. Only ``order=1`` (bilinear) is
             currently supported.
 
     Returns:
         Configured ``InterpObs`` instance with precomputed cached
         ``(indices, weights)``.
+
+    Raises:
+        GridError: If ``grid_coords`` does not hold two axes, or an axis
+            is not strictly increasing with at least two points.
+        ShapeError: If ``obs_coords`` is not an ``(n_obs, 2)`` array.
+        NotImplementedError: If ``order`` is not 1.
+
+    Examples:
+        Cache the stencil for two observations on a 3 x 3 grid:
+
+        >>> import jax.numpy as jnp
+        >>> import vardax as vdx
+        >>> axis = jnp.array([0.0, 1.0, 2.0])
+        >>> obs = jnp.array([[0.5, 1.5], [2.0, 0.0]])
+        >>> op = vdx.interp_obs_from_coords((axis, axis), obs)
+        >>> op.indices.shape, op.weights.shape
+        ((2, 4), (2, 4))
+
+        Predict the observations from a state whose value is 3 * y + x:
+
+        >>> op(jnp.arange(9.0).reshape(3, 3))
+        Array([3., 6.], dtype=float32)
+
+        A descending axis is rejected:
+
+        >>> vdx.interp_obs_from_coords(
+        ...     (axis[::-1], axis), obs
+        ... )  # doctest: +IGNORE_EXCEPTION_DETAIL
+        Traceback (most recent call last):
+        ...
+        GridError: y_axis must be strictly increasing ...
     """
     if order != 1:
         raise NotImplementedError(

@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 
 
 def time_patches(ts: Float[Array, " T"]) -> Float[Array, "T-1 2"]:
-    """Overlapping consecutive time pairs for one-step increment losses.
+    r"""Overlapping consecutive time pairs for one-step increment losses.
 
     Reimplements the legacy ``kernex.kmap(kernel_size=(2,), relative=True)``
     sliding window without the ``kernex`` dependency: for a 1-D array of
@@ -29,10 +29,10 @@ def time_patches(ts: Float[Array, " T"]) -> Float[Array, "T-1 2"]:
     pairs ``[[t_0, t_1], [t_1, t_2], ..., [t_{T-2}, t_{T-1}]]``.
 
     Args:
-        ts: Monotonic time coordinates of shape ``(T,)``.
+        ts: Monotonic time coordinates $t_0, \dots, t_{T-1}$.
 
     Returns:
-        Array of shape ``(T - 1, 2)`` of consecutive time pairs.
+        The consecutive pairs $(t_i, t_{i+1})$, one row per pair.
 
     Examples:
         >>> import jax.numpy as jnp
@@ -41,6 +41,17 @@ def time_patches(ts: Float[Array, " T"]) -> Float[Array, "T-1 2"]:
         Array([[0., 1.],
                [1., 2.],
                [2., 3.]], dtype=float32)
+
+        A single time yields no pairs:
+
+        >>> time_patches(jnp.array([0.0])).shape
+        (0, 2)
+
+        The pairs drive the one-step solves of
+        [`DynIncrements`][vardax.DynIncrements]:
+
+        >>> time_patches(jnp.linspace(0.0, 1.0, 5)).shape
+        (4, 2)
     """
     # jnp, not einx: a single time gives zero pairs, which einx cannot size
     return jnp.stack([ts[:-1], ts[1:]], axis=-1)

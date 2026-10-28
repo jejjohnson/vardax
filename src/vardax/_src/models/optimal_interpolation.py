@@ -38,12 +38,24 @@ from vardax._src.models._analysis_step import analyse_forecast
 class OptimalInterpolation(eqx.Module):
     r"""BLUE / OI — closed-form linear-Gaussian analysis.
 
+    $$x^* = x_b + B H^\top (H B H^\top + R)^{-1} (y - H x_b)$$
+
+    Algorithm:
+        1. For each sample (``jax.vmap``), form the masked operator
+           $m \odot H(\cdot)$ and the innovation
+           $d = m \odot y - m \odot H(x_b)$.
+        2. Linearise the masked operator at $x_b$ to get $H$ and build the
+           innovation operator $H B H^\top + R$ without materialising it.
+        3. Solve $(H B H^\top + R) v = d$ with CG, or with ``solver`` when
+           given.
+        4. Return $x_b + B H^\top v$.
+
     Attributes:
         obs_op: Observation operator. Must be linear (its
             ``linearize(x)`` must return an operator independent of
             ``x``). Use [`ThreeDVar`][vardax.ThreeDVar] for non-linear
             ``H``.
-        prior_mean: Background $x_b$ of shape ``(T, N)``.
+        prior_mean: Background $x_b$.
         prior_cov_op: Background-error covariance $B$ as a
             ``lineax.AbstractLinearOperator``.
         obs_cov_op: Observation-error covariance $R$ as a
@@ -74,6 +86,29 @@ class OptimalInterpolation(eqx.Module):
         (1, 1, 3)
         >>> bool(jnp.allclose(xa, 0.5, atol=1e-4))
         True
+
+        Unobserved entries (zero mask) keep the background, and an exact
+        Cholesky solver replaces CG:
+
+        >>> exact = vardax.OptimalInterpolation(
+        ...     obs_op=vardax.MaskedIdentity(),
+        ...     prior_mean=jnp.zeros((1, 3)),
+        ...     prior_cov_op=eye,
+        ...     obs_cov_op=eye,
+        ...     solver=lx.Cholesky(),
+        ... )
+        >>> gap = vardax.Batch1D(
+        ...     input=jnp.ones((1, 1, 3)), mask=jnp.array([[[1.0, 0.0, 1.0]]])
+        ... )
+        >>> bool(jnp.allclose(exact(gap), jnp.array([0.5, 0.0, 0.5]), atol=1e-5))
+        True
+
+        Composed with the Laplace adapter, the posterior covariance of this
+        problem is $(I + I)^{-1} = I / 2$:
+
+        >>> post = oi.posterior(batch)
+        >>> bool(jnp.allclose(post.cov.mv(jnp.ones((1, 3))), 0.5, atol=1e-2))
+        True
     """
 
     obs_op: Any  # ObservationOperator (linear)
@@ -86,7 +121,14 @@ class OptimalInterpolation(eqx.Module):
     solver: lx.AbstractLinearSolver | None = eqx.field(static=True, default=None)
 
     def __call__(self, batch: Batch1D) -> Float[Array, " batch *state"]:
-        """BLUE analysis for each sample in the batch."""
+        """BLUE analysis for each sample in the batch.
+
+        Args:
+            batch: A gridded [`Batch1D`][vardax.Batch1D].
+
+        Returns:
+            The analysis of every sample, with a leading batch axis.
+        """
 
         def _one(
             sample_obs: Float[Array, "*obs"], sample_mask: Float[Array, "*obs"]
@@ -168,7 +210,8 @@ class OptimalInterpolation(eqx.Module):
             The window's posterior: mean and lazy covariance.
 
         Raises:
-            ValueError: If ``batch`` holds more than one window.
+            ShapeError: If ``batch`` holds more than one window.
+            UnsupportedInputError: For a point batch.
         """
         from vardax._src.posterior._precision import model_posterior
 
@@ -179,7 +222,12 @@ class OptimalInterpolation(eqx.Module):
         return model_posterior(self, batch, adapter)
 
     def as_analysis_step(self) -> _OIAnalysisStep:
-        """Adapt to ``pipekit_cycle.AnalysisStep`` (Decision D8)."""
+        """Adapt to ``pipekit_cycle.AnalysisStep`` (Decision D8).
+
+        Returns:
+            An analysis step that returns the BLUE analysis around a
+            supplied forecast, treating ``NaN`` observations as missing.
+        """
         return _OIAnalysisStep(self)
 
 

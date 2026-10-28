@@ -15,7 +15,10 @@ import lineax as lx
 
 
 class Posterior(eqx.Module):
-    """Posterior container — Decision D10.
+    r"""Posterior container — Decision D10.
+
+    A plain container for $p(x \mid y) \approx \mathcal{N}(\text{mean}, \text{cov})$,
+    plus optional samples and provenance.
 
     Attributes:
         mean: Posterior mean / MAP estimate.
@@ -23,9 +26,8 @@ class Posterior(eqx.Module):
             or ``None`` for amortized / sampling-only heads. Stored
             lazily — never materialised into a dense matrix unless the
             user asks.
-        samples: Optional ``(B, M, ...)`` posterior samples (from a
-            flow head, ensemble, or score-based diffusion). ``None``
-            for analytical adapters.
+        samples: Optional posterior samples (from a flow head, ensemble,
+            or score-based diffusion). ``None`` for analytical adapters.
         provenance: Free-form dict carrying audit info — at minimum
             ``{forward_model_id, n_iter, J_star, converged,
             vardax_version}``. Consumed by
@@ -42,6 +44,17 @@ class Posterior(eqx.Module):
         True
         >>> post.provenance
         {}
+
+        A Gaussian posterior carries a lazy covariance operator and audit
+        metadata:
+
+        >>> import jax, lineax as lx
+        >>> eye = lx.IdentityLinearOperator(jax.ShapeDtypeStruct((2,), jnp.float32))
+        >>> gauss = vdx.Posterior(
+        ...     mean=jnp.zeros(2), cov=eye, provenance={"adapter": "demo"}
+        ... )
+        >>> gauss.cov.mv(jnp.ones(2)).shape, gauss.provenance["adapter"]
+        ((2,), 'demo')
     """
 
     mean: Float[Array, ...]

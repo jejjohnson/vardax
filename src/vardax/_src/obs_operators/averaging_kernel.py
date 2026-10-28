@@ -28,7 +28,16 @@ import lineax as lx
 
 
 class AveragingKernel(eqx.Module):
-    """RTM L2-style averaging-kernel obs operator.
+    r"""RTM L2-style averaging-kernel obs operator.
+
+    $$H(x) = A \, (h \odot x + (1 - h) \odot x_a)$$
+
+    Algorithm:
+        1. Blend the state with the retrieval prior:
+           $z = h \odot x + (1 - h) \odot x_a$.
+        2. Apply the kernel: $\hat y = A z$.
+        3. ``linearize`` returns $A \, \mathrm{diag}(h)$ without evaluating
+           anything, because the map is affine in $x$.
 
     Attributes:
         A: Averaging kernel matrix, stored as an
@@ -37,6 +46,30 @@ class AveragingKernel(eqx.Module):
             separable kernels, LowRank for retrievals with low DOF).
         x_a: Retrieval prior, same shape as the model state.
         h: Weighting vector (often pressure-weighted).
+
+    Examples:
+        With $h = 1$ the prior drops out and the operator is just $A x$:
+
+        >>> import jax.numpy as jnp, lineax as lx
+        >>> import vardax as vdx
+        >>> A = jnp.array([[0.5, 0.5], [0.0, 1.0]])
+        >>> kernel = lx.MatrixLinearOperator(A)
+        >>> op = vdx.AveragingKernel(A=kernel, x_a=jnp.zeros(2), h=jnp.ones(2))
+        >>> bool(jnp.allclose(op(jnp.array([1.0, 3.0])), A @ jnp.array([1.0, 3.0])))
+        True
+
+        Where $h = 0$ the output falls back to the retrieval prior $x_a$:
+
+        >>> op0 = vdx.AveragingKernel(
+        ...     A=kernel, x_a=jnp.array([2.0, 2.0]), h=jnp.zeros(2)
+        ... )
+        >>> bool(jnp.allclose(op0(jnp.array([9.0, 9.0])), A @ jnp.array([2.0, 2.0])))
+        True
+
+        The tangent-linear operator is $A \, \mathrm{diag}(h)$:
+
+        >>> bool(jnp.allclose(op.linearize(jnp.zeros(2)).as_matrix(), A))
+        True
     """
 
     A: lx.AbstractLinearOperator
@@ -48,7 +81,15 @@ class AveragingKernel(eqx.Module):
         return self.A.mv(inner)
 
     def linearize(self, x: Float[Array, " N"]) -> lx.AbstractLinearOperator:
-        r"""Tangent-linear operator at ``x``: $A \cdot \mathrm{diag}(h)$."""
+        r"""Tangent-linear operator at ``x``: $A \cdot \mathrm{diag}(h)$.
+
+        Args:
+            x: State at which to linearise; unused because the map is
+                affine.
+
+        Returns:
+            The operator $A \, \mathrm{diag}(h)$.
+        """
         diag_h = lx.DiagonalLinearOperator(self.h)
         return self.A @ diag_h
 

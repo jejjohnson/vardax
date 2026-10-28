@@ -33,12 +33,21 @@ from .k_step import KStepAdjoint
 
 
 class OneStepAdjoint(KStepAdjoint):
-    """One-step differentiation (Bolte et al., 2023).
+    r"""One-step differentiation (Bolte et al., 2023).
 
     Run ``K - 1`` warmup iterations of the inner solver with
     ``jax.lax.stop_gradient``, then one differentiable step. Gives
     O(1) memory and is exact at the fixed point of the inner
     iteration.
+
+    $$ \frac{d z^\star}{d\phi} \approx \partial_\phi T(\bar z_{K-1}; \phi) $$
+
+    where $\bar z_{K-1}$ is the iterate after the warmup, held fixed.
+
+    Algorithm:
+        1. Run $K - 1$ solver iterations under ``jax.lax.stop_gradient``.
+        2. Run the last iteration differentiably.
+        3. Backpropagate through that single step.
 
     Use as the ``solver_adjoint`` argument to
     [`FourDVarNet1D`][vardax.FourDVarNet1D] /
@@ -53,6 +62,19 @@ class OneStepAdjoint(KStepAdjoint):
         key=key,
     )
     ```
+
+    Examples:
+        >>> import vardax
+        >>> adjoint = vardax.OneStepAdjoint()
+        >>> adjoint
+        OneStepAdjoint()
+        >>> adjoint.k
+        1
+
+        It is [`KStepAdjoint`][vardax.KStepAdjoint] with ``k=1``.
+
+        >>> isinstance(adjoint, vardax.KStepAdjoint)
+        True
 
     References:
         Bolte, J., Pauwels, E. & Vaiter, S. (2023). One-step

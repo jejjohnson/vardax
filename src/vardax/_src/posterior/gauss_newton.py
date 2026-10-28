@@ -35,6 +35,14 @@ class GaussNewtonHessian(eqx.Module):
     [`LaplaceCovariance`][vardax.LaplaceCovariance], with CG capped at
     ``n_krylov`` iterations per covariance mat-vec.
 
+    Algorithm:
+        1. Linearise the observation operator (and, for 4DVar, the model
+           rollout) at the analysis.
+        2. Assemble the precision $B^{-1} + \sum_t G_t^\top R_t^{-1} G_t$
+           matrix-free, with $G_t = H'_t M'_{t \leftarrow 0}$.
+        3. Return its inverse as a lazy operator applied by CG with at
+           most ``n_krylov`` steps.
+
     Attributes:
         prior_cov_op: $B$. Default ``None``: the model's ``prior_cov_op``.
             Unused for a linear control, whose prior is the basis's $Q$.
@@ -67,6 +75,24 @@ class GaussNewtonHessian(eqx.Module):
         >>> post = adapter(model(batch)[0], model, batch)
         >>> bool(jnp.allclose(post.cov.mv(jnp.ones(2)), 1 / 2.25, atol=1e-5))
         True
+
+        The Krylov budget is recorded in the provenance:
+
+        >>> post.provenance["n_krylov"]
+        50
+
+        A point batch is not supported yet:
+
+        >>> pts = vardax.PointObsBatch(
+        ...     coords=jnp.zeros((1, 1)),
+        ...     values=jnp.zeros(1),
+        ...     sigma=jnp.ones(1),
+        ...     valid=jnp.ones(1, bool),
+        ... )
+        >>> adapter(model(batch)[0], model, pts)  # doctest: +IGNORE_EXCEPTION_DETAIL
+        Traceback (most recent call last):
+        ...
+        UnsupportedInputError: The posterior adapters do not support ...
     """
 
     prior_cov_op: lx.AbstractLinearOperator | None = None
@@ -93,10 +119,12 @@ class GaussNewtonHessian(eqx.Module):
 
         Raises:
             AttributeError: If the model exposes no ``obs_op``.
-            ValueError: For a point batch, a multi-sample batch, a
-                nonlinear ``parameterization=``, or a parameterized
-                ``WeakFourDVar``. A ``LinearParameterization`` (or
-                ``basis=``) control gives $\Phi P_\theta \Phi^\top$.
+            UnsupportedInputError: For a point batch, a non-``Batch1D``
+                batch, a ``basis=`` or ``parameterization=`` control, or
+                a ``WeakFourDVar`` analysis that is not ``(x0, eta)``.
+            ShapeError: If the batch holds several windows.
+            MissingInputError: If neither the adapter nor the model has
+                a covariance operator.
         """
         solver = lx.CG(atol=self.tol, rtol=self.tol, max_steps=self.n_krylov)
         mean, covariance, structure = gauss_newton_covariance(

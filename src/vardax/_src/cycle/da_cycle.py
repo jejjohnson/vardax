@@ -45,13 +45,21 @@ def VarDACycle(
     n_steps: int = 1,
     save_history: bool = True,
 ) -> DACycle:
-    """Build a ``pipekit_cycle.DACycle`` from a vardax model.
+    r"""Build a ``pipekit_cycle.DACycle`` from a vardax model.
 
     Pulls ``model.as_analysis_step()`` and hands it to pipekit-cycle.
     The same orchestration code works for any of the seven Layer 2
     classes — `OptimalInterpolation`, `ThreeDVar`, `StrongFourDVar`,
     `WeakFourDVar`, `IncrementalFourDVar`, `FourDVarNet`,
-    `AmortizedPosterior`.
+    `AmortizedPosterior`. Each call alternates forecast and analysis,
+
+    $$ x^f_k = \mathcal M(x^a_{k-1}), \qquad x^a_k = \mathrm{analysis}(x^f_k, y_k) $$
+
+    Algorithm:
+        1. Check that ``model`` exposes ``as_analysis_step``.
+        2. Take the analysis step from the model.
+        3. Return a ``DACycle`` that forecasts with ``forward`` and
+           analyses with that step, ``n_steps`` times per call.
 
     Args:
         forward: Forward model satisfying ``pipekit_cycle.ForwardModel``.
@@ -98,6 +106,21 @@ def VarDACycle(
         ... )
         >>> type(cycle).__name__
         'DACycle'
+
+        With no ``obs_source`` the analysis is skipped and the forecast
+        propagates; the factory records its settings.
+
+        >>> cycle.n_steps
+        1
+
+        A model without ``as_analysis_step`` is rejected.
+
+        >>> vdx.VarDACycle(  # doctest: +IGNORE_EXCEPTION_DETAIL
+        ...     forward=IdentityForward(), obs_op=vdx.MaskedIdentity(), model=object()
+        ... )
+        Traceback (most recent call last):
+        ...
+        AttributeError: VarDACycle requires a model exposing `.as_analysis_step()`
     """
     if not hasattr(model, "as_analysis_step"):
         raise AttributeError(
@@ -129,6 +152,12 @@ def VarSmootherCycle(
     consecutive ``window``-step windows back to back, analysing each one
     once all of its observations are in.
 
+    Algorithm:
+        1. Check that ``model`` exposes ``as_analysis_step``.
+        2. Take the analysis step from the model.
+        3. Return a ``SmootherCycle`` that, per window of ``window``
+           forecast steps, analyses once all observations are in.
+
     Args:
         forward: Forward model.
         obs_op: Observation operator.
@@ -141,6 +170,48 @@ def VarSmootherCycle(
 
     Returns:
         Configured ``pipekit_cycle.SmootherCycle``.
+
+    Raises:
+        AttributeError: If ``model`` does not expose
+            ``.as_analysis_step()``.
+
+    Examples:
+        >>> import equinox as eqx
+        >>> import jax, jax.numpy as jnp, lineax as lx
+        >>> import vardax as vdx
+        >>> class IdentityForward(eqx.Module):
+        ...     dt: float = 1.0
+        ...     state_signature: None = None
+        ...
+        ...     def step(self, state, dt):
+        ...         return state
+        >>> eye = lx.IdentityLinearOperator(jax.ShapeDtypeStruct((1, 4), jnp.float32))
+        >>> oi = vdx.OptimalInterpolation(
+        ...     obs_op=vdx.LinearObs(H_mat=eye),
+        ...     prior_mean=jnp.zeros((1, 4)),
+        ...     prior_cov_op=eye,
+        ...     obs_cov_op=eye,
+        ... )
+        >>> smoother = vdx.VarSmootherCycle(
+        ...     forward=IdentityForward(),
+        ...     obs_op=vdx.MaskedIdentity(),
+        ...     model=oi,
+        ...     window=3,
+        ... )
+        >>> type(smoother).__name__
+        'SmootherCycle'
+
+        A model without ``as_analysis_step`` is rejected.
+
+        >>> vdx.VarSmootherCycle(  # doctest: +IGNORE_EXCEPTION_DETAIL
+        ...     forward=IdentityForward(),
+        ...     obs_op=vdx.MaskedIdentity(),
+        ...     model=object(),
+        ...     window=3,
+        ... )
+        Traceback (most recent call last):
+        ...
+        AttributeError: VarSmootherCycle requires a model exposing `.as_analysis_step()`
     """
     if not hasattr(model, "as_analysis_step"):
         raise AttributeError(

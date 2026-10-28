@@ -85,19 +85,28 @@ def point_obs_cost(
 ) -> Float[Array, ""]:
     r"""Masked, $\sigma$-weighted observation cost of a point batch.
 
-    $J_o = \tfrac12 \sum_i m_i (y_i - \hat y_i)^2 / \sigma_i^2$, with the
-    whitened residual set to zero by ``jnp.where`` on padding rows before
-    squaring, so padding contributes zero value and zero gradient.
+    $$J_o = \tfrac12 \sum_i m_i (y_i - \hat y_i)^2 / \sigma_i^2$$
+
+    The whitened residual is set to zero by ``jnp.where`` on padding rows
+    before squaring, so padding contributes zero value and zero gradient.
+
+    Algorithm:
+        1. Replace padding rows by finite placeholders.
+        2. Form the whitened residual $(y_i - \hat y_i) / \sigma_i$ and set
+           it to zero where $m_i$ is false.
+        3. Return half the sum of squares.
 
     Args:
-        predictions: $\hat y_i = \mathcal H(x)(s_i, t_i)$, shape
-            ``(N_obs,)``.
+        predictions: Predicted observations
+            $\hat y_i = \mathcal H(x)(s_i, t_i)$.
         batch: The observations (one sample, no batch axis).
 
     Returns:
         The scalar cost.
 
     Examples:
+        A batch whose third row is padding (``NaN`` value, zero sigma):
+
         >>> import jax.numpy as jnp, vardax
         >>> batch = vardax.PointObsBatch(
         ...     coords=jnp.zeros((3, 1)),
@@ -107,6 +116,25 @@ def point_obs_cost(
         ... )
         >>> float(vardax.point_obs_cost(jnp.zeros(3), batch))  # ½ (1 + 1)
         1.0
+
+        Padding contributes zero gradient, not ``NaN``:
+
+        >>> import jax
+        >>> grad = jax.grad(lambda p: vardax.point_obs_cost(p, batch))(jnp.zeros(3))
+        >>> bool(jnp.all(jnp.isfinite(grad)))
+        True
+
+        Composed with a point operator on a gridded state:
+
+        >>> H = vardax.GridPointObs((jnp.arange(3.0),))
+        >>> b = vardax.PointObsBatch(
+        ...     coords=jnp.array([[0.5]]),
+        ...     values=jnp.array([1.0]),
+        ...     sigma=jnp.array([1.0]),
+        ...     valid=jnp.array([True]),
+        ... )
+        >>> float(vardax.point_obs_cost(H(jnp.zeros((1, 3)), b), b))
+        0.5
     """
     return 0.5 * jnp.sum(jnp.square(whitened_residual(predictions, batch)))
 
@@ -151,9 +179,21 @@ class GridPointObs(eqx.Module):
     further coordinate columns (a time) are ignored: the time enters
     through ``time_index``.
 
+    Algorithm:
+        1. Replace padding rows by finite placeholders.
+        2. Pick each observation's frame ``state[time_index]``.
+        3. Bracket the coordinates in the grid axes, clamping at the edges.
+        4. Combine the stencil corners with linear (1-D) or bilinear (2-D)
+           weights.
+
     Attributes:
         grid_axes: One strictly increasing 1-D axis per spatial
             dimension: ``(x_axis,)`` or ``(y_axis, x_axis)``.
+
+    Raises:
+        GridError: At construction, if ``grid_axes`` holds neither one nor
+            two axes, or an axis is not 1-D, strictly increasing and at
+            least two points long.
 
     Examples:
         A 1-D grid at $0, 1, 2, 3$: linear interpolation between nodes.
@@ -169,6 +209,26 @@ class GridPointObs(eqx.Module):
         ... )
         >>> H(state, batch)
         Array([ 5. , 22.5], dtype=float32)
+
+        Points outside the grid are clamped to the edge value:
+
+        >>> far = vardax.PointObsBatch(
+        ...     coords=jnp.array([[-5.0], [9.0]]),
+        ...     values=jnp.zeros(2),
+        ...     sigma=jnp.ones(2),
+        ...     valid=jnp.ones(2, bool),
+        ... )
+        >>> H(state, far)
+        Array([ 0., 30.], dtype=float32)
+
+        A non-increasing axis is rejected:
+
+        >>> vardax.GridPointObs(
+        ...     (jnp.array([1.0, 0.0]),)
+        ... )  # doctest: +IGNORE_EXCEPTION_DETAIL
+        Traceback (most recent call last):
+        ...
+        GridError: grid_axes[0] must be strictly increasing.
     """
 
     grid_axes: tuple[Float[Array, " _"], ...]
@@ -192,7 +252,16 @@ class GridPointObs(eqx.Module):
     def __call__(
         self, state: Float[Array, "n_times ..."], batch: PointObsBatch
     ) -> Float[Array, " N_obs"]:
-        """Interpolate ``state[time_index]`` at the observation coordinates."""
+        r"""Interpolate ``state[time_index]`` at the observation coordinates.
+
+        Args:
+            state: Gridded state with a leading time axis.
+            batch: The point observations.
+
+        Returns:
+            The interpolated prediction $\hat y_i$ for every row,
+            padding included.
+        """
         safe = _safe(batch)
         n_obs = safe.values.shape[0]
         grid_shape = tuple(axis.shape[0] for axis in self.grid_axes)
@@ -230,7 +299,14 @@ class FieldPointObs(eqx.Module):
     field. Padding rows are evaluated at the first valid row's
     coordinates, so the field is never queried where no observation is.
 
+    Algorithm:
+        1. Replace padding rows by finite placeholders.
+        2. ``vmap`` the field over the coordinate rows.
+        3. Reduce each result to one value per observation.
+
     Examples:
+        A field of two coordinates:
+
         >>> import jax.numpy as jnp, vardax
         >>> H = vardax.FieldPointObs()
         >>> batch = vardax.PointObsBatch(
@@ -241,12 +317,32 @@ class FieldPointObs(eqx.Module):
         ... )
         >>> H(lambda s: jnp.sum(s, keepdims=True), batch)
         Array([3., 7.], dtype=float32)
+
+        A scalar-returning field works too, and a padding row reuses the
+        first valid coordinates:
+
+        >>> padded = vardax.PointObsBatch(
+        ...     coords=jnp.array([[1.0, 2.0], [9.0, 9.0]]),
+        ...     values=jnp.zeros(2),
+        ...     sigma=jnp.ones(2),
+        ...     valid=jnp.array([True, False]),
+        ... )
+        >>> H(lambda s: s[0] * s[1], padded)
+        Array([2., 2.], dtype=float32)
     """
 
     def __call__(
         self, field: Callable[[Array], Array], batch: PointObsBatch
     ) -> Float[Array, " N_obs"]:
-        """Evaluate ``field`` at each coordinate row."""
+        r"""Evaluate ``field`` at each coordinate row.
+
+        Args:
+            field: Callable mapping one coordinate row to a value.
+            batch: The point observations.
+
+        Returns:
+            The field value $\hat y_i = f(s_i)$ for every row.
+        """
         safe = _safe(batch)
         values = jax.vmap(field)(safe.coords)
         # a scalar field may return (1,) per point; one value per observation

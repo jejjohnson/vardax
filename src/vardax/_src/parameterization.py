@@ -48,6 +48,12 @@ class LinearParameterization(eqx.Module):
     ``parameterization=LinearParameterization(basis, x_b)`` minimises the
     same cost as ``ReducedBasisFourDVar(basis=basis)`` with ``prior_mean=x_b``.
 
+    Algorithm:
+        1. ``decode`` applies the basis to the coefficients and adds
+           $x_b$.
+        2. ``penalty`` applies $Q^{-1}$ through the basis.
+        3. ``init_control`` returns the zero coefficient vector.
+
     Attributes:
         basis: The `ReducedBasis` ($\Phi$, $Q^{-1}$, ``nbasis``).
         x_b: Background state the increment is added to.
@@ -63,23 +69,56 @@ class LinearParameterization(eqx.Module):
         Array([2., 0., 1., 1.], dtype=float32)
         >>> float(param.penalty(jnp.array([1.0, -1.0])))  # ½ (1 + 1) / 2
         0.5
+
+        The initial control decodes to the background, whatever the basis.
+
+        >>> bool(jnp.allclose(param.decode(X), param.x_b))
+        True
+
+        It satisfies the [`StateParameterization`][vardax.StateParameterization]
+        protocol.
+
+        >>> isinstance(param, vardax.StateParameterization)
+        True
     """
 
     basis: Any
     x_b: Float[Array, ...]
 
     def decode(self, theta: Float[Array, " M"], t: float | None = None) -> Array:
-        """Return the state $x_b + \\Phi(t) X$, shaped like ``x_b``."""
+        """Return the state $x_b + \\Phi(t) X$, shaped like ``x_b``.
+
+        Args:
+            theta: Coefficient vector $X$.
+            t: Time at which the basis is evaluated; ``None`` means ``0``.
+
+        Returns:
+            The decoded state.
+        """
         increment = self.basis.operg(0.0 if t is None else t, theta)
         # x = x_b + Φ(t) X
         return self.x_b + as_shape(increment, self.x_b.shape)
 
     def penalty(self, theta: Float[Array, " M"]) -> Float[Array, ""]:
-        """Return $\\tfrac12 X^\\top Q^{-1} X$."""
+        """Return $\\tfrac12 X^\\top Q^{-1} X$.
+
+        Args:
+            theta: Coefficient vector $X$.
+
+        Returns:
+            The scalar penalty.
+        """
         return 0.5 * jnp.sum(theta * self.basis.prior_inv(theta))
 
     def init_control(self, *, key: PRNGKeyArray | None = None) -> Array:
-        """Return the zero coefficient vector (the background); ``key`` is unused."""
+        """Return the zero coefficient vector (the background).
+
+        Args:
+            key: Unused; the start is deterministic.
+
+        Returns:
+            The zero coefficient vector $X = 0$.
+        """
         del key
         return jnp.zeros((self.basis.nbasis,), dtype=self.x_b.dtype)
 
@@ -96,6 +135,17 @@ class NeuralFieldParameterization(eqx.Module):
     the field is evaluated at $(s_j, t)$, so a space-time field takes
     ``D + 1`` inputs. The penalty is weight decay,
     $\mathrm{pen}(\theta) = \tfrac{\alpha}{2} \sum_i \theta_i^2$.
+
+    Algorithm:
+        1. ``init_control`` extracts the array leaves of ``field``
+           selected by ``filter_spec`` as $\theta$.
+        2. ``decode`` recombines $\theta$ with the fixed part of ``field``
+           and evaluates it at every grid coordinate.
+        3. ``penalty`` returns the weight decay of $\theta$.
+
+    Raises:
+        ShapeError: If ``coords`` is not two-dimensional.
+        ConfigurationError: If ``weight_decay`` is negative.
 
     Attributes:
         field: Single-example network ``field(s) -> (C,)``, for example a
@@ -126,6 +176,22 @@ class NeuralFieldParameterization(eqx.Module):
         (40,)
         >>> bool(param.penalty(theta) > 0)
         True
+
+        With a time, the field takes ``D + 1`` inputs.
+
+        >>> st = geonnax.SIREN.init(3, 16, 1, depth=3, key=jax.random.PRNGKey(1))
+        >>> st_param = vardax.NeuralFieldParameterization(st, coords, 0.0)
+        >>> st_param.decode(st_param.init_control(), t=0.5).shape
+        (40,)
+
+        Negative weight decay is rejected.
+
+        >>> vardax.NeuralFieldParameterization(  # doctest: +IGNORE_EXCEPTION_DETAIL
+        ...     siren, coords, -1.0
+        ... )
+        Traceback (most recent call last):
+        ...
+        ConfigurationError: weight_decay must be >= 0, got -1.0.
     """
 
     field: eqx.Module
@@ -152,12 +218,28 @@ class NeuralFieldParameterization(eqx.Module):
         self.filter_spec = filter_spec
 
     def as_field(self, theta: PyTree[Array]) -> Callable[[Array], Array]:
-        """The field with parameters ``theta``, as a callable ``s -> (C,)``."""
+        """The field with parameters ``theta``, as a callable ``s -> (C,)``.
+
+        Args:
+            theta: Control, the array half of the field.
+
+        Returns:
+            The field with ``theta`` combined into the fixed part.
+        """
         static = eqx.filter(self.field, self.filter_spec, inverse=True)
         return eqx.combine(theta, static)
 
     def decode(self, theta: PyTree[Array], t: float | None = None) -> Array:
-        """Evaluate the field with parameters ``theta`` on the grid."""
+        """Evaluate the field with parameters ``theta`` on the grid.
+
+        Args:
+            theta: Control, the array half of the field.
+            t: Time appended to every coordinate; ``None`` for a
+                time-independent field.
+
+        Returns:
+            The field values at the grid coordinates.
+        """
         field = self.as_field(theta)
         coords = self.coords
         if t is not None:
@@ -169,13 +251,27 @@ class NeuralFieldParameterization(eqx.Module):
         return values
 
     def penalty(self, theta: PyTree[Array]) -> Float[Array, ""]:
-        """Return $\\tfrac{\\alpha}{2} \\lVert \\theta \\rVert^2$."""
+        """Return $\\tfrac{\\alpha}{2} \\lVert \\theta \\rVert^2$.
+
+        Args:
+            theta: Control, the array half of the field.
+
+        Returns:
+            The scalar weight-decay penalty.
+        """
         leaves = jtu.tree_leaves(theta)
         sq = sum((jnp.sum(jnp.square(leaf)) for leaf in leaves), jnp.zeros(()))
         return 0.5 * self.weight_decay * sq
 
     def init_control(self, *, key: PRNGKeyArray | None = None) -> PyTree[Array]:
-        """Return the field's current parameters; ``key`` is unused."""
+        """Return the field's current parameters.
+
+        Args:
+            key: Unused; the start is the field's own parameters.
+
+        Returns:
+            The array half of the field selected by ``filter_spec``.
+        """
         del key
         return eqx.filter(self.field, self.filter_spec)
 

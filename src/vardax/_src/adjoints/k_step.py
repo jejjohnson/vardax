@@ -28,7 +28,21 @@ from vardax._src.errors import ConfigurationError
 
 
 class KStepAdjoint(optx.AbstractAdjoint):
-    """K-step differentiation: warmup under ``stop_gradient``, then ``k`` live steps.
+    r"""K-step differentiation: warmup under ``stop_gradient``, then ``k`` live steps.
+
+    For a solver iteration $z_{j+1} = T(z_j)$ run $n$ times, the gradient
+    flows only through the last $k$ steps,
+
+    $$ \frac{d z_n}{d\phi} \approx \frac{\partial T^{k}(\bar z_{n-k})}{\partial\phi} $$
+
+    where $\bar z_{n-k}$ is the iterate after the warmup, held fixed.
+
+    Algorithm:
+        1. Run the first $n - k$ solver iterations under
+           ``jax.lax.stop_gradient``.
+        2. Run the last $k$ iterations differentiably.
+        3. Backpropagate through those $k$ iterations only, at memory cost
+           $O(k)$.
 
     Use as the ``solver_adjoint`` argument to
     [`FourDVarNet1D`][vardax.FourDVarNet1D] /
@@ -44,11 +58,34 @@ class KStepAdjoint(optx.AbstractAdjoint):
     )
     ```
 
+    Raises:
+        ConfigurationError: If ``k`` is below 1.
+
     Attributes:
         k: Number of trailing solver iterations that propagate
             gradients. Must be at least 1; values larger than
             ``n_solver_steps`` are clipped to a fully differentiable
             solve.
+
+    Examples:
+        >>> import vardax
+        >>> vardax.KStepAdjoint(k=3)
+        KStepAdjoint(k=3)
+
+        ``k=1`` is the one-step estimator, and `OneStepAdjoint` is a
+        subclass.
+
+        >>> isinstance(vardax.OneStepAdjoint(), vardax.KStepAdjoint)
+        True
+        >>> vardax.KStepAdjoint().k
+        1
+
+        A non-positive ``k`` is rejected.
+
+        >>> vardax.KStepAdjoint(k=0)  # doctest: +IGNORE_EXCEPTION_DETAIL
+        Traceback (most recent call last):
+        ...
+        ConfigurationError: KStepAdjoint needs k >= 1; got k=0.
 
     References:
         Bolte, J., Pauwels, E. & Vaiter, S. (2023). One-step
@@ -75,6 +112,16 @@ class KStepAdjoint(optx.AbstractAdjoint):
         Implementing this method for upstream ``optimistix.minimise``
         compatibility is tracked under the planned upstream
         contribution (Decision D6).
+
+        Args:
+            primal_fn: The primal solve (unused).
+            rewrite_fn: The fixed-point rewrite (unused).
+            inputs: The solve inputs (unused).
+            tags: Optimistix tags (unused).
+
+        Raises:
+            NotImplementedError: Always; select the adjoint through
+                ``FourDVarNet*(solver_adjoint=KStepAdjoint(k=...))``.
         """
         raise NotImplementedError(
             "KStepAdjoint is currently a marker / strategy selector for the "

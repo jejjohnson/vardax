@@ -1,7 +1,7 @@
 r"""Generic linear reduced basis.
 
-`LinearBasis` wraps *any* precomputed design matrix $\Phi \in
-\mathbb{R}^{N \times M}$ together with a diagonal prior
+`LinearBasis` wraps *any* precomputed design matrix
+$\Phi \in \mathbb{R}^{N \times M}$ together with a diagonal prior
 $Q = \mathrm{diag}(\sigma^2)$: ``operg`` maps a coefficient vector
 $X$ to the state increment $(\Phi X)$ reshaped onto the grid, and
 ``prior_inv`` applies $Q^{-1}$ for the separable background term
@@ -50,6 +50,27 @@ class LinearBasis(eqx.Module):
 
     Satisfies `vardax.protocols.ReducedBasis` (`operg` / `prior_inv` /
     `nbasis`). Stationary: ``operg`` ignores the ``t`` argument.
+
+    $$\delta x = \Phi X, \quad Q = \mathrm{diag}(\sigma^2)$$
+
+    Examples:
+        A hand-built design matrix with a non-unit prior variance:
+
+        >>> import jax.numpy as jnp
+        >>> import vardax as vdx
+        >>> basis = vdx.linear_basis(
+        ...     jnp.array([[1.0, 0.0], [0.0, 1.0], [1.0, 1.0]]), variance=2.0
+        ... )
+        >>> basis.operg(0.0, jnp.array([1.0, 2.0])).shape
+        (3,)
+        >>> bool(jnp.allclose(basis.prior_inv(jnp.ones(2)), 0.5))
+        True
+
+        An ``output_shape`` reshapes the increment onto a grid:
+
+        >>> gridded = vdx.linear_basis(jnp.eye(4), output_shape=(2, 2))
+        >>> gridded.operg(0.0, jnp.ones(4)).shape
+        (2, 2)
     """
 
     phi: Float[Array, "N M"]
@@ -62,13 +83,29 @@ class LinearBasis(eqx.Module):
         X: Float[Array, " M"],
         state: Float[Array, ...] | None = None,
     ) -> Float[Array, ...]:
-        r"""Apply $\Phi X$ — return the increment on ``output_shape``."""
+        r"""Apply $\Phi X$ and return the increment on ``output_shape``.
+
+        Args:
+            t: Time; ignored because the basis is stationary.
+            X: Coefficient vector.
+            state: Current state; ignored by this basis.
+
+        Returns:
+            State increment $\Phi X$ reshaped onto ``output_shape``.
+        """
         # δx = Φ X
         increment = einx.dot("n m, m -> n", self.phi, X)
         return einx.id("(s...) -> s...", increment, s=self.output_shape)
 
     def prior_inv(self, X: Float[Array, " M"]) -> Float[Array, " M"]:
-        r"""Apply $Q^{-1} X$ with diagonal $Q = \mathrm{diag}(\sigma^2)$."""
+        r"""Apply $Q^{-1} X$ with diagonal $Q = \mathrm{diag}(\sigma^2)$.
+
+        Args:
+            X: Coefficient vector.
+
+        Returns:
+            The vector $X / \sigma^2$.
+        """
         return X / self.variance
 
     @property
@@ -85,17 +122,41 @@ def linear_basis(
     r"""Build a `LinearBasis` from an arbitrary precomputed design matrix.
 
     The escape hatch for basis families without a dedicated constructor:
-    any ``(N, M)`` matrix (spherical harmonics, Slepian, Gabor frames,
+    any design matrix (spherical harmonics, Slepian, Gabor frames,
     hand-rolled …) becomes a `ReducedBasis`.
 
     Args:
-        phi: Design matrix of shape ``(N, M)``.
-        variance: Scalar or per-coefficient prior variance ``(M,)``.
+        phi: Design matrix $\Phi$ mapping coefficients to the flattened
+            state.
+        variance: Scalar or per-coefficient prior variance.
         output_shape: Grid shape the increment is reshaped to; must
             satisfy ``prod(output_shape) == N``. Defaults to ``(N,)``.
 
     Returns:
         Configured `LinearBasis`.
+
+    Raises:
+        ShapeError: If ``phi`` is not 2-D or ``output_shape`` does not
+            multiply to the number of rows.
+        ConfigurationError: If ``variance`` is not finite and positive.
+
+    Examples:
+        Wrap a matrix; the default grid shape is ``(N,)``:
+
+        >>> import jax.numpy as jnp
+        >>> import vardax as vdx
+        >>> basis = vdx.linear_basis(jnp.ones((3, 2)))
+        >>> basis.nbasis, basis.output_shape
+        (2, (3,))
+
+        A mismatched grid shape is rejected:
+
+        >>> vdx.linear_basis(
+        ...     jnp.ones((3, 2)), output_shape=(2, 2)
+        ... )  # doctest: +IGNORE_EXCEPTION_DETAIL
+        Traceback (most recent call last):
+        ...
+        ShapeError: prod(output_shape)=4 does not match phi rows N=3.
     """
     design_matrix = jnp.asarray(phi)
     if design_matrix.ndim != 2:
