@@ -47,7 +47,7 @@ class SoftBoundedForward(eqx.Module):
         2. Advance it with the wrapped model's ``step``.
         3. Confine the result with $s$ again.
 
-    Args:
+    Attributes:
         forward: The wrapped ``pipekit_cycle.ForwardModel``.
         bound: Half-width $b$ of the box on which the adapter is the
             identity.
