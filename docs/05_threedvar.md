@@ -52,7 +52,7 @@ import optimistix as optx
 from vardax import ThreeDVar
 
 model = ThreeDVar(
-    obs_op=AveragingKernel(A=A, x_a=xa, h=h),   # nonlinear via h ⊙ x
+    obs_op=AveragingKernel(kernel_matrix=A, prior_profile=xa, pressure_weights=h),   # nonlinear via h ⊙ x
     prior_mean=x_b,
     prior_cov_op=B_op, obs_cov_op=R_op,
     minimiser=optx.GaussNewton(rtol=1e-5, atol=1e-5),

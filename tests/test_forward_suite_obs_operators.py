@@ -98,7 +98,7 @@ _H_LIN = np.array([[1.0, 2.0, 3.0], [0.0, -1.0, 4.0]])
 
 class TestLinearObs:
     def test_closed_form_oracle(self, x64):
-        obs = vdx.LinearObs(H_mat=lx.MatrixLinearOperator(jnp.asarray(_H_LIN)))
+        obs = vdx.LinearObs(operator=lx.MatrixLinearOperator(jnp.asarray(_H_LIN)))
         # rows: 1*1 + 2*2 + 3*(-1) = 2 and 0*1 - 1*2 + 4*(-1) = -6
         got = obs(jnp.array([1.0, 2.0, -1.0]))
         np.testing.assert_allclose(got, [2.0, -6.0], rtol=RTOL)
@@ -107,14 +107,14 @@ class TestLinearObs:
     @SETTINGS
     def test_property_linearity(self, x, y, a, b):
         with jax.enable_x64(True):
-            obs = vdx.LinearObs(H_mat=lx.MatrixLinearOperator(jnp.asarray(_H_LIN)))
+            obs = vdx.LinearObs(operator=lx.MatrixLinearOperator(jnp.asarray(_H_LIN)))
             lhs = obs(a * jnp.asarray(x) + b * jnp.asarray(y))
             rhs = a * obs(jnp.asarray(x)) + b * obs(jnp.asarray(y))
             np.testing.assert_allclose(lhs, rhs, rtol=1e-10, atol=1e-10)
             np.testing.assert_allclose(obs(jnp.zeros(3)), 0.0, atol=1e-15)
 
     def test_gradient_matches_central_differences(self, x64):
-        obs = vdx.LinearObs(H_mat=lx.MatrixLinearOperator(jnp.asarray(_H_LIN)))
+        obs = vdx.LinearObs(operator=lx.MatrixLinearOperator(jnp.asarray(_H_LIN)))
         x = jnp.array([0.3, -0.7, 1.1])
         _assert_matches_central(obs, x)
         # the linearisation is the Jacobian, at any point
@@ -124,7 +124,7 @@ class TestLinearObs:
             )
 
     def test_jit_vmap_match_loop(self, x64):
-        obs = vdx.LinearObs(H_mat=lx.MatrixLinearOperator(jnp.asarray(_H_LIN)))
+        obs = vdx.LinearObs(operator=lx.MatrixLinearOperator(jnp.asarray(_H_LIN)))
         batch = jnp.array([[1.0, 2.0, 3.0], [-1.0, 0.5, 2.0], [0.0, 0.0, 1.0]])
         _assert_transforms_match_loop(_as_fn(obs), batch)
 
@@ -388,9 +388,9 @@ class TestFieldPointObs:
 def _kernel(x64_dtype=jnp.float64):
     A = jnp.array([[0.5, 0.5], [0.2, 0.8]], dtype=x64_dtype)
     return A, vdx.AveragingKernel(
-        A=lx.MatrixLinearOperator(A),
-        x_a=jnp.array([2.0, 4.0], dtype=x64_dtype),
-        h=jnp.array([0.5, 1.0], dtype=x64_dtype),
+        kernel_matrix=lx.MatrixLinearOperator(A),
+        prior_profile=jnp.array([2.0, 4.0], dtype=x64_dtype),
+        pressure_weights=jnp.array([0.5, 1.0], dtype=x64_dtype),
     )
 
 
@@ -415,9 +415,15 @@ class TestAveragingKernel:
                 atol=1e-10,
             )
             # with h = 0 the state is ignored and only the prior is seen
-            blind = vdx.AveragingKernel(A=op.A, x_a=op.x_a, h=jnp.zeros(2))
+            blind = vdx.AveragingKernel(
+                kernel_matrix=op.kernel_matrix,
+                prior_profile=op.prior_profile,
+                pressure_weights=jnp.zeros(2),
+            )
             np.testing.assert_allclose(
-                blind(jnp.asarray(x)), np.asarray(A) @ np.asarray(op.x_a), rtol=RTOL
+                blind(jnp.asarray(x)),
+                np.asarray(A) @ np.asarray(op.prior_profile),
+                rtol=RTOL,
             )
 
     def test_gradient_matches_central_differences(self, x64):
@@ -438,7 +444,7 @@ def _fusion():
     eye = lx.IdentityLinearOperator(jax.ShapeDtypeStruct((2,), jnp.float64))
     H = lx.MatrixLinearOperator(jnp.array([[1.0, 1.0]]))
     first = vdx.InstrumentSpec(vdx.MaskedIdentity(), jnp.ones(2), eye, "a")
-    second = vdx.InstrumentSpec(vdx.LinearObs(H_mat=H), jnp.ones(1), eye, "b")
+    second = vdx.InstrumentSpec(vdx.LinearObs(operator=H), jnp.ones(1), eye, "b")
     registry = vdx.InstrumentRegistry(entries={"b": second, "a": first})
     return vdx.MultiInstrumentFusion(registry)
 

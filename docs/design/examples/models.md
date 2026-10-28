@@ -18,7 +18,7 @@ from vardax.models import OptimalInterpolation
 from vardax.obs_operators import LinearObs
 
 model = OptimalInterpolation(
-    obs_op=LinearObs(H_mat=along_track_op),     # must be linear
+    obs_op=LinearObs(operator=along_track_op),     # must be linear
     prior_mean=climatology_ssh,
     prior_cov_op=gx.MaternLinearOperator(coords, length_scale=100.0, sigma=0.1),
     obs_cov_op=lx.DiagonalLinearOperator(altika_variances),
@@ -41,7 +41,7 @@ import optimistix as optx
 from vardax.models import ThreeDVar
 
 model = ThreeDVar(
-    obs_op=AveragingKernel(A=A, x_a=xa, h=h),   # nonlinear via h ⊙ x
+    obs_op=AveragingKernel(kernel_matrix=A, prior_profile=xa, pressure_weights=h),   # nonlinear via h ⊙ x
     prior_mean=x_b,
     prior_cov_op=B_op, obs_cov_op=R_op,
     minimiser=optx.GaussNewton(rtol=1e-5, atol=1e-5),
@@ -114,7 +114,7 @@ from vardax import IncrementalConfig
 
 model = IncrementalFourDVar(
     forward=somax_model,
-    obs_op=AveragingKernel(A=A, x_a=xa, h=h),
+    obs_op=AveragingKernel(kernel_matrix=A, prior_profile=xa, pressure_weights=h),
     prior_mean=x_b,
     prior_cov_op=gx.MaternLinearOperator(coords, length_scale=10.0, sigma=0.1),
     obs_cov_op=lx.DiagonalLinearOperator(obs_uncertainty),

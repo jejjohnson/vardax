@@ -295,7 +295,11 @@ def wavelet_basis(
         >>> basis = vdx.wavelet_basis(8)
         >>> basis.nbasis
         8
-        >>> bool(jnp.allclose(basis.phi.T @ basis.phi, jnp.eye(8), atol=1e-5))
+        >>> bool(
+        ...     jnp.allclose(
+        ...         basis.design_matrix.T @ basis.design_matrix, jnp.eye(8), atol=1e-5
+        ...     )
+        ... )
         True
 
         A 2-D grid flattens to ``ny * nx`` coefficients:
@@ -375,7 +379,7 @@ def eof_basis(
         >>> import vardax as vdx
         >>> data = jax.random.normal(jax.random.PRNGKey(0), (10, 4))
         >>> basis = vdx.eof_basis(data, 2)
-        >>> basis.phi.shape, basis.variance.shape
+        >>> basis.design_matrix.shape, basis.variance.shape
         ((4, 2), (2,))
 
         A single snapshot cannot give an explained variance:

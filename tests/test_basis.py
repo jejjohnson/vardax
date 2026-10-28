@@ -211,7 +211,7 @@ class TestFourier:
 class TestWavelet:
     def test_columns_are_orthonormal(self):
         basis = vdx.wavelet_basis(16, wavelet="db2")
-        gram = np.asarray(basis.phi.T @ basis.phi)
+        gram = np.asarray(basis.design_matrix.T @ basis.design_matrix)
         np.testing.assert_allclose(gram, np.eye(16), atol=1e-5)
 
     def test_complete_basis_on_2d_grid(self):
@@ -246,7 +246,7 @@ class TestEOF:
     def test_columns_are_orthonormal(self):
         rng = np.random.default_rng(4)
         basis = vdx.eof_basis(rng.normal(size=(10, 32)), 4)
-        gram = np.asarray(basis.phi.T @ basis.phi)
+        gram = np.asarray(basis.design_matrix.T @ basis.design_matrix)
         np.testing.assert_allclose(gram, np.eye(4), atol=1e-5)
 
     def test_explicit_variance_overrides_explained(self):
@@ -266,7 +266,7 @@ class TestEOF:
 class TestLinearBasis:
     @pytest.mark.unchecked_types
     def test_rejects_non_2d_phi(self):
-        with pytest.raises(ValueError, match="phi must be 2-D"):
+        with pytest.raises(ValueError, match="design_matrix must be 2-D"):
             linear_basis(jnp.ones((4,)))
 
     def test_rejects_output_shape_mismatch(self):
@@ -279,7 +279,7 @@ class TestLinearBasis:
 
     def test_is_pytree_with_two_leaves(self):
         basis = _make_rbf()
-        # `phi` + `variance` are JAX leaves; `output_shape` is static.
+        # `design_matrix` + `variance` are JAX leaves; `output_shape` is static.
         assert len(jax.tree_util.tree_leaves(basis)) == 2
 
 

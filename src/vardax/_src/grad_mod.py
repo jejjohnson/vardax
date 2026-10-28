@@ -60,7 +60,7 @@ class ConvLSTMGradMod1D(eqx.Module):
         ... )
         >>> grad = jnp.ones((2, 3, 4))
         >>> update, lstm = mod(grad, grad, vdx.LSTMState1D.zeros(2, 5, 4))
-        >>> update.shape, lstm.h.shape
+        >>> update.shape, lstm.hidden.shape
         ((2, 3, 4), (2, 5, 4))
 
         The memory is carried across solver steps, so a second call with the
@@ -161,9 +161,9 @@ class ConvLSTMGradMod1D(eqx.Module):
             return update, new_hidden, new_cell
 
         update, new_hidden, new_cell = jax.vmap(_forward)(
-            grad, state, lstm_state.h, lstm_state.c
+            grad, state, lstm_state.hidden, lstm_state.cell
         )
-        return update, LSTMState1D(h=new_hidden, c=new_cell)
+        return update, LSTMState1D(hidden=new_hidden, cell=new_cell)
 
 
 class ConvLSTMGradMod2D(eqx.Module):
@@ -204,7 +204,7 @@ class ConvLSTMGradMod2D(eqx.Module):
         ... )
         >>> grad = jnp.ones((1, 3, 4, 5))
         >>> update, lstm = mod(grad, grad, vdx.LSTMState2D.zeros(1, 2, 4, 5))
-        >>> update.shape, lstm.c.shape
+        >>> update.shape, lstm.cell.shape
         ((1, 3, 4, 5), (1, 2, 4, 5))
 
         A zero gradient and zero state still yield a finite update:
@@ -308,6 +308,6 @@ class ConvLSTMGradMod2D(eqx.Module):
             return update, new_hidden, new_cell
 
         update, new_hidden, new_cell = jax.vmap(_forward)(
-            grad, state, lstm_state.h, lstm_state.c
+            grad, state, lstm_state.hidden, lstm_state.cell
         )
-        return update, LSTMState2D(h=new_hidden, c=new_cell)
+        return update, LSTMState2D(hidden=new_hidden, cell=new_cell)

@@ -217,7 +217,7 @@ idx_obs = jnp.flatnonzero(mask)
 n_sel = idx_obs.shape[0]
 S_dense = jnp.zeros((n_sel, N)).at[jnp.arange(n_sel), idx_obs].set(1.0)
 S_op = lx.FunctionLinearOperator(lambda v: v[idx_obs], jax.ShapeDtypeStruct((N,), jnp.float64))
-oi_select = make_oi(LinearObs(H_mat=S_op), diag_cov(SIGMA_POINT**2, n_sel))
+oi_select = make_oi(LinearObs(operator=S_op), diag_cov(SIGMA_POINT**2, n_sel))
 y_points = (x_true + noise)[idx_obs]
 x_select = oi_select(Batch1D(input=y_points[None], mask=jnp.ones((1, n_sel))))[0]
 
@@ -330,7 +330,7 @@ x_b_prof = jnp.zeros(N_LEV)  # our background
 SIGMA_PROF_B, SIGMA_RET = 1.0, 0.05
 B_prof = diag_cov(SIGMA_PROF_B**2, N_LEV)
 R_prof = diag_cov(SIGMA_RET**2, N_LEV)
-ak = AveragingKernel(A=lx.MatrixLinearOperator(A_mat), x_a=x_a, h=h_sens)
+ak = AveragingKernel(kernel_matrix=lx.MatrixLinearOperator(A_mat), prior_profile=x_a, pressure_weights=h_sens)
 
 model_naive = ThreeDVar(obs_op=MaskedIdentity(), prior_mean=x_b_prof, prior_cov_op=B_prof, obs_cov_op=R_prof)
 model_ak = ThreeDVar(obs_op=ak, prior_mean=x_b_prof, prior_cov_op=B_prof, obs_cov_op=R_prof)
@@ -407,7 +407,7 @@ def block_average(x):
     return x.reshape(n_by, BLOCK, n_bx, BLOCK).mean(axis=(1, 3)).ravel()
 
 
-imager = LinearObs(H_mat=lx.FunctionLinearOperator(block_average, jax.ShapeDtypeStruct((N,), jnp.float64)))
+imager = LinearObs(operator=lx.FunctionLinearOperator(block_average, jax.ShapeDtypeStruct((N,), jnp.float64)))
 k_is, k_in, k_im = jax.random.split(jax.random.PRNGKey(6), 3)
 pts_insitu = jax.random.uniform(k_is, (N_INSITU, 2), minval=jnp.array([0.0, 0.0]), maxval=jnp.array([NY - 1.0, NX - 1.0]))
 insitu = interp_obs_from_coords((y_axis, x_axis), np.asarray(pts_insitu))
@@ -416,8 +416,8 @@ y_img = imager(x_true) + SIGMA_IMG * jax.random.normal(k_im, (n_by * n_bx,))
 y_insitu = insitu(x_true) + SIGMA_INSITU * jax.random.normal(k_in, (N_INSITU,))
 
 registry = InstrumentRegistry(entries={
-    "imager": InstrumentSpec(obs_op=imager, mask=jnp.ones(n_by * n_bx), R_op=diag_cov(SIGMA_IMG**2, n_by * n_bx), instrument_id="imager"),
-    "insitu": InstrumentSpec(obs_op=insitu, mask=jnp.ones(N_INSITU), R_op=diag_cov(SIGMA_INSITU**2, N_INSITU), instrument_id="insitu"),
+    "imager": InstrumentSpec(obs_op=imager, mask=jnp.ones(n_by * n_bx), obs_cov_op=diag_cov(SIGMA_IMG**2, n_by * n_bx), instrument_id="imager"),
+    "insitu": InstrumentSpec(obs_op=insitu, mask=jnp.ones(N_INSITU), obs_cov_op=diag_cov(SIGMA_INSITU**2, N_INSITU), instrument_id="insitu"),
 })
 fusion = MultiInstrumentFusion(registry=registry)
 fused_op = fusion.to_observation_operator()

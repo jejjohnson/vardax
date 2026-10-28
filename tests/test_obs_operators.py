@@ -34,21 +34,27 @@ class TestObservationOperatorProtocol:
 
     def test_linear_obs(self, rng):
         H = lx.MatrixLinearOperator(jax.random.normal(rng, (3, 4)))
-        assert isinstance(LinearObs(H_mat=H), ObservationOperator)
+        assert isinstance(LinearObs(operator=H), ObservationOperator)
 
     def test_averaging_kernel(self, rng):
         n = 4
         A = lx.MatrixLinearOperator(jax.random.normal(rng, (n, n)))
-        ak = AveragingKernel(A=A, x_a=jnp.zeros(n), h=jnp.ones(n))
+        ak = AveragingKernel(
+            kernel_matrix=A, prior_profile=jnp.zeros(n), pressure_weights=jnp.ones(n)
+        )
         assert isinstance(ak, ObservationOperator)
 
     def test_multi_instrument_fusion_via_flatten_adapter(self, rng):
         n = 4
         A = lx.MatrixLinearOperator(jnp.eye(n))
         spec = InstrumentSpec(
-            obs_op=AveragingKernel(A=A, x_a=jnp.zeros(n), h=jnp.ones(n)),
+            obs_op=AveragingKernel(
+                kernel_matrix=A,
+                prior_profile=jnp.zeros(n),
+                pressure_weights=jnp.ones(n),
+            ),
             mask=jnp.ones(n),
-            R_op=lx.DiagonalLinearOperator(jnp.ones(n)),
+            obs_cov_op=lx.DiagonalLinearOperator(jnp.ones(n)),
             instrument_id="tropomi",
         )
         fusion = MultiInstrumentFusion(
@@ -93,14 +99,14 @@ class TestMaskedIdentity:
 class TestLinearObs:
     def test_applies_matrix(self, rng):
         H_mat = jax.random.normal(rng, (3, 5))
-        op = LinearObs(H_mat=lx.MatrixLinearOperator(H_mat))
+        op = LinearObs(operator=lx.MatrixLinearOperator(H_mat))
         x = jax.random.normal(rng, (5,))
         out = op(x)
         assert jnp.allclose(out, H_mat @ x, atol=1e-5)
 
     def test_linearize_is_self(self, rng):
         H_mat = lx.MatrixLinearOperator(jax.random.normal(rng, (3, 5)))
-        op = LinearObs(H_mat=H_mat)
+        op = LinearObs(operator=H_mat)
         H = op.linearize(jnp.zeros(5))
         # For a linear operator, the tangent linear is the operator itself.
         assert H is H_mat
@@ -116,9 +122,9 @@ class TestAveragingKernel:
         n = 6
         A_mat = jax.random.normal(rng, (n, n))
         op = AveragingKernel(
-            A=lx.MatrixLinearOperator(A_mat),
-            x_a=jnp.zeros(n),
-            h=jnp.ones(n),  # full weight on the model state
+            kernel_matrix=lx.MatrixLinearOperator(A_mat),
+            prior_profile=jnp.zeros(n),
+            pressure_weights=jnp.ones(n),  # full weight on the model state
         )
         x = jax.random.normal(rng, (n,))
         # h = 1 ⇒ inner = x, output = A @ x
@@ -129,9 +135,9 @@ class TestAveragingKernel:
         A_mat = jax.random.normal(rng, (n, n))
         x_a = jax.random.normal(rng, (n,))
         op = AveragingKernel(
-            A=lx.MatrixLinearOperator(A_mat),
-            x_a=x_a,
-            h=jnp.zeros(n),  # all weight on the retrieval prior
+            kernel_matrix=lx.MatrixLinearOperator(A_mat),
+            prior_profile=x_a,
+            pressure_weights=jnp.zeros(n),  # all weight on the retrieval prior
         )
         x = jax.random.normal(rng, (n,))
         # h = 0 ⇒ inner = x_a, output = A @ x_a, independent of x
@@ -143,9 +149,9 @@ class TestAveragingKernel:
         A_mat = jax.random.normal(rng, (n, n))
         h = jax.random.uniform(rng, (n,))
         op = AveragingKernel(
-            A=lx.MatrixLinearOperator(A_mat),
-            x_a=jnp.zeros(n),
-            h=h,
+            kernel_matrix=lx.MatrixLinearOperator(A_mat),
+            prior_profile=jnp.zeros(n),
+            pressure_weights=h,
         )
         H = op.linearize(jnp.zeros(n))
         k1, k2 = jax.random.split(rng)
@@ -167,13 +173,13 @@ class TestMultiInstrumentFusion:
         spec_a = InstrumentSpec(
             obs_op=MaskedIdentity(),
             mask=jnp.ones(n),
-            R_op=lx.DiagonalLinearOperator(jnp.ones(n)),
+            obs_cov_op=lx.DiagonalLinearOperator(jnp.ones(n)),
             instrument_id="A",
         )
         spec_b = InstrumentSpec(
-            obs_op=LinearObs(H_mat=lx.MatrixLinearOperator(jnp.eye(n) * 2.0)),
+            obs_op=LinearObs(operator=lx.MatrixLinearOperator(jnp.eye(n) * 2.0)),
             mask=jnp.ones(n),
-            R_op=lx.DiagonalLinearOperator(jnp.ones(n)),
+            obs_cov_op=lx.DiagonalLinearOperator(jnp.ones(n)),
             instrument_id="B",
         )
         fusion = MultiInstrumentFusion(

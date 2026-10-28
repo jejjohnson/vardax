@@ -103,7 +103,7 @@ from vardax import OptimalInterpolation
 from vardax import LinearObs
 
 model = OptimalInterpolation(
-    obs_op=LinearObs(H_mat=along_track_op),       # must be linear
+    obs_op=LinearObs(operator=along_track_op),       # must be linear
     prior_mean=climatology_ssh,
     prior_cov_op=gx.MaternLinearOperator(coords, length_scale=100.0, sigma=0.1),
     obs_cov_op=lx.DiagonalLinearOperator(obs_variances),

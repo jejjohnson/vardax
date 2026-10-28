@@ -245,7 +245,7 @@ class TestSingleTimeUnchanged:
         B_op, R_op = _ops(problem)
         model = vdx.ThreeDVar(
             obs_op=vdx.LinearObs(
-                H_mat=lx.IdentityLinearOperator(
+                operator=lx.IdentityLinearOperator(
                     jax.ShapeDtypeStruct((N_STATE,), jnp.float64)
                 )
             ),

@@ -10,7 +10,7 @@ import vardax as vdx
 
 INSTANCES = [
     vdx.Lorenz63(sigma=10.0, rho=28.0, beta=8.0 / 3.0),
-    vdx.Lorenz96(F=8.0),
+    vdx.Lorenz96(forcing=8.0),
     vdx.EnsembleCovariance(n_members=8, inflation=1.1),
     vdx.KStepAdjoint(k=3),
     vdx.OneStepAdjoint(k=2),

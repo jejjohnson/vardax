@@ -115,7 +115,7 @@ class TestSimulateLorenz63:
 
 class TestLorenz96Module:
     def test_output_shape(self):
-        model = Lorenz96(F=8.0)
+        model = Lorenz96(forcing=8.0)
         y = jnp.ones((40,))
         dy = model(0.0, y, None)
         assert dy.shape == (40,)
@@ -124,7 +124,7 @@ class TestLorenz96Module:
         """Uniform state x_k = F is a fixed point of the L96 ODE."""
         F = 8.0
         N = 40
-        model = Lorenz96(F=F)
+        model = Lorenz96(forcing=F)
         y = jnp.full((N,), F)
         dy = model(0.0, y, None)
         assert jnp.allclose(dy, jnp.zeros(N), atol=1e-5)
@@ -137,7 +137,7 @@ class TestSimulateLorenz96:
         n_steps = 100
         n_burn_in = 20
         time_coords, states = simulate_lorenz96(
-            key, N=N, n_steps=n_steps, n_burn_in=n_burn_in
+            key, n_sites=N, n_steps=n_steps, n_burn_in=n_burn_in
         )
         assert states.shape == (n_steps + 1, N)
         assert time_coords.shape == (n_steps + 1,)
@@ -169,14 +169,14 @@ class TestSimulateLorenz96:
     def test_long_simulation_exceeds_default_max_steps(self):
         """Same cap regression as Lorenz-63 (see notebook 06's 5000 + 1000 steps)."""
         key = jax.random.PRNGKey(0)
-        _, states = simulate_lorenz96(key, N=8, n_steps=5000, n_burn_in=1000)
+        _, states = simulate_lorenz96(key, n_sites=8, n_steps=5000, n_burn_in=1000)
         assert states.shape == (5001, 8)
         assert jnp.all(jnp.isfinite(states))
 
     def test_custom_n_and_f(self):
         key = jax.random.PRNGKey(5)
         time_coords, states = simulate_lorenz96(
-            key, N=20, F=10.0, n_steps=50, n_burn_in=10
+            key, n_sites=20, forcing=10.0, n_steps=50, n_burn_in=10
         )
         assert states.shape == (51, 20)
         assert time_coords.shape == (51,)

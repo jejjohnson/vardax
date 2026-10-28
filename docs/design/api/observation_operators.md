@@ -55,15 +55,15 @@ Use case: SSH altimetry with along-track gaps, SST with cloud masks.
 
 ```python
 class LinearObs(eqx.Module):
-    """H(x) = H_mat @ x."""
+    """H(x) = operator @ x."""
 
-    H_mat: AbstractLinearOperator   # gaussx / lineax operator
+    operator: AbstractLinearOperator   # gaussx / lineax operator
 
     def __call__(self, x: Array) -> Array:
-        return self.H_mat @ x
+        return self.operator @ x
 
     def linearize(self, x: Array) -> AbstractLinearOperator:
-        return self.H_mat  # linear → Jacobian is the operator itself
+        return self.operator  # linear → Jacobian is the operator itself
 ```
 
 Use case: any pre-computed linear projection (interpolation matrix, footprint
@@ -99,19 +99,20 @@ common cause of bias in operational inversions.
 
 ```python
 class AveragingKernel(eqx.Module):
-    A: AbstractLinearOperator  # gaussx — may be Kronecker / LowRank / dense
-    x_a: Float[Array, "N"]      # retrieval prior
-    h: Float[Array, "N"]        # weighting vector
+    kernel_matrix: AbstractLinearOperator  # gaussx — may be Kronecker / LowRank / dense
+    prior_profile: Float[Array, "N"]        # retrieval prior
+    pressure_weights: Float[Array, "N"]     # weighting vector
 
     def __call__(self, x: Array) -> Array:
-        return self.A @ (self.h * x + (1.0 - self.h) * self.x_a)
+        w = self.pressure_weights
+        return self.kernel_matrix @ (w * x + (1.0 - w) * self.prior_profile)
 
     def linearize(self, x: Array) -> AbstractLinearOperator:
         # H'(x) = A · diag(h) — linear in x
-        return self.A @ DiagonalLinearOperator(self.h)
+        return self.kernel_matrix @ DiagonalLinearOperator(self.pressure_weights)
 ```
 
-`A` is stored as an `AbstractLinearOperator` so structure (e.g. Kronecker
+`kernel_matrix` is stored as an `AbstractLinearOperator` so structure (e.g. Kronecker
 for separable kernels) can be exploited by `gaussx.ops.solve`.
 
 ### Construction from L2 metadata
@@ -125,9 +126,9 @@ def averaging_kernel_from_l2(ds: xr.Dataset, *,
     """Build AveragingKernel from L2 sidecar metadata."""
     A_dense = jnp.asarray(ds[ak_var].values)
     return AveragingKernel(
-        A=lineax.MatrixLinearOperator(A_dense),
-        x_a=jnp.asarray(ds[prior_var].values),
-        h=jnp.asarray(ds[weight_var].values),
+        kernel_matrix=lineax.MatrixLinearOperator(A_dense),
+        prior_profile=jnp.asarray(ds[prior_var].values),
+        pressure_weights=jnp.asarray(ds[weight_var].values),
     )
 ```
 
@@ -188,7 +189,7 @@ class InstrumentSpec(eqx.Module):
     """Per-instrument (A, x_a, h, mask, R) tuple."""
     obs_op: ObservationOperator              # often AveragingKernel
     mask: Float[Array, "..."]                # quality mask
-    R_op: AbstractLinearOperator             # obs-err covariance
+    obs_cov_op: AbstractLinearOperator       # obs-err covariance
     instrument_id: str = eqx.field(static=True)
 
 
@@ -204,7 +205,7 @@ class InstrumentRegistry(eqx.Module):
             entries[inst_id] = InstrumentSpec(
                 obs_op=averaging_kernel_from_l2(ds),
                 mask=jnp.asarray(ds["qa_flag"].values),
-                R_op=lineax.DiagonalLinearOperator(jnp.asarray(ds["xch4_uncertainty"].values)),
+                obs_cov_op=lineax.DiagonalLinearOperator(jnp.asarray(ds["xch4_uncertainty"].values)),
                 instrument_id=inst_id,
             )
         return cls(entries=entries)

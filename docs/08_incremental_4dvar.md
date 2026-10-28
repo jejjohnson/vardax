@@ -142,7 +142,7 @@ B_op = gx.Kronecker(B_y_op, B_x_op)
 
 model = IncrementalFourDVar(
     forward=somax_model,
-    obs_op=AveragingKernel(A=A, x_a=xa, h=h),
+    obs_op=AveragingKernel(kernel_matrix=A, prior_profile=xa, pressure_weights=h),
     prior_mean=x_b,
     prior_cov_op=B_op,
     obs_cov_op=lx.DiagonalLinearOperator(obs_uncertainty),

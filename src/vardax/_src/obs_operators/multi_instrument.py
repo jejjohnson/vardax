@@ -16,7 +16,7 @@ $$
 
 This module ships:
 
-- [`InstrumentSpec`][vardax.InstrumentSpec] — ``(obs_op, mask, R_op, id)``
+- [`InstrumentSpec`][vardax.InstrumentSpec] — ``(obs_op, mask, obs_cov_op, id)``
   tuple
 - [`InstrumentRegistry`][vardax.InstrumentRegistry] —
   ``{instrument_id: InstrumentSpec}``
@@ -39,7 +39,7 @@ import lineax as lx
 
 
 class InstrumentSpec(eqx.Module):
-    """Per-instrument ``(obs_op, mask, R_op, id)`` bundle.
+    """Per-instrument ``(obs_op, mask, obs_cov_op, id)`` bundle.
 
     A plain container: it only groups one instrument's operator, quality
     mask, error covariance and name.
@@ -50,7 +50,7 @@ class InstrumentSpec(eqx.Module):
         mask: Quality mask of shape compatible with the instrument's
             observation space. ``1`` for valid pixels, ``0`` for
             flagged/dropped.
-        R_op: Observation-error covariance as a
+        obs_cov_op: Observation-error covariance as a
             ``lineax.AbstractLinearOperator``. Often a
             ``DiagonalLinearOperator`` keyed on the per-pixel
             retrieval uncertainty.
@@ -65,7 +65,9 @@ class InstrumentSpec(eqx.Module):
         >>> spec = vdx.InstrumentSpec(
         ...     obs_op=vdx.MaskedIdentity(),
         ...     mask=jnp.ones(3),
-        ...     R_op=lx.IdentityLinearOperator(jax.ShapeDtypeStruct((3,), jnp.float32)),
+        ...     obs_cov_op=lx.IdentityLinearOperator(
+        ...         jax.ShapeDtypeStruct((3,), jnp.float32)
+        ...     ),
         ...     instrument_id="TROPOMI",
         ... )
         >>> spec.instrument_id
@@ -74,7 +76,7 @@ class InstrumentSpec(eqx.Module):
 
     obs_op: Any  # ObservationOperator (we don't import the Protocol to avoid a cycle)
     mask: Float[Array, ...]
-    R_op: lx.AbstractLinearOperator
+    obs_cov_op: lx.AbstractLinearOperator
     instrument_id: str = eqx.field(static=True)
 
 
@@ -94,7 +96,9 @@ class InstrumentRegistry(eqx.Module):
         >>> spec = vdx.InstrumentSpec(
         ...     obs_op=vdx.MaskedIdentity(),
         ...     mask=jnp.ones(2),
-        ...     R_op=lx.IdentityLinearOperator(jax.ShapeDtypeStruct((2,), jnp.float32)),
+        ...     obs_cov_op=lx.IdentityLinearOperator(
+        ...         jax.ShapeDtypeStruct((2,), jnp.float32)
+        ...     ),
         ...     instrument_id="EMIT",
         ... )
         >>> list(vdx.InstrumentRegistry(entries={"EMIT": spec}).entries)
@@ -132,7 +136,7 @@ class MultiInstrumentFusion(eqx.Module):
         >>> eye = lx.IdentityLinearOperator(jax.ShapeDtypeStruct((2,), jnp.float32))
         >>> a = vdx.InstrumentSpec(vdx.MaskedIdentity(), jnp.ones(2), eye, "a")
         >>> H = lx.MatrixLinearOperator(jnp.array([[1.0, 1.0]]))
-        >>> b = vdx.InstrumentSpec(vdx.LinearObs(H_mat=H), jnp.ones(1), eye, "b")
+        >>> b = vdx.InstrumentSpec(vdx.LinearObs(operator=H), jnp.ones(1), eye, "b")
         >>> fusion = vdx.MultiInstrumentFusion(
         ...     vdx.InstrumentRegistry(entries={"a": a, "b": b})
         ... )

@@ -163,7 +163,7 @@ propagation used by
 import jax.numpy as jnp
 from vardax import DynIncrements, DynTrajectory, Lorenz96
 
-rhs = Lorenz96(F=8.0)                     # any f(t, y, args) -> dy/dt
+rhs = Lorenz96(forcing=8.0)                     # any f(t, y, args) -> dy/dt
 ts = jnp.linspace(0.0, 0.5, 11)
 
 prior = DynIncrements(model=rhs)

@@ -186,10 +186,10 @@ class MLPAEPrior1D(eqx.Module):
     """
 
     n_time: int = eqx.field(static=True)
-    enc1: eqx.nn.Linear
-    enc2: eqx.nn.Linear
-    dec1: eqx.nn.Linear
-    dec2: eqx.nn.Linear
+    encoder_hidden: eqx.nn.Linear
+    encoder_out: eqx.nn.Linear
+    decoder_hidden: eqx.nn.Linear
+    decoder_out: eqx.nn.Linear
 
     def __init__(
         self,
@@ -203,17 +203,17 @@ class MLPAEPrior1D(eqx.Module):
         self.n_time = n_time
         in_features = n_time * state_dim
         key_enc1, key_enc2, key_dec1, key_dec2 = jax.random.split(key, 4)
-        self.enc1 = eqx.nn.Linear(in_features, hidden_dim, key=key_enc1)
-        self.enc2 = eqx.nn.Linear(hidden_dim, latent_dim, key=key_enc2)
-        self.dec1 = eqx.nn.Linear(latent_dim, hidden_dim, key=key_dec1)
-        self.dec2 = eqx.nn.Linear(hidden_dim, in_features, key=key_dec2)
+        self.encoder_hidden = eqx.nn.Linear(in_features, hidden_dim, key=key_enc1)
+        self.encoder_out = eqx.nn.Linear(hidden_dim, latent_dim, key=key_enc2)
+        self.decoder_hidden = eqx.nn.Linear(latent_dim, hidden_dim, key=key_dec1)
+        self.decoder_out = eqx.nn.Linear(hidden_dim, in_features, key=key_dec2)
 
     def __call__(self, x: Float[Array, "B T N"]) -> Float[Array, "B T N"]:
         state_flat = einx.id("b t n -> b (t n)", x)
-        latent = jax.nn.relu(jax.vmap(self.enc1)(state_flat))
-        latent = jax.vmap(self.enc2)(latent)
-        hidden = jax.nn.relu(jax.vmap(self.dec1)(latent))
-        decoded = jax.vmap(self.dec2)(hidden)
+        latent = jax.nn.relu(jax.vmap(self.encoder_hidden)(state_flat))
+        latent = jax.vmap(self.encoder_out)(latent)
+        hidden = jax.nn.relu(jax.vmap(self.decoder_hidden)(latent))
+        decoded = jax.vmap(self.decoder_out)(hidden)
         return einx.id("b (t n) -> b t n", decoded, t=x.shape[1])
 
 
@@ -448,10 +448,10 @@ class L63Prior(eqx.Module):
         (1, 3)
     """
 
-    enc1: eqx.nn.Linear
-    enc2: eqx.nn.Linear
-    dec1: eqx.nn.Linear
-    dec2: eqx.nn.Linear
+    encoder_hidden: eqx.nn.Linear
+    encoder_out: eqx.nn.Linear
+    decoder_hidden: eqx.nn.Linear
+    decoder_out: eqx.nn.Linear
 
     def __init__(
         self,
@@ -462,16 +462,16 @@ class L63Prior(eqx.Module):
         key: PRNGKeyArray,
     ) -> None:
         key_enc1, key_enc2, key_dec1, key_dec2 = jax.random.split(key, 4)
-        self.enc1 = eqx.nn.Linear(state_dim, hidden_dim, key=key_enc1)
-        self.enc2 = eqx.nn.Linear(hidden_dim, latent_dim, key=key_enc2)
-        self.dec1 = eqx.nn.Linear(latent_dim, hidden_dim, key=key_dec1)
-        self.dec2 = eqx.nn.Linear(hidden_dim, state_dim, key=key_dec2)
+        self.encoder_hidden = eqx.nn.Linear(state_dim, hidden_dim, key=key_enc1)
+        self.encoder_out = eqx.nn.Linear(hidden_dim, latent_dim, key=key_enc2)
+        self.decoder_hidden = eqx.nn.Linear(latent_dim, hidden_dim, key=key_dec1)
+        self.decoder_out = eqx.nn.Linear(hidden_dim, state_dim, key=key_dec2)
 
     def __call__(self, x: Float[Array, "B N"]) -> Float[Array, "B N"]:
-        latent = jnp.tanh(jax.vmap(self.enc1)(x))
-        latent = jax.vmap(self.enc2)(latent)
-        hidden = jnp.tanh(jax.vmap(self.dec1)(latent))
-        return jax.vmap(self.dec2)(hidden)
+        latent = jnp.tanh(jax.vmap(self.encoder_hidden)(x))
+        latent = jax.vmap(self.encoder_out)(latent)
+        hidden = jnp.tanh(jax.vmap(self.decoder_hidden)(latent))
+        return jax.vmap(self.decoder_out)(hidden)
 
 
 class L96Prior(eqx.Module):
@@ -504,10 +504,10 @@ class L96Prior(eqx.Module):
         (1, 40)
     """
 
-    enc1: eqx.nn.Linear
-    enc2: eqx.nn.Linear
-    dec1: eqx.nn.Linear
-    dec2: eqx.nn.Linear
+    encoder_hidden: eqx.nn.Linear
+    encoder_out: eqx.nn.Linear
+    decoder_hidden: eqx.nn.Linear
+    decoder_out: eqx.nn.Linear
 
     def __init__(
         self,
@@ -518,16 +518,16 @@ class L96Prior(eqx.Module):
         key: PRNGKeyArray,
     ) -> None:
         key_enc1, key_enc2, key_dec1, key_dec2 = jax.random.split(key, 4)
-        self.enc1 = eqx.nn.Linear(state_dim, hidden_dim, key=key_enc1)
-        self.enc2 = eqx.nn.Linear(hidden_dim, latent_dim, key=key_enc2)
-        self.dec1 = eqx.nn.Linear(latent_dim, hidden_dim, key=key_dec1)
-        self.dec2 = eqx.nn.Linear(hidden_dim, state_dim, key=key_dec2)
+        self.encoder_hidden = eqx.nn.Linear(state_dim, hidden_dim, key=key_enc1)
+        self.encoder_out = eqx.nn.Linear(hidden_dim, latent_dim, key=key_enc2)
+        self.decoder_hidden = eqx.nn.Linear(latent_dim, hidden_dim, key=key_dec1)
+        self.decoder_out = eqx.nn.Linear(hidden_dim, state_dim, key=key_dec2)
 
     def __call__(self, x: Float[Array, "B N"]) -> Float[Array, "B N"]:
-        latent = jnp.tanh(jax.vmap(self.enc1)(x))
-        latent = jax.vmap(self.enc2)(latent)
-        hidden = jnp.tanh(jax.vmap(self.dec1)(latent))
-        return jax.vmap(self.dec2)(hidden)
+        latent = jnp.tanh(jax.vmap(self.encoder_hidden)(x))
+        latent = jax.vmap(self.encoder_out)(latent)
+        hidden = jnp.tanh(jax.vmap(self.decoder_hidden)(latent))
+        return jax.vmap(self.decoder_out)(hidden)
 
 
 class ConvAEPrior1D(eqx.Module):

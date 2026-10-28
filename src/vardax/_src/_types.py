@@ -175,23 +175,23 @@ class LSTMState1D(eqx.Module):
     """Hidden state for a 1-D ConvLSTM gradient modulator.
 
     Attributes:
-        h: Hidden state tensor.
-        c: Cell state tensor.
+        hidden: Hidden state tensor.
+        cell: Cell state tensor.
 
     Examples:
         >>> import vardax
         >>> state = vardax.LSTMState1D.zeros(batch_size=2, hidden_dim=3, seq_len=5)
-        >>> state.h.shape, state.c.shape
+        >>> state.hidden.shape, state.cell.shape
         ((2, 3, 5), (2, 3, 5))
 
         Both tensors start at zero.
 
-        >>> float(abs(state.h).sum() + abs(state.c).sum())
+        >>> float(abs(state.hidden).sum() + abs(state.cell).sum())
         0.0
     """
 
-    h: Float[Array, "B H_dim N"]
-    c: Float[Array, "B H_dim N"]
+    hidden: Float[Array, "B H_dim N"]
+    cell: Float[Array, "B H_dim N"]
 
     @classmethod
     def zeros(
@@ -211,8 +211,8 @@ class LSTMState1D(eqx.Module):
             A state with zero hidden and cell tensors.
         """
         return cls(
-            h=jnp.zeros((batch_size, hidden_dim, seq_len)),
-            c=jnp.zeros((batch_size, hidden_dim, seq_len)),
+            hidden=jnp.zeros((batch_size, hidden_dim, seq_len)),
+            cell=jnp.zeros((batch_size, hidden_dim, seq_len)),
         )
 
 
@@ -220,13 +220,13 @@ class LSTMState2D(eqx.Module):
     """Hidden state for a 2-D ConvLSTM gradient modulator.
 
     Attributes:
-        h: Hidden state tensor.
-        c: Cell state tensor.
+        hidden: Hidden state tensor.
+        cell: Cell state tensor.
 
     Examples:
         >>> import vardax
         >>> state = vardax.LSTMState2D.zeros(1, 4, height=3, width=2)
-        >>> state.h.shape
+        >>> state.hidden.shape
         (1, 4, 3, 2)
 
         It is a pytree with two leaves.
@@ -236,8 +236,8 @@ class LSTMState2D(eqx.Module):
         2
     """
 
-    h: Float[Array, "B H_dim H W"]
-    c: Float[Array, "B H_dim H W"]
+    hidden: Float[Array, "B H_dim H W"]
+    cell: Float[Array, "B H_dim H W"]
 
     @classmethod
     def zeros(
@@ -259,6 +259,6 @@ class LSTMState2D(eqx.Module):
             A state with zero hidden and cell tensors.
         """
         return cls(
-            h=jnp.zeros((batch_size, hidden_dim, height, width)),
-            c=jnp.zeros((batch_size, hidden_dim, height, width)),
+            hidden=jnp.zeros((batch_size, hidden_dim, height, width)),
+            cell=jnp.zeros((batch_size, hidden_dim, height, width)),
         )
