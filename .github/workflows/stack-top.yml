@@ -1,0 +1,61 @@
+name: Stack top
+
+# Reusable check: is this pull request covered by a PR stacked on top of it?
+#
+# A stacked PR's branch contains every commit of the PRs below it, so the
+# expensive jobs (tests, docs build) only need to run on the top PR. This
+# PR is "covered" when an open PR in the same repository uses its head
+# branch as its base AND that child's head already contains this PR's
+# head commit. If the lower PR gained commits the child does not have yet,
+# it is not covered and runs its own jobs. Pushes, fork PRs and PRs with
+# no child always count as the top.
+
+on:
+  workflow_call:
+    outputs:
+      is-top:
+        description: "'false' only when a stacked child PR contains this PR's head"
+        value: ${{ jobs.check.outputs.is-top }}
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  check:
+    name: Stack top
+    runs-on: ubuntu-latest
+    outputs:
+      is-top: ${{ steps.check.outputs.is-top }}
+    steps:
+      - name: Look for a stacked PR that contains this head
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          REPO: ${{ github.repository }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          HEAD_REF: ${{ github.head_ref }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          if [ "$EVENT" != "pull_request" ] || [ "$HEAD_REPO" != "$REPO" ]; then
+            # pushes run everything; a fork's branch name says nothing
+            # about stacks in this repository
+            echo "is-top=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          children=$(gh pr list --repo "$REPO" --base "$HEAD_REF" --state open \
+            --json number,headRefOid,isCrossRepository \
+            --jq '.[] | select(.isCrossRepository | not) | "\(.number) \(.headRefOid)"')
+          while read -r number child_sha; do
+            [ -z "$number" ] && continue
+            # "ahead" or "identical": the child's head contains HEAD_SHA
+            status=$(gh api "repos/$REPO/compare/$HEAD_SHA...$child_sha" --jq .status)
+            if [ "$status" = "ahead" ] || [ "$status" = "identical" ]; then
+              echo "::notice::#$number is stacked on this PR and contains $HEAD_SHA; its run covers these jobs."
+              echo "is-top=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            echo "::notice::#$number is stacked on this PR but lacks $HEAD_SHA ($status); running here."
+          done <<< "$children"
+          echo "is-top=true" >> "$GITHUB_OUTPUT"

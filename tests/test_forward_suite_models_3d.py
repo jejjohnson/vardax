@@ -12,6 +12,7 @@ import jax.numpy as jnp
 import lineax as lx
 import numpy as np
 import optimistix as optx
+import pytest
 
 import vardax as vdx
 
@@ -281,6 +282,7 @@ def _stack_obs(m):
 
 
 class TestIncrementalFourDVar:
+    @pytest.mark.slow
     def test_closed_form_oracle(self, x64):
         y = np.array([[0.9, -1.2, 0.4], [0.5, 0.2, -0.6]])
         m = np.array([[1.0, 1.0, 1.0], [1.0, 0.0, 1.0]])
@@ -307,6 +309,7 @@ class TestIncrementalFourDVar:
                 scaled[0], scale * full, rtol=ITERATIVE_RTOL, atol=ITERATIVE_ATOL
             )
 
+    @pytest.mark.slow
     def test_gradient_matches_central_differences(self, x64):
         m = np.array([[1.0, 0.0, 1.0], [1.0, 1.0, 0.0]])
         y0 = np.array([[0.9, -1.2, 0.4], [0.5, 0.2, -0.6]])
@@ -325,6 +328,7 @@ class TestIncrementalFourDVar:
         gain = B_MAT @ g.T @ np.linalg.inv(s) @ np.diag(m.reshape(-1))
         np.testing.assert_allclose(jac, gain, rtol=ITERATIVE_RTOL, atol=ITERATIVE_ATOL)
 
+    @pytest.mark.slow
     def test_jit_vmap_match_loop(self, x64):
         rng = np.random.default_rng(2)
         y = rng.normal(size=(3, 2, N))

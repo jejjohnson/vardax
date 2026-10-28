@@ -56,6 +56,7 @@ def _case(n_grid: int, n_obs: int, r: float):
     return model, batch, mean, cov
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize(
     ("n_grid", "n_obs", "r"),
     [(100, 40, 1e-2), (400, 150, 1e-3)],

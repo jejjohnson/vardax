@@ -10,6 +10,7 @@ import jax.numpy as jnp
 import lineax as lx
 import numpy as np
 import optimistix as optx
+import pytest
 
 import vardax as vdx
 
@@ -182,6 +183,7 @@ class TestStrongFourDVar:
             np.asarray(got[0]), want, rtol=ITERATIVE_RTOL, atol=ITERATIVE_ATOL
         )
 
+    @pytest.mark.slow
     @_prop_settings()
     @given(xb1=vecs, xb2=vecs, y1=wins, y2=wins, a=coef, b=coef)
     def test_property_affine_homogeneous_linearity(self, xb1, xb2, y1, y2, a, b):
@@ -200,6 +202,7 @@ class TestStrongFourDVar:
             )
             np.testing.assert_allclose(np.asarray(lhs), np.asarray(rhs), atol=1e-7)
 
+    @pytest.mark.slow
     @_prop_settings()
     @given(xb=vecs, y=wins)
     def test_property_no_observations_returns_background(self, xb, y):
@@ -208,6 +211,7 @@ class TestStrongFourDVar:
             out = m(_batch(y, mask=np.zeros_like(y)))
             np.testing.assert_allclose(np.asarray(out[0]), xb, atol=1e-9)
 
+    @pytest.mark.slow
     def test_gradient_matches_central_differences(self, x64):
         model = _strong()
 
@@ -224,6 +228,7 @@ class TestStrongFourDVar:
         _, K = _strong_oracle(XB_NP, Y_NP)
         np.testing.assert_allclose(np.asarray(jac), K, rtol=1e-6, atol=1e-6)
 
+    @pytest.mark.slow
     def test_jit_vmap_match_loop(self, x64):
         model = _strong()
         ys = jnp.asarray(_windows())
@@ -254,6 +259,7 @@ class TestWeakFourDVar:
             np.asarray(got_eta[0]), eta, rtol=ITERATIVE_RTOL, atol=1e-7
         )
 
+    @pytest.mark.slow
     @_prop_settings()
     @given(xb1=vecs, xb2=vecs, y1=wins, y2=wins, a=coef, b=coef)
     def test_property_affine_homogeneous_linearity(self, xb1, xb2, y1, y2, a, b):
@@ -275,6 +281,7 @@ class TestWeakFourDVar:
                     np.asarray(left), np.asarray(a * p + b * q), atol=1e-7
                 )
 
+    @pytest.mark.slow
     @_prop_settings()
     @given(xb=vecs, y=wins)
     def test_property_no_observations_returns_background(self, xb, y):
@@ -285,6 +292,7 @@ class TestWeakFourDVar:
             np.testing.assert_allclose(np.asarray(x0[0]), xb, atol=1e-9)
             np.testing.assert_allclose(np.asarray(eta), 0.0, atol=1e-9)
 
+    @pytest.mark.slow
     def test_gradient_matches_central_differences(self, x64):
         model = _weak()
 
@@ -310,6 +318,7 @@ class TestWeakFourDVar:
             jac, K.reshape((T + 1) * N, -1), rtol=1e-6, atol=1e-6
         )
 
+    @pytest.mark.slow
     def test_jit_vmap_match_loop(self, x64):
         model = _weak()
         ys = jnp.asarray(_windows())
@@ -359,6 +368,7 @@ class TestReducedBasisFourDVar:
             np.asarray(got[0]), want, rtol=ITERATIVE_RTOL, atol=ITERATIVE_ATOL
         )
 
+    @pytest.mark.slow
     @_prop_settings()
     @given(xb1=vecs, xb2=vecs, y1=wins, y2=wins, a=coef, b=coef)
     def test_property_affine_homogeneous_linearity(self, xb1, xb2, y1, y2, a, b):
@@ -376,6 +386,7 @@ class TestReducedBasisFourDVar:
             )
             np.testing.assert_allclose(np.asarray(lhs), np.asarray(rhs), atol=1e-7)
 
+    @pytest.mark.slow
     @_prop_settings()
     @given(xb=vecs, y=wins)
     def test_property_increment_in_basis_span(self, xb, y):
@@ -386,6 +397,7 @@ class TestReducedBasisFourDVar:
             resid = inc - PHI_NP @ np.linalg.lstsq(PHI_NP, inc, rcond=None)[0]
             np.testing.assert_allclose(resid, 0.0, atol=1e-8)
 
+    @pytest.mark.slow
     @_prop_settings()
     @given(xb=vecs, y=wins)
     def test_property_no_observations_returns_background(self, xb, y):
@@ -394,6 +406,7 @@ class TestReducedBasisFourDVar:
             out = m(_batch(y, mask=np.zeros_like(y)))
             np.testing.assert_allclose(np.asarray(out[0]), xb, atol=1e-9)
 
+    @pytest.mark.slow
     def test_gradient_matches_central_differences(self, x64):
         model = _reduced()
 
@@ -409,6 +422,7 @@ class TestReducedBasisFourDVar:
         _, K = _reduced_oracle(XB_NP, Y_NP)
         np.testing.assert_allclose(np.asarray(jac), K, rtol=1e-6, atol=1e-6)
 
+    @pytest.mark.slow
     def test_jit_vmap_match_loop(self, x64):
         model = _reduced()
         ys = jnp.asarray(_windows())

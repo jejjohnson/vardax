@@ -237,6 +237,7 @@ def test_analysis_step_returns_window_end_state(lg_problem):
     assert not np.allclose(np.asarray(out_end), np.asarray(x0_analysed), atol=1e-2)
 
 
+@pytest.mark.slow
 def test_analysis_step_threads_obs_op_and_err_cov(lg_problem):
     """Runtime `obs_op` / `obs_err_cov` from the cycle must override the
     construction-time fields via `eqx.tree_at`; otherwise cycle-level
@@ -379,6 +380,7 @@ def test_vardacycle_integration(lg_problem):
     assert isinstance(cycle.analysis_step, pc.AnalysisStep)
 
 
+@pytest.mark.slow
 def test_basis_path_recovers_increment(lg_problem):
     """With a Gaussian-RBF `LinearBasis` control over a 2-D field, the
     recovered increment lies in the basis span (verified via cosine

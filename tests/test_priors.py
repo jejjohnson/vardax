@@ -1,6 +1,7 @@
 """Tests for vardax._src.priors."""
 
 import jax.numpy as jnp
+import pytest
 
 from vardax import (
     BilinAEPrior1D,
@@ -37,6 +38,7 @@ class TestMLPAEPrior1D:
 
 
 class TestBilinAEPrior2D:
+    @pytest.mark.slow
     def test_output_shape(self, rng, batch_2d):
         _, T, H, W = batch_2d.input.shape
         model = BilinAEPrior2D(latent_dim=16, n_time=T, height=H, width=W, key=rng)
@@ -45,6 +47,7 @@ class TestBilinAEPrior2D:
 
 
 class TestBilinAEPrior2DMultivar:
+    @pytest.mark.slow
     def test_output_shape(self, rng, batch_2d_multivar):
         _, T, C, H, W = batch_2d_multivar.input.shape
         model = BilinAEPrior2DMultivar(
@@ -68,6 +71,7 @@ class TestL63Prior:
 
 
 class TestL96Prior:
+    @pytest.mark.slow
     def test_output_shape(self, rng):
         model = L96Prior(latent_dim=16, hidden_dim=64, state_dim=40, key=rng)
         x = jnp.ones((4, 40))

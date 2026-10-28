@@ -7,15 +7,22 @@ on:
     branches:
       - main
   pull_request:
-    branches:
-      - main
+    # `edited` re-evaluates the stack when a PR is retargeted
+    types: [opened, synchronize, reopened, edited]
 
 permissions:
   contents: read
+  pull-requests: read
 
 jobs:
+  stack:
+    uses: ./.github/workflows/stack-top.yml
+
   build:
     name: Build docs
+    # a stacked PR's docs are built on the top PR of its stack
+    needs: stack
+    if: needs.stack.outputs.is-top == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository

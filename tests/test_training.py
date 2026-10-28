@@ -44,6 +44,7 @@ class TestReconstructionLoss:
 
 
 class TestTrainLossFn:
+    @pytest.mark.slow
     def test_returns_scalar(self, batch_1d, model_and_optimizer):
         model, _, _ = model_and_optimizer
         loss = train_loss_fn(model, batch_1d)

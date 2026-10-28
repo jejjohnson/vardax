@@ -98,6 +98,7 @@ class TestSimulateLorenz63:
         assert states.shape == (5001, 3)
         assert jnp.all(jnp.isfinite(states))
 
+    @pytest.mark.slow
     def test_burn_in_excluded(self):
         """Burn-in points must not appear in the returned trajectory.
 

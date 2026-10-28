@@ -281,6 +281,7 @@ def _grid_trajectory():
 
 
 class TestGridPointObs:
+    @pytest.mark.slow
     def test_closed_form_oracle(self, x64):
         op = vdx.GridPointObs((jnp.asarray(_GRID_Y), jnp.asarray(_GRID_X)))
         coords = [[2.0, 1.0], [0.5, 1.5], [3.0, 2.0], [-1.0, 5.0]]
@@ -296,6 +297,7 @@ class TestGridPointObs:
         batch1 = _point_batch([[2.5], [0.5], [9.0]])
         np.testing.assert_allclose(op1(state, batch1), [9.5, 3.5, 11.0], rtol=RTOL)
 
+    @pytest.mark.slow
     @given(
         coords=_arrays((5, 2), -1.0, 4.0),
         level=_floats(-5, 5),

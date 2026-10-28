@@ -59,6 +59,7 @@ def _grad_norm(model, batch):
 
 
 class TestKStepAdjoint:
+    @pytest.mark.slow
     def test_k1_matches_one_step_exactly(self, rng, batch_1d):
         m_one = _model(rng, batch_1d, OneStepAdjoint())
         m_k1 = _model(rng, batch_1d, KStepAdjoint(k=1))

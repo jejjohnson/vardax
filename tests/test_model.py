@@ -10,6 +10,7 @@ from vardax.adjoints import OneStepAdjoint
 
 
 class TestFourDVarNet1D:
+    @pytest.mark.slow
     def test_output_shape(self, rng, batch_1d):
         B, T, N = batch_1d.input.shape
         model = FourDVarNet1D(
@@ -25,6 +26,7 @@ class TestFourDVarNet1D:
 
 
 class TestFourDVarNet2D:
+    @pytest.mark.slow
     def test_output_shape(self, rng, batch_2d):
         B, T, H, W = batch_2d.input.shape
         model = FourDVarNet2D(
@@ -81,6 +83,7 @@ class TestFourDVarNet1DAdjointDispatch:
         out = model(batch_1d)
         assert out.shape == (B, T, N)
 
+    @pytest.mark.slow
     def test_one_step_gradients_are_finite(self, rng, batch_1d):
         import equinox as eqx
 

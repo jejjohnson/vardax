@@ -1,11 +1,13 @@
 """Tests for vardax._src.grad_mod."""
 
 import jax.numpy as jnp
+import pytest
 
 from vardax import ConvLSTMGradMod1D, ConvLSTMGradMod2D, LSTMState1D, LSTMState2D
 
 
 class TestConvLSTMGradMod1D:
+    @pytest.mark.slow
     def test_output_shapes(self, rng, batch_1d):
         B, T, N = batch_1d.input.shape
         hidden_dim = 16
@@ -27,6 +29,7 @@ class TestConvLSTMGradMod1D:
 
 
 class TestConvLSTMGradMod2D:
+    @pytest.mark.slow
     def test_output_shapes(self, rng, batch_2d):
         B, T, H, W = batch_2d.input.shape
         hidden_dim = 8

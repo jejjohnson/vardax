@@ -71,6 +71,7 @@ def _single_time(n: int = 6, m: int = 15, r: float = 1e-2):
     return F, B, r, R, common, batch
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("make_adapter", ADAPTERS)
 def test_whitened_control_matches_state_space(x64, make_adapter):
     F, B, r, _, common, batch = _single_time()
@@ -89,6 +90,7 @@ def test_whitened_control_matches_state_space(x64, make_adapter):
     assert jnp.array_equal(posterior.mean, analysis)
 
 
+@pytest.mark.slow
 def test_reduced_control_is_phi_p_theta_phi_t(x64):
     """Φ not square and Q ≠ I: the covariance lives in span(Φ)."""
     F, _, r, _, common, batch = _single_time()
@@ -162,6 +164,7 @@ def _rollout_problem():
     return B, G, R_inv, common, batch
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("make_adapter", ADAPTERS)
 def test_strong_whitened_control_matches_state_space(x64, make_adapter):
     B, _, _, common, batch = _rollout_problem()

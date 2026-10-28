@@ -201,6 +201,7 @@ class TestOptaxMinimiser:
         r2 = solve(2.0 * _M)
         assert jnp.linalg.norm(r2.value - 2.0 * _M) <= _grad_bound(r2) + _ROUND
 
+    @pytest.mark.slow
     def test_implicit_adjoint_gradient(self):
         # x*(m) = m, so dx*/dm = I; the IFT tangent is A^{-1} A = I up to
         # the float32 solve error, ~ eps·cond(A) times a small op count.
@@ -208,6 +209,7 @@ class TestOptaxMinimiser:
         jac = jax.jacobian(lambda m: minimiser(_quadratic, jnp.zeros(5), m))(_M)
         assert jnp.allclose(jac, jnp.eye(5), atol=16 * EPS * _COND)
 
+    @pytest.mark.slow
     def test_implicit_adjoint_matrix_derivative(self):
         # J = ½ xᵀAx - bᵀx, x* = A⁻¹b, dx*/dA[δA] = -A⁻¹ δA A⁻¹ b. Unlike
         # dx*/dm above, this depends on x* itself, so an inexact x* shows.
@@ -236,6 +238,7 @@ class TestOptaxMinimiser:
         )
         assert jnp.linalg.norm(t - t_true) <= bound
 
+    @pytest.mark.slow
     @pytest.mark.parametrize("which", ["optax", "optimistix"])
     def test_cost_gradient_is_envelope(self, which):
         # J*(b) = min_x ½ xᵀAx - bᵀx has dJ*/db = -x* = -A⁻¹b.
@@ -258,6 +261,7 @@ class TestOptaxMinimiser:
         bound = float(run(b).grad_norm) / _LAMBDA_MIN + _ROUND
         assert jnp.linalg.norm(g - expected) <= bound
 
+    @pytest.mark.slow
     @pytest.mark.parametrize("which", ["optax", "optimistix"])
     def test_cost_second_derivative(self, which):
         # Codex P2: J*(b) = min_x x²/2 - bx = -b²/2, so dJ*/db = -b and
@@ -278,6 +282,7 @@ class TestOptaxMinimiser:
         assert jnp.allclose(jax.grad(j_star)(2.0), -2.0, atol=1e-5)
         assert jnp.allclose(jax.grad(jax.grad(j_star))(2.0), -1.0, atol=8 * EPS)
 
+    @pytest.mark.slow
     def test_recursive_checkpoint_adjoint_gradient(self):
         # 50 fixed SGD(0.1) steps on J = ½(x - m)ᵀA(x - m): x_50 = m - (I -
         # 0.1A)^50 (m - x0), so dx_50/dm = I - (I - 0.1A)^50 exactly. The
@@ -450,12 +455,14 @@ def _l63_case(seed):
 
 
 class TestModels:
+    @pytest.mark.slow
     def test_default_is_bit_for_bit_optimistix_minimiser(self, blue_problem):
         batch, _ = blue_problem
         default = _strong()(batch)
         explicit = _strong(OptimistixMinimiser())(batch)
         assert jnp.array_equal(default, explicit)
 
+    @pytest.mark.slow
     @pytest.mark.parametrize("which", ["three", "strong", "weak", "incremental"])
     def test_models_accept_optax_minimiser(self, blue_problem, which):
         batch, expected = blue_problem
@@ -494,6 +501,7 @@ class TestModels:
         # BLUE with B = R = I: x* = y / 2; L-BFGS polish reaches round-off.
         assert jnp.allclose(xa, expected, atol=1e-4)
 
+    @pytest.mark.slow
     def test_gradient_through_model_with_optax(self, blue_problem):
         batch, _ = blue_problem
         model = _strong(OptaxMinimiser(optax.adam(1e-1), polish=optax.lbfgs()))
