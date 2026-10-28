@@ -11,8 +11,7 @@ iterate $x^{(k)}$ (the background $x_b$ stays fixed):
 2. Form the Gauss-Newton Hessian
    $J''_{GN} = B^{-1} + \sum_t (H'_t M'_t)^\top R_t^{-1} (H'_t M'_t)$.
 3. Solve $J''_{GN}\,\delta x^* = -\nabla J(x^{(k)})$ via lineax CG, where
-   $-\nabla J(x^{(k)}) = -B^{-1}(x^{(k)} - x_b)
-   + \sum_t (H'_t M'_t)^\top R_t^{-1} (y_t - H_t(M_t(x^{(k)})))$
+   $-\nabla J(x^{(k)}) = -B^{-1}(x^{(k)} - x_b) + \sum_t (H'_t M'_t)^\top R_t^{-1} (y_t - H_t(M_t(x^{(k)})))$
    is the negative gradient of the full nonlinear cost.
 4. Update $x^{(k+1)} = x^{(k)} + \delta x^*$.
 
@@ -58,7 +57,10 @@ from vardax._src.obs_operators.point import (
 
 
 class IncrementalConfig(eqx.Module):
-    """Configuration for ``IncrementalFourDVar``.
+    r"""Configuration for ``IncrementalFourDVar``.
+
+    A plain container of the outer/inner iteration budget and the
+    control-variable-transform switch.
 
     Attributes:
         n_outer: Number of Gauss-Newton outer iterations (typical: 3).
@@ -67,9 +69,9 @@ class IncrementalConfig(eqx.Module):
             (truncated CG, as in operational incremental 4DVar).
         cg_atol: Inner CG absolute tolerance.
         cg_rtol: Inner CG relative tolerance.
-        cvt: Solve the inner system over the control variable χ with
-            $x_0 = x_b + B^{1/2} \\chi$ (default). The background term is
-            $\tfrac12 \\lVert \\chi \rVert^2$, the inner Hessian
+        cvt: Solve the inner system over the control variable $\chi$ with
+            $x_0 = x_b + B^{1/2} \chi$ (default). The background term is
+            $\tfrac12 \lVert \chi \rVert^2$, the inner Hessian
             $I + B^{1/2\top} G'^\top R^{-1} G' B^{1/2}$ has eigenvalues
             ≥ 1, and $B$ is never solved against. ``False`` solves in
             state space with $B^{-1}$ applied by CG at every Hessian
@@ -77,6 +79,20 @@ class IncrementalConfig(eqx.Module):
         covariance_tol: Absolute and relative tolerance of the CG solves
             that apply $R^{-1}$ (and $B^{-1}$ when ``cvt=False``). Outer
             accuracy cannot beat it.
+
+    Examples:
+        The defaults are three outer and thirty inner iterations with the
+        control-variable transform on:
+
+        >>> import vardax as vdx
+        >>> cfg = vdx.IncrementalConfig()
+        >>> cfg.n_outer, cfg.n_inner, cfg.cvt
+        (3, 30, True)
+
+        State-space solving (``cvt=False``) with a bigger budget:
+
+        >>> vdx.IncrementalConfig(n_outer=5, cvt=False).n_outer
+        5
     """
 
     n_outer: int = eqx.field(static=True, default=3)
@@ -90,6 +106,22 @@ class IncrementalConfig(eqx.Module):
 class IncrementalFourDVar(eqx.Module):
     r"""Operational incremental 4DVar (Decision D11).
 
+    $$J(x_0) = \tfrac12 \|x_0 - x_b\|^2_{B^{-1}} + \tfrac12 \|r(x_0)\|^2_{R^{-1}}$$
+
+    $$r_t(x_0) = m_t \odot (y_t - H_t(M_t(x_0)))$$
+
+    Algorithm:
+        1. Start from $x^{(0)} = x_b$ (the control $\chi = 0$ under the
+           control-variable transform).
+        2. For each of ``n_outer`` iterations, linearise the residual
+           $r$ at the current iterate with ``jax.linearize`` and
+           ``jax.vjp``.
+        3. Solve the Gauss-Newton system
+           $(P + r'^\top R^{-1} r') \, \delta = -\nabla J$ with CG for at
+           most ``n_inner`` steps, where $P = B^{-1}$ in state space and
+           $P = I$ under the transform.
+        4. Update the iterate with $\delta$ and map back to the state.
+
     Functionally equivalent to [`StrongFourDVar`][vardax.StrongFourDVar]
     (same problem, same answer in the converged limit) but with a
     specialised inner solver: Gauss-Newton outer iterations and CG
@@ -99,7 +131,7 @@ class IncrementalFourDVar(eqx.Module):
     Attributes:
         forward: ``pipekit_cycle.ForwardModel``.
         obs_op: Observation operator.
-        prior_mean: Background $x_b$ — initial state ``(N,)``.
+        prior_mean: Background $x_b$ — the initial state.
         prior_cov_op: $B$.
         obs_cov_op: $R$.
         config: [`IncrementalConfig`][vardax.IncrementalConfig].
@@ -142,6 +174,34 @@ class IncrementalFourDVar(eqx.Module):
         >>> xa.shape
         (1, 3)
         >>> bool(jnp.allclose(xa, 0.5, atol=1e-2))
+        True
+
+        On a linear decaying model $M(x) = x / 2$ with observations at
+        $t = 0, 1$ the Gauss-Newton step is exact, so one outer iteration
+        reproduces the strong-constraint answer $x_0^* = 2/3$:
+
+        >>> class Decay:
+        ...     dt = 1.0
+        ...
+        ...     def step(self, x, dt):
+        ...         return 0.5 * x
+        >>> window = vardax.Batch1D(input=jnp.ones((1, 2, 3)), mask=jnp.ones((1, 2, 3)))
+        >>> one = vardax.IncrementalFourDVar(
+        ...     forward=Decay(),
+        ...     obs_op=vardax.MaskedIdentity(),
+        ...     prior_mean=jnp.zeros(3),
+        ...     prior_cov_op=eye,
+        ...     obs_cov_op=eye,
+        ...     config=vardax.IncrementalConfig(n_outer=1, cvt=False),
+        ... )
+        >>> bool(jnp.allclose(one(window), 2 / 3, atol=1e-3))
+        True
+
+        Composed with the Laplace adapter (via ``posterior``), the window's
+        covariance is $P^* = 1 / 2.25$:
+
+        >>> post = one.posterior(window)
+        >>> bool(jnp.allclose(post.cov.mv(jnp.ones(3)), 1 / 2.25, atol=1e-3))
         True
     """
 
@@ -189,13 +249,30 @@ class IncrementalFourDVar(eqx.Module):
         return rollout(forward, initial_state, n_steps, checkpoint=self.checkpoint)
 
     def __call__(self, batch: Batch1D | PointObsBatch) -> Float[Array, "*batch N"]:
-        """Incremental-4DVar analysis: GN outer + CG inner.
+        r"""Incremental-4DVar analysis: GN outer + CG inner.
 
         A [`PointObsBatch`][vardax.PointObsBatch] needs
         ``obs_op=GridPointObs(...)``: observation $i$ is compared with the
         trajectory state at ``time_index[i]`` over a window of ``n_times``
-        states, with error variance $\\sigma_i^2$ (``obs_cov_op`` must
-        be ``None`` or an identity, else ``ValueError``).
+        states, with error variance $\sigma_i^2$ (``obs_cov_op`` must
+        be ``None`` or an identity).
+
+        Args:
+            batch: A gridded [`Batch1D`][vardax.Batch1D] whose time axis
+                holds the window, or a
+                [`PointObsBatch`][vardax.PointObsBatch].
+
+        Returns:
+            The analysed initial state $x_0^*$ of every window.
+
+        Raises:
+            ObservationError: For a point batch with a non-trivial
+                ``obs_cov_op`` or an out-of-range ``time_index``.
+            MissingInputError: For a gridded batch when ``obs_cov_op`` is
+                ``None``, or a point batch with ``time_index`` but no
+                ``n_times``.
+            InputTypeError: For a point batch whose ``obs_op`` is not a
+                ``GridPointObs``.
         """
         if isinstance(batch, PointObsBatch):
             check_point_obs_cov(self.obs_cov_op)
@@ -240,10 +317,10 @@ class IncrementalFourDVar(eqx.Module):
 
         With the whitened, padding-masked residual
         $r_i(x_0) = m_i (y_i - \mathcal H(M^{\tau_i}(x_0))(s_i)) / \sigma_i$,
-        the cost is $\tfrac12 \lVert x_0 - x_b \rVert^2_{B^{-1}} +
-        \tfrac12 \lVert r \rVert^2$ and the Gauss-Newton Hessian is
-        $B^{-1} + r'^\top r'$ ($I + S^\top r'^\top r' S$ with the
-        control-variable transform).
+        the cost is
+        $\tfrac12 \lVert x_0 - x_b \rVert^2_{B^{-1}} + \tfrac12 \lVert r \rVert^2$
+        and the Gauss-Newton Hessian is $B^{-1} + r'^\top r'$
+        ($I + S^\top r'^\top r' S$ with the control-variable transform).
         """
         obs_op = require_grid_point_obs(self.obs_op)
 
@@ -388,13 +465,20 @@ class IncrementalFourDVar(eqx.Module):
             The window's posterior: mean and lazy covariance.
 
         Raises:
-            ValueError: If ``batch`` holds more than one window.
+            ShapeError: If ``batch`` holds more than one window.
+            UnsupportedInputError: For a point batch.
         """
         from vardax._src.posterior._precision import model_posterior
 
         return model_posterior(self, batch, adapter)
 
     def as_analysis_step(self) -> _IncrementalFourDVarAnalysisStep:
+        """Adapt to ``pipekit_cycle.AnalysisStep``.
+
+        Returns:
+            An analysis step that treats non-finite observations as
+            missing and returns the analysed initial state.
+        """
         return _IncrementalFourDVarAnalysisStep(self)
 
 

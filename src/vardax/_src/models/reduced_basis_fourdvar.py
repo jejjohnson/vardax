@@ -73,18 +73,38 @@ from vardax._src.utils.shapes import as_shape
 class ReducedBasisFourDVar(eqx.Module):
     r"""Reduced-basis 4DVar.
 
+    $$J(X) = \tfrac12 X^\top Q^{-1} X + J_o(x_b + \Phi X)$$
+
+    $$J_o(x_0) = \tfrac12 \sum_t \|m_t \odot (y_t - H(M^t(x_0)))\|^2_{R^{-1}}$$
+
+    Without a basis the control is $x_0$ itself and the first term is
+    $\tfrac12 \|x_0 - x_b\|^2_{B^{-1}}$.
+
+    Algorithm:
+        1. Pick the control and its map to the initial state: $x_0$ itself,
+           the coefficients $X$ with $x_0 = x_b + \Phi X$ (``basis``), or
+           $\theta$ with $x_0 = \psi(\theta)$ (``parameterization``).
+        2. Roll the forward model out from $x_0$ for the window length.
+        3. Add the prior term ($B^{-1}$, ``basis.prior_inv`` or the
+           parameterization penalty) to the masked observation misfit
+           summed over the trajectory. Masked entries are marginalised out
+           of $R$, so a correlated $R$ is not biased by the gaps.
+        4. Minimise the full nonlinear cost with ``minimiser`` (no
+           linearisation or inner loop) and decode the minimiser to
+           $x_0^*$.
+
     Attributes:
         forward: ``pipekit_cycle.ForwardModel`` supplying
             ``step(state, dt) -> state``.
         obs_op: Observation operator (linear or nonlinear). Supplies
             ``__call__`` and ``linearize``; ``__call__`` may accept a
             ``mask`` kwarg (`MaskedIdentity` / `InterpObs` style).
-        prior_mean: Background $x_b$ of shape ``(N,)``.
+        prior_mean: Background $x_b$.
         prior_cov_op: $B$. Used only when ``basis is None``.
         obs_cov_op: $R$.
         basis: Optional `ReducedBasis`. When supplied, the control is
-            the coefficient vector ``X`` (shape ``(basis.nbasis,)``)
-            and ``B^{-1}`` is replaced by ``basis.prior_inv`` — the same as
+            the coefficient vector $X$ (``basis.nbasis`` entries)
+            and $B^{-1}$ is replaced by ``basis.prior_inv`` — the same as
             ``parameterization=LinearParameterization(basis, prior_mean)``.
         parameterization: Optional
             [`StateParameterization`][vardax.StateParameterization]; the
@@ -147,6 +167,24 @@ class ReducedBasisFourDVar(eqx.Module):
         >>> xa = vardax.ReducedBasisFourDVar(**common, basis=basis)(batch)
         >>> bool(jnp.allclose(xa, 4.0 / 5.0, atol=1e-3))
         True
+
+        Composed with a Fourier basis from [`fourier_basis`][vardax.fourier_basis],
+        the analysis is still a state-space array:
+
+        >>> fb = vardax.fourier_basis([jnp.linspace(0.0, 1.0, 4)], 2)
+        >>> xb = vardax.ReducedBasisFourDVar(**common, basis=fb)(batch)
+        >>> xb.shape
+        (1, 4)
+
+        ``basis`` and ``parameterization`` are exclusive:
+
+        >>> param = vardax.LinearParameterization(basis, jnp.zeros(4))
+        >>> vardax.ReducedBasisFourDVar(
+        ...     **common, basis=basis, parameterization=param
+        ... )  # doctest: +IGNORE_EXCEPTION_DETAIL
+        Traceback (most recent call last):
+        ...
+        ConfigurationError: Pass basis= or parameterization=, not both; ...
     """
 
     forward: Any
@@ -212,13 +250,30 @@ class ReducedBasisFourDVar(eqx.Module):
         return rollout(forward, initial_state, n_steps, checkpoint=self.checkpoint)
 
     def __call__(self, batch: Batch1D | PointObsBatch) -> Float[Array, "*batch N"]:
-        """Reduced-basis 4DVar analysis: minimise over ``x_0`` (or ``X``).
+        r"""Reduced-basis 4DVar analysis: minimise over ``x_0`` (or ``X``).
 
         A [`PointObsBatch`][vardax.PointObsBatch] needs
         ``obs_op=GridPointObs(...)``: observation $i$ is compared with the
         trajectory state at ``time_index[i]`` over a window of ``n_times``
-        states, with error variance $\\sigma_i^2$ (``obs_cov_op`` must
-        be ``None`` or an identity, else ``ValueError``).
+        states, with error variance $\sigma_i^2$ (``obs_cov_op`` must
+        be ``None`` or an identity).
+
+        Args:
+            batch: A gridded [`Batch1D`][vardax.Batch1D] whose time axis
+                holds the window, or a
+                [`PointObsBatch`][vardax.PointObsBatch].
+
+        Returns:
+            The analysed initial state $x_0^*$ of every window.
+
+        Raises:
+            ObservationError: For a point batch with a non-trivial
+                ``obs_cov_op`` or an out-of-range ``time_index``.
+            MissingInputError: For a gridded batch when ``obs_cov_op`` is
+                ``None``, or a point batch with ``time_index`` but no
+                ``n_times``.
+            InputTypeError: For a point batch whose ``obs_op`` is not a
+                ``GridPointObs``.
         """
         if isinstance(batch, PointObsBatch):
             check_point_obs_cov(self.obs_cov_op)
@@ -367,14 +422,23 @@ class ReducedBasisFourDVar(eqx.Module):
             The window's posterior: mean and lazy covariance.
 
         Raises:
-            ValueError: If ``batch`` holds more than one window.
+            ShapeError: If ``batch`` holds more than one window.
+            UnsupportedInputError: For a point batch, or for a model with
+                ``basis=`` or ``parameterization=``, whose prior is not
+                $B$.
         """
         from vardax._src.posterior._precision import model_posterior
 
         return model_posterior(self, batch, adapter)
 
     def as_analysis_step(self) -> _ReducedBasisFourDVarAnalysisStep:
-        """Adapt to ``pipekit_cycle.AnalysisStep`` (Decision D8)."""
+        """Adapt to ``pipekit_cycle.AnalysisStep`` (Decision D8).
+
+        Returns:
+            An analysis step that accepts single arrays or windowed lists,
+            swaps in the supplied forecast and operators, and returns the
+            analysis (rolled to the window end for a smoother).
+        """
         return _ReducedBasisFourDVarAnalysisStep(self)
 
 

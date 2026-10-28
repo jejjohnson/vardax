@@ -138,14 +138,35 @@ def plot_reconstruction_comparison(
 ) -> tuple[Figure, np.ndarray]:
     """Side-by-side comparison of target, masked input, and reconstruction.
 
+    Draws three panels (time on the x-axis, feature on the y-axis) for one
+    batch element.
+
     Args:
-        target: Ground-truth states of shape ``(B, T, N)``.
-        masked_input: Masked / noisy observations of shape ``(B, T, N)``.
-        reconstruction: Model reconstruction of shape ``(B, T, N)``.
+        target: Ground-truth states, indexed ``[batch, time, feature]``.
+        masked_input: Masked / noisy observations, same layout.
+        reconstruction: Model reconstruction, same layout.
         sample_idx: Which batch element to visualize.
 
     Returns:
-        ``(fig, axes)`` — Matplotlib figure and array of axes.
+        ``(fig, axes)``: the Matplotlib figure and the array of three axes.
+
+    Examples:
+        >>> import matplotlib
+        >>> matplotlib.use("Agg")
+        >>> import numpy as np
+        >>> import vardax as vdx
+        >>> truth = np.random.default_rng(0).normal(size=(2, 6, 4))
+        >>> fig, axes = vdx.plot_reconstruction_comparison(truth, truth, truth)
+        >>> axes.shape, type(axes[0]).__name__
+        ((3,), 'Axes')
+
+        Another batch element can be selected:
+
+        >>> fig, axes = vdx.plot_reconstruction_comparison(
+        ...     truth, truth, truth, sample_idx=1
+        ... )
+        >>> axes[1].get_title()
+        'Masked input'
     """
     import matplotlib.pyplot as plt
 
@@ -173,12 +194,30 @@ def plot_l96_grid(
     """Hovmöller-style image of Lorenz-96 states over time.
 
     Args:
-        states: State array of shape ``(T, N)``.
-        time_coords: Time coordinate array of shape ``(T,)``.
+        states: State trajectory, indexed ``[time, variable]``.
+        time_coords: Time coordinate of each row of ``states``.
         ax: Optional existing ``Axes`` to draw on.
 
     Returns:
-        ``(fig, ax)`` — Matplotlib figure and axes.
+        ``(fig, ax)``: the Matplotlib figure and axes.
+
+    Examples:
+        >>> import matplotlib
+        >>> matplotlib.use("Agg")
+        >>> import numpy as np
+        >>> import vardax as vdx
+        >>> states = np.random.default_rng(0).normal(size=(20, 8))
+        >>> fig, ax = vdx.plot_l96_grid(states, np.linspace(0.0, 1.0, 20))
+        >>> type(ax).__name__, ax.get_xlabel()
+        ('Axes', 'time')
+
+        Drawing onto an existing axes returns that axes:
+
+        >>> import matplotlib.pyplot as plt
+        >>> _, mine = plt.subplots()
+        >>> _, same = vdx.plot_l96_grid(states, np.linspace(0.0, 1.0, 20), ax=mine)
+        >>> same is mine
+        True
     """
     import matplotlib.pyplot as plt
 
@@ -214,13 +253,43 @@ def plot_l96_trajectories(
     """Line plot of selected Lorenz-96 variables over time.
 
     Args:
-        states: State array of shape ``(T, N)``.
-        time_coords: Time coordinate array of shape ``(T,)``.
-        n_vars: Number of evenly-spaced variables to plot.
+        states: State trajectory, indexed ``[time, variable]``.
+        time_coords: Time coordinate of each row of ``states``.
+        n_vars: Number of evenly-spaced variables to plot (capped at the
+            number of variables).
         ax: Optional existing ``Axes`` to draw on.
 
     Returns:
-        ``(fig, ax)`` — Matplotlib figure and axes.
+        ``(fig, ax)``: the Matplotlib figure and axes.
+
+    Raises:
+        ConfigurationError: If ``n_vars`` is not positive.
+
+    Examples:
+        >>> import matplotlib
+        >>> matplotlib.use("Agg")
+        >>> import numpy as np
+        >>> import vardax as vdx
+        >>> states = np.random.default_rng(0).normal(size=(20, 8))
+        >>> time = np.linspace(0.0, 1.0, 20)
+        >>> fig, ax = vdx.plot_l96_trajectories(states, time, n_vars=3)
+        >>> len(ax.lines)
+        3
+
+        Asking for more variables than exist plots all of them:
+
+        >>> fig, ax = vdx.plot_l96_trajectories(states, time, n_vars=50)
+        >>> len(ax.lines)
+        8
+
+        A non-positive count is rejected:
+
+        >>> vdx.plot_l96_trajectories(
+        ...     states, time, n_vars=0
+        ... )  # doctest: +IGNORE_EXCEPTION_DETAIL
+        Traceback (most recent call last):
+        ...
+        ConfigurationError: n_vars must be a positive integer, got 0.
     """
     import matplotlib.pyplot as plt
 

@@ -21,15 +21,54 @@ from ._types import LSTMState1D, LSTMState2D
 
 
 class ConvLSTMGradMod1D(eqx.Module):
-    """1-D ConvLSTM-based gradient modulator.
+    r"""1-D ConvLSTM-based gradient modulator.
 
     Accepts the concatenation of the current state and its gradient as input
-    and produces a modulated gradient update (and updated LSTM state).
+    and produces a modulated gradient update (and updated LSTM state).  With
+    $g = \nabla J(u)$ and previous memory $(h, c)$ the gates are
 
-    Attributes:
+    $$
+    [i; f; \tilde c; o] = W_x [g; u] + W_h h, \quad
+    c' = \sigma(f) \odot c + \sigma(i) \odot \tanh(\tilde c), \quad
+    h' = \sigma(o) \odot \tanh(c'),
+    $$
+
+    and the update is $W_o h'$.
+
+    Algorithm:
+        1. Stack the gradient over the state along the channel axis and apply
+           the input convolution; add the convolution of the hidden state.
+        2. Split into the input, forget, candidate and output gates.
+        3. Update the cell state $c'$ and the hidden state $h'$.
+        4. Map $h'$ back to the state channels with the output convolution.
+
+    Args:
         state_channels: Number of channels in the state / gradient (``T``).
         hidden_dim: Number of hidden channels in the LSTM.
         kernel_size: 1-D convolution kernel size.
+        key: PRNG key for the convolution weights.
+
+    Examples:
+        The update has the shape of the gradient, the memory the shape of the
+        hidden state:
+
+        >>> import jax
+        >>> import jax.numpy as jnp
+        >>> import vardax as vdx
+        >>> mod = vdx.ConvLSTMGradMod1D(
+        ...     state_channels=3, hidden_dim=5, key=jax.random.PRNGKey(0)
+        ... )
+        >>> grad = jnp.ones((2, 3, 4))
+        >>> update, lstm = mod(grad, grad, vdx.LSTMState1D.zeros(2, 5, 4))
+        >>> update.shape, lstm.h.shape
+        ((2, 3, 4), (2, 5, 4))
+
+        The memory is carried across solver steps, so a second call with the
+        returned state gives a different update:
+
+        >>> update2, _ = mod(grad, grad, lstm)
+        >>> bool(jnp.allclose(update, update2))
+        False
     """
 
     state_channels: int = eqx.field(static=True)
@@ -83,12 +122,12 @@ class ConvLSTMGradMod1D(eqx.Module):
         """Forward pass.
 
         Args:
-            grad: Gradient of variational cost w.r.t. state, shape ``(B, T, N)``.
-            state: Current state estimate, shape ``(B, T, N)``.
-            lstm_state: Current LSTM hidden/cell state with hidden_dim channels.
+            grad: Gradient of the variational cost with respect to the state.
+            state: Current state estimate.
+            lstm_state: Current LSTM hidden/cell state with ``hidden_dim`` channels.
 
         Returns:
-            Tuple of (modulated gradient update, new LSTM state).
+            The modulated gradient update and the new LSTM state.
         """
         # eqx.nn.Conv1d operates on (channels, spatial). Our arrays are already
         # (B, channels, spatial) with T=channels for grad/state and H=channels
@@ -128,12 +167,52 @@ class ConvLSTMGradMod1D(eqx.Module):
 
 
 class ConvLSTMGradMod2D(eqx.Module):
-    """2-D ConvLSTM-based gradient modulator.
+    r"""2-D ConvLSTM-based gradient modulator.
 
-    Attributes:
+    Same recurrence as [`ConvLSTMGradMod1D`][vardax.ConvLSTMGradMod1D], with 2-D
+    convolutions: with $g = \nabla J(u)$ and memory $(h, c)$,
+
+    $$
+    [i; f; \tilde c; o] = W_x [g; u] + W_h h, \quad
+    c' = \sigma(f) \odot c + \sigma(i) \odot \tanh(\tilde c), \quad
+    h' = \sigma(o) \odot \tanh(c'),
+    $$
+
+    and the update is $W_o h'$.
+
+    Algorithm:
+        1. Stack the gradient over the state along the channel axis and apply
+           the input convolution; add the convolution of the hidden state.
+        2. Split into the input, forget, candidate and output gates.
+        3. Update the cell state $c'$ and the hidden state $h'$.
+        4. Map $h'$ back to the state channels with the output convolution.
+
+    Args:
         state_channels: Number of time channels in the state / gradient.
         hidden_dim: Number of hidden channels in the LSTM.
         kernel_size: 2-D convolution kernel size.
+        key: PRNG key for the convolution weights.
+
+    Examples:
+        The update has the shape of the gradient:
+
+        >>> import jax
+        >>> import jax.numpy as jnp
+        >>> import vardax as vdx
+        >>> mod = vdx.ConvLSTMGradMod2D(
+        ...     state_channels=3, hidden_dim=2, key=jax.random.PRNGKey(0)
+        ... )
+        >>> grad = jnp.ones((1, 3, 4, 5))
+        >>> update, lstm = mod(grad, grad, vdx.LSTMState2D.zeros(1, 2, 4, 5))
+        >>> update.shape, lstm.c.shape
+        ((1, 3, 4, 5), (1, 2, 4, 5))
+
+        A zero gradient and zero state still yield a finite update:
+
+        >>> zeros = jnp.zeros((1, 3, 4, 5))
+        >>> out, _ = mod(zeros, zeros, vdx.LSTMState2D.zeros(1, 2, 4, 5))
+        >>> bool(jnp.all(jnp.isfinite(out)))
+        True
     """
 
     state_channels: int = eqx.field(static=True)
@@ -187,12 +266,12 @@ class ConvLSTMGradMod2D(eqx.Module):
         """Forward pass.
 
         Args:
-            grad: Gradient of variational cost w.r.t. state, shape ``(B, T, H, W)``.
-            state: Current state estimate, shape ``(B, T, H, W)``.
+            grad: Gradient of the variational cost with respect to the state.
+            state: Current state estimate.
             lstm_state: Current LSTM hidden/cell state.
 
         Returns:
-            Tuple of (modulated gradient update, new LSTM state).
+            The modulated gradient update and the new LSTM state.
         """
 
         def _forward(

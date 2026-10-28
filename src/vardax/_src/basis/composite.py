@@ -17,7 +17,7 @@ from vardax._src.errors import ConfigurationError
 
 
 class CompositeBasis(eqx.Module):
-    """Concatenate several reduced bases into one control vector.
+    r"""Concatenate several reduced bases into one control vector.
 
     Satisfies `vardax.protocols.ReducedBasis`. ``nbasis`` is the sum of
     component sizes; ``operg`` slices ``X``, applies each component,
@@ -25,6 +25,36 @@ class CompositeBasis(eqx.Module):
     concatenates the per-component blocks. Components may mix families
     (e.g. a broad `rbf_basis` layer plus a `wavelet_basis` detail
     layer), provided their ``operg`` outputs share one grid shape.
+
+    $$\delta x = \sum_c \Phi_c X_c$$
+
+    $$Q^{-1} = \mathrm{blockdiag}(Q_1^{-1}, \ldots, Q_C^{-1})$$
+
+    Algorithm:
+        1. Split $X$ at the cumulative component sizes (``splits``).
+        2. ``operg``: apply each component to its slice and sum the grid
+           increments.
+        3. ``prior_inv``: apply each component's ``prior_inv`` to its slice
+           and concatenate the blocks.
+
+    Examples:
+        Two linear bases on a 3-point grid, stacked into one control vector:
+
+        >>> import jax.numpy as jnp
+        >>> import vardax as vdx
+        >>> b1 = vdx.linear_basis(jnp.eye(3)[:, :2], variance=2.0)
+        >>> b2 = vdx.linear_basis(jnp.ones((3, 1)), variance=0.5)
+        >>> basis = vdx.composite_basis(b1, b2)
+        >>> basis.nbasis
+        3
+        >>> basis.operg(0.0, jnp.array([1.0, 2.0, 3.0])).shape
+        (3,)
+
+        The prior is block-diagonal, so ``prior_inv`` divides each block by
+        its own variance:
+
+        >>> bool(jnp.allclose(basis.prior_inv(jnp.ones(3)), jnp.array([0.5, 0.5, 2.0])))
+        True
     """
 
     components: tuple[Any, ...]
@@ -61,7 +91,35 @@ class CompositeBasis(eqx.Module):
 
 
 def composite_basis(*components: Any) -> CompositeBasis:
-    """Build a `CompositeBasis` from a sequence of `ReducedBasis` components."""
+    """Build a `CompositeBasis` from a sequence of `ReducedBasis` components.
+
+    Args:
+        *components: Reduced bases to concatenate, in control-vector order.
+            Their ``operg`` outputs must share one grid shape.
+
+    Returns:
+        The composite basis, with ``nbasis`` the sum of component sizes.
+
+    Raises:
+        ConfigurationError: If no component is given.
+
+    Examples:
+        Composing two bases and checking the control-vector size:
+
+        >>> import jax.numpy as jnp
+        >>> import vardax as vdx
+        >>> a = vdx.linear_basis(jnp.eye(2))
+        >>> b = vdx.linear_basis(jnp.ones((2, 1)))
+        >>> vdx.composite_basis(a, b).nbasis
+        3
+
+        An empty call is rejected:
+
+        >>> vdx.composite_basis()  # doctest: +IGNORE_EXCEPTION_DETAIL
+        Traceback (most recent call last):
+        ...
+        ConfigurationError: composite_basis requires at least one component.
+    """
     if not components:
         raise ConfigurationError("composite_basis requires at least one component.")
     cuts, total = [], 0

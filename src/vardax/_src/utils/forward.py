@@ -42,6 +42,11 @@ class SoftBoundedForward(eqx.Module):
       a rejected trial therefore still carries curvature information if
       the minimiser asks for it.
 
+    Algorithm:
+        1. Confine the incoming state with $s$.
+        2. Advance it with the wrapped model's ``step``.
+        3. Confine the result with $s$ again.
+
     Attributes:
         forward: The wrapped ``pipekit_cycle.ForwardModel``.
         bound: Half-width $b$ of the box on which the adapter is the
@@ -60,6 +65,20 @@ class SoftBoundedForward(eqx.Module):
         >>> fwd.step(jnp.array([1.0, -3.0]), 1.0)  # inside the box: untouched
         Array([ 2., -6.], dtype=float32)
         >>> bool(jnp.all(jnp.abs(fwd.step(jnp.array([1e6, -1e6]), 1.0)) < 20.0))
+        True
+
+        The step length and signature are forwarded from the wrapped model:
+
+        >>> fwd.dt, fwd.state_signature
+        (1.0, None)
+
+        Wrapped around a diffrax-backed model it keeps a far-off state finite:
+
+        >>> def decay(t, y, args):
+        ...     return -y
+        >>> inner = vardax.DynTrajectory(model=decay).as_forward_model(0.1)
+        >>> safe = vardax.SoftBoundedForward(inner, bound=5.0)
+        >>> bool(jnp.all(jnp.isfinite(safe.step(jnp.array([1e9]), 0.1))))
         True
     """
 
@@ -90,5 +109,13 @@ class SoftBoundedForward(eqx.Module):
         return jnp.where(abs_state <= half_width, state, outside)
 
     def step(self, state: Array, dt: float) -> Array:
-        """Advance ``state`` by ``dt`` with confinement before and after."""
+        r"""Advance ``state`` by ``dt`` with confinement before and after.
+
+        Args:
+            state: State $x$ to advance.
+            dt: Step length $\Delta t$.
+
+        Returns:
+            $s(\Phi_{\Delta t}(s(x)))$, with $\Phi$ the wrapped model's step.
+        """
         return self._confine(self.forward.step(self._confine(state), dt))

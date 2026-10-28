@@ -58,6 +58,13 @@ def assert_posterior_agreement(
     sizes use Hutchinson estimation upstream and supply the diagonal
     directly via ``Posterior.cov`` materialised as a diagonal operator.
 
+    Algorithm:
+        1. Extract the oracle marginal standard deviations $\sigma_i$ from
+           ``p_oracle.cov``.
+        2. Form the mean difference $\Delta x^* = x^*_\text{fast} - x^*_\text{oracle}$.
+        3. Compute the z-scores $z_i = |\Delta x^*_i| / \sigma_i$.
+        4. Fail if any $z_i$ exceeds ``tolerance_sigma``.
+
     Args:
         p_fast: Posterior produced by the amortized / fast model.
         p_oracle: Posterior produced by the oracle (e.g. ``StrongFourDVar``
@@ -65,7 +72,40 @@ def assert_posterior_agreement(
         tolerance_sigma: Allowed deviation in units of $\sigma$.
 
     Raises:
+        MissingInputError: If ``p_oracle.cov`` is ``None``.
+        ShapeError: If the two means have different shapes.
         AssertionError: If any component exceeds the tolerance.
+
+    Examples:
+        A fast mean within one oracle standard deviation passes silently:
+
+        >>> import jax
+        >>> import jax.numpy as jnp
+        >>> import lineax as lx
+        >>> import vardax as vdx
+        >>> cov = lx.IdentityLinearOperator(jax.ShapeDtypeStruct((3,), jnp.float32))
+        >>> oracle = vdx.Posterior(mean=jnp.zeros(3), cov=cov)
+        >>> fast = vdx.Posterior(mean=jnp.array([0.5, -0.5, 0.0]))
+        >>> vdx.assert_posterior_agreement(fast, oracle, tolerance_sigma=1.0)
+
+        A deviation of three standard deviations fails:
+
+        >>> far = vdx.Posterior(mean=jnp.array([3.0, 0.0, 0.0]))
+        >>> vdx.assert_posterior_agreement(
+        ...     far, oracle
+        ... )  # doctest: +IGNORE_EXCEPTION_DETAIL
+        Traceback (most recent call last):
+        ...
+        AssertionError: posterior agreement failed: max z = 3.000 > 1.000.
+
+        An oracle without a covariance cannot supply the scale:
+
+        >>> vdx.assert_posterior_agreement(
+        ...     fast, fast
+        ... )  # doctest: +IGNORE_EXCEPTION_DETAIL
+        Traceback (most recent call last):
+        ...
+        MissingInputError: assert_posterior_agreement requires p_oracle.cov ...
     """
     if p_oracle.cov is None:
         raise MissingInputError(
@@ -110,17 +150,47 @@ def assert_adjoint_calibrated(
     needed. Cheaper than dense Jacobian comparison and is the
     operational test used by the six-step cycle.
 
+    Algorithm:
+        1. Draw a random unit vector $v$ of the shape of ``y``.
+        2. Apply both Jacobians to it with ``jax.jvp``.
+        3. Compute the relative error of the two products.
+        4. Repeat for ``n_probes`` vectors and fail if the worst error exceeds
+           ``threshold``.
+
     Args:
         fn_fast: Callable ``y → analysis`` (e.g.
             ``lambda y_: amortized(Batch1D(input=y_, mask=mask, target=None))``).
         fn_oracle: Same signature, but the oracle.
-        y: Observation tensor.
+        y: Observation tensor at which the Jacobians are probed.
         key: PRNG key for the probe vectors.
         threshold: Maximum allowed relative error.
         n_probes: Number of probe vectors.
 
     Raises:
         AssertionError: If any probe exceeds the threshold.
+
+    Examples:
+        Two maps with the same Jacobian agree, even if their values differ:
+
+        >>> import jax
+        >>> import jax.numpy as jnp
+        >>> import vardax as vdx
+        >>> y = jnp.arange(4.0)
+        >>> vdx.assert_adjoint_calibrated(
+        ...     lambda v: 2.0 * v + 1.0,
+        ...     lambda v: 2.0 * v,
+        ...     y,
+        ...     key=jax.random.PRNGKey(0),
+        ... )
+
+        A fast model whose sensitivity is off by a third fails:
+
+        >>> vdx.assert_adjoint_calibrated(
+        ...     lambda v: 2.0 * v, lambda v: 3.0 * v, y, key=jax.random.PRNGKey(0)
+        ... )  # doctest: +IGNORE_EXCEPTION_DETAIL
+        Traceback (most recent call last):
+        ...
+        AssertionError: adjoint calibration failed: ...
     """
     keys = jax.random.split(key, n_probes)
     worst_rel = 0.0
@@ -165,10 +235,20 @@ def simulation_based_calibration(
     over ``[0, n_samples]``. Bumps near the edges → over-confident;
     centre-mass bump → under-confident.
 
+    Algorithm:
+        1. For each run, split the key into prior, observation and posterior keys.
+        2. Draw $x$, simulate $y$ and draw the posterior samples.
+        3. Reduce $x$ and every sample to its $\ell_2$ norm.
+        4. Record how many sample norms fall below the norm of $x$.
+
+    References:
+        Talts, Betancourt, Simpson, Vehtari & Gelman (2018). "Validating
+        Bayesian inference algorithms with simulation-based calibration."
+
     Args:
-        sample_posterior: ``(y, key, n) -> Array`` of shape
-            ``(n, *state_shape)`` — posterior samples conditioned on
-            ``y``. For an ``AmortizedPosterior``, the natural wrapper is
+        sample_posterior: ``(y, key, n) -> Array`` of posterior samples with
+            ``n`` leading rows, conditioned on ``y``. For an
+            ``AmortizedPosterior``, the natural wrapper is
             ``lambda y, k, n: model.sample(Batch(input=y[None], ...), k, n)[0]``.
         sample_prior: ``key -> x``. Single prior draw.
         simulate_obs: ``(x, key) -> y``. Forward + noise.
@@ -178,7 +258,66 @@ def simulation_based_calibration(
             histogram resolution).
 
     Returns:
-        ``(n_runs,)`` int array of ranks in ``[0, n_samples]``.
+        Integer ranks in ``[0, n_samples]``, one per run.
+
+    Examples:
+        Ranks of the truth among samples drawn around the observation lie in
+        ``[0, n_samples]``:
+
+        >>> import jax
+        >>> import jax.numpy as jnp
+        >>> import vardax as vdx
+        >>> prior = lambda k: jax.random.normal(k, (2,))
+        >>> observe = lambda x, k: x + 0.1 * jax.random.normal(k, (2,))
+        >>> posterior = lambda y, k, n: y + 0.1 * jax.random.normal(k, (n, 2))
+        >>> ranks = vdx.simulation_based_calibration(
+        ...     posterior,
+        ...     prior,
+        ...     observe,
+        ...     key=jax.random.PRNGKey(0),
+        ...     n_runs=6,
+        ...     n_samples=10,
+        ... )
+        >>> ranks.shape, bool(jnp.all((ranks >= 0) & (ranks <= 10)))
+        ((6,), True)
+
+        A posterior that ignores the data puts the truth below every sample, so
+        every rank is zero:
+
+        >>> wrong = lambda y, k, n: 100.0 + jax.random.normal(k, (n, 2))
+        >>> bad = vdx.simulation_based_calibration(
+        ...     wrong,
+        ...     prior,
+        ...     observe,
+        ...     key=jax.random.PRNGKey(0),
+        ...     n_runs=6,
+        ...     n_samples=10,
+        ... )
+        >>> bool(jnp.all(bad == 0))
+        True
+
+        An [`AmortizedPosterior`][vardax.AmortizedPosterior] plugs in through a
+        one-element batch:
+
+        >>> key = jax.random.PRNGKey(1)
+        >>> amortized = vdx.AmortizedPosterior(
+        ...     encoder=vdx.MLPObsEncoder(input_size=6, context_dim=4, key=key),
+        ...     head=vdx.RegressionHead(context_dim=4, state_shape=(2, 3), key=key),
+        ...     config=vdx.AmortizedConfig(),
+        ... )
+        >>> def sample_posterior(y, k, n):
+        ...     batch = vdx.Batch1D(input=y[None], mask=jnp.ones_like(y)[None])
+        ...     return amortized.sample(batch, k, n)[0]
+        >>> ranks = vdx.simulation_based_calibration(
+        ...     sample_posterior,
+        ...     lambda k: jax.random.normal(k, (2, 3)),
+        ...     lambda x, k: x,
+        ...     key=jax.random.PRNGKey(2),
+        ...     n_runs=4,
+        ...     n_samples=5,
+        ... )
+        >>> ranks.shape
+        (4,)
     """
     keys = jax.random.split(key, n_runs)
     ranks = []
