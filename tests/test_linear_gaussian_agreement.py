@@ -37,6 +37,9 @@ from vardax import (
     WeakFourDVar,
 )
 
+# end-to-end: several components (or pipekit / the docs) together
+pytestmark = pytest.mark.integration
+
 
 class IdentityForward(eqx.Module):
     """Trivial dynamics: ``M_t(x) = x``. Makes 4DVar reduce to 3DVar."""
@@ -148,6 +151,7 @@ class TestLinearGaussianAgreement:
         strong_out = strong(s["batch"])
         assert jnp.allclose(oi_out, strong_out, atol=1e-3)
 
+    @pytest.mark.slow
     def test_incremental_4dvar_agrees_with_oi_in_3d_limit(self, linear_gaussian_setup):
         """T_plus_1 = 1 ⇒ IncrementalFourDVar with IdentityForward = 3DVar."""
         s = linear_gaussian_setup

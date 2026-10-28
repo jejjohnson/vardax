@@ -33,6 +33,9 @@ import pytest
 
 import vardax
 
+# end-to-end: several components (or pipekit / the docs) together
+pytestmark = pytest.mark.integration
+
 REPO = pathlib.Path(__file__).parents[1]
 DOCS = REPO / "docs"
 README = REPO / "README.md"

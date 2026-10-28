@@ -147,6 +147,7 @@ class TestLinearParameterization:
         assert jnp.allclose(param.penalty(X), 0.5 * jnp.sum(X**2 / variance))
         assert jnp.array_equal(param.init_control(), jnp.zeros(3))
 
+    @pytest.mark.slow
     def test_matches_incremental_4dvar_basis_and_closed_form(self, window):
         batch, x_b = window
         basis = _rbf()
@@ -289,6 +290,7 @@ class TestNeuralFieldParameterization:
         )
         return NeuralFieldParameterization(siren, _ring(), weight_decay)
 
+    @pytest.mark.slow
     def test_protocol_and_shapes(self):
         param = self._param()
         assert isinstance(param, StateParameterization)
@@ -318,6 +320,7 @@ class TestNeuralFieldParameterization:
         with pytest.raises(ValueError, match="weight_decay"):
             NeuralFieldParameterization(siren, _ring(), -1.0)
 
+    @pytest.mark.slow
     def test_frozen_leaves_stay_fixed_with_filter_spec(self):
         # An RFF field: frozen frequencies B behind stop_gradient (the geonnax
         # convention) and a trainable linear head.
@@ -356,6 +359,7 @@ class TestNeuralFieldParameterization:
         rebuilt = eqx.combine(theta_star, eqx.filter(field, spec, inverse=True))
         assert jnp.array_equal(rebuilt.B, field.B)
 
+    @pytest.mark.slow
     def test_grad_flows_to_parameters(self):
         param = self._param()
         g = jax.grad(lambda th: jnp.sum(param.decode(th) ** 2))(param.init_control())

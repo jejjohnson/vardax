@@ -30,6 +30,7 @@ class TestDynamicalPriorBase:
         prior = DynIncrements(model=decay, solver=dfx.Euler())
         assert isinstance(prior.solver, dfx.Euler)
 
+    @pytest.mark.slow
     def test_fixed_step_solver_gets_constant_controller(self):
         # Euler provides no error estimate; the default controller must not
         # be adaptive, and integration must actually work.
@@ -73,6 +74,7 @@ class TestDynTrajectory:
         expected = x0[None, :] * jnp.exp(-ts)[:, None]
         assert jnp.allclose(traj, expected, atol=1e-4)
 
+    @pytest.mark.slow
     def test_loss_zero_on_consistent(self):
         prior = DynTrajectory(model=decay)
         ts = jnp.linspace(0.0, 0.5, 6)
@@ -105,6 +107,7 @@ class TestDynIncrements:
         with pytest.raises(ValueError, match="Size mismatch"):
             prior.loss(jnp.ones((4, 3)), ts)
 
+    @pytest.mark.slow
     def test_grad_wrt_state(self):
         prior = DynIncrements(model=decay)
         ts = jnp.linspace(0.0, 0.3, 4)
@@ -113,6 +116,7 @@ class TestDynIncrements:
         assert grad.shape == x.shape
         assert bool(jnp.all(jnp.isfinite(grad)))
 
+    @pytest.mark.slow
     def test_params_override_grad(self):
         # Gradient w.r.t. a scalar ODE parameter flows through the solve.
         ts = jnp.linspace(0.0, 0.3, 4)

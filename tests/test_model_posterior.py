@@ -66,6 +66,7 @@ def _four_dvar_models():
     }
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("name", ["strong", "incremental", "reduced_basis", "weak"])
 def test_posterior_equals_explicit_adapter(x64, name):
     model = _four_dvar_models()[name]
@@ -90,6 +91,7 @@ def test_posterior_equals_explicit_adapter(x64, name):
     )
 
 
+@pytest.mark.slow
 def test_posterior_with_gauss_newton_adapter(x64):
     model = _four_dvar_models()["incremental"]
     posterior = model.posterior(_window(), adapter=vdx.GaussNewtonHessian(n_krylov=100))

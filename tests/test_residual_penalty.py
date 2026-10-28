@@ -36,6 +36,7 @@ def test_closed_form_constant_field():
     assert jnp.allclose(out, 0.75)
 
 
+@pytest.mark.slow
 def test_matches_explicit_sum():
     pts = jax.random.uniform(KEY, (5, 3))
     res = advection_diffusion_2d((1.0, 0.5), 0.1)
@@ -100,6 +101,7 @@ def test_sampler_output_must_be_2d():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.slow
 def test_resamples_per_key():
     res = advection_diffusion_2d((1.0, 0.5), 0.1)
     pen = ResidualPenalty(res, None, 1.0, sampler=_uniform_sampler(32))
@@ -188,6 +190,7 @@ def test_jit_resampled_collocation():
     assert not jnp.allclose(jitted(k2), jitted(k1))
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize(
     "residual",
     [

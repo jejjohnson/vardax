@@ -162,6 +162,7 @@ addopts = ["-ra", "--strict-markers", "--tb=short"]
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
     "unchecked_types: switch off the runtime jaxtyping checks (validation tests)",
+    "integration: end-to-end tests across components (deselect with '-m \"not integration\"')",
 ]
 
 [tool.ruff]

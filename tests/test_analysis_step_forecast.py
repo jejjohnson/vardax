@@ -109,6 +109,7 @@ def _call(step, p: dict, forecast, obs, *, obs_err_cov="R"):
 
 
 class TestOIAnalysisStep:
+    @pytest.mark.slow
     def test_matches_closed_form_blue_around_forecast(self):
         with jax.enable_x64(True):
             p = _problem()

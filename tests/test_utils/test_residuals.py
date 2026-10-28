@@ -58,6 +58,7 @@ def _adv_diff_terms(field, s):
     return jnp.stack([du[0], jnp.dot(C, du[1:]), -KAPPA * lap])
 
 
+@pytest.mark.slow
 def test_advection_diffusion_shape():
     r = advection_diffusion_2d(C, KAPPA)(gaussian_bump, jnp.array([0.1, 0.4, 0.6]))
     assert r.shape == (1,)
@@ -166,6 +167,7 @@ def test_navier_stokes_exact_solutions(field, forcing):
     assert jnp.all(jnp.abs(r[:, 0]) <= tol)
 
 
+@pytest.mark.slow
 def test_navier_stokes_negative_controls():
     pts = _points(64, DOMAIN)
     # Wrong viscosity for Taylor-Green, and the forced flow without forcing.
@@ -176,6 +178,7 @@ def test_navier_stokes_negative_controls():
     assert jnp.max(jnp.abs(r2)) > 0.1
 
 
+@pytest.mark.slow
 def test_navier_stokes_nonlinear_term_is_active():
     # The exact solutions above all have ω a function of ψ, so u·∇ω = 0 there.
     # This ψ does not, so the advection term is non-zero and must enter the

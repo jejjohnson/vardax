@@ -72,6 +72,18 @@ uv-test: ## Run pytest with coverage using uv
 	@uv run pytest $(TESTS) -v
 	@printf "$(GREEN)>>> All tests passed.$(RESET)\n"
 
+.PHONY: uv-test-fast
+uv-test-fast: ## Run the fast tier (no slow or integration tests), as PR CI does on every OS
+	@uv run pytest $(TESTS) -n auto -m "not slow and not integration"
+
+.PHONY: uv-test-slow
+uv-test-slow: ## Run the slow tier (tests over ~3 s)
+	@uv run pytest $(TESTS) -n auto -m slow
+
+.PHONY: uv-test-integration
+uv-test-integration: ## Run the end-to-end integration tier
+	@uv run pytest $(TESTS) -n auto -m integration
+
 .PHONY: uv-test-cov
 uv-test-cov: ## Run pytest with coverage report
 	@printf "$(YELLOW)>>> Running tests with coverage...$(RESET)\n"

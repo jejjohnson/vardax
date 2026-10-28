@@ -93,6 +93,7 @@ class TestPointObsCost:
         expected = 0.5 * (1.0 + (1.0 / 2.0) ** 2 + (0.5 / 0.5) ** 2)
         assert jnp.allclose(point_obs_cost(pred, batch), expected)
 
+    @pytest.mark.slow
     def test_padding_invariance_of_value_and_gradient(self):
         key = jax.random.PRNGKey(0)
         coords = jax.random.uniform(key, (8,), maxval=N - 1.0)
@@ -159,6 +160,7 @@ class TestGridPointObs:
         )
         assert jnp.allclose(H(traj, batch), jnp.array([1.0, 10.0, 100.0]))
 
+    @pytest.mark.slow
     def test_2d_matches_interp_obs(self):
         ya, xa = jnp.arange(4.0), jnp.linspace(0.0, 2.0, 5)
         pts = jax.random.uniform(jax.random.PRNGKey(2), (7, 2)) * jnp.array([3.0, 2.0])
@@ -226,6 +228,7 @@ def _diag(v):
     )
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("all_observed", [True, False])
 def test_point_batch_reproduces_grid_3dvar(all_observed):
     B, sigma = _ops()
@@ -287,6 +290,7 @@ def _psd_time(B):
     )
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("which", ["strong", "weak", "incremental", "incremental_gn"])
 def test_point_batch_linear_gaussian_agreement(which):
     """Every 4D-Var model on a point batch agrees with OI on the grid batch."""
@@ -380,6 +384,7 @@ def test_time_index_needs_n_times():
         model(batch)
 
 
+@pytest.mark.slow
 def test_threedvar_field_point_obs_with_neural_field():
     angle = 2 * jnp.pi * jnp.arange(16) / 16
     coords = jnp.stack([jnp.cos(angle), jnp.sin(angle)], axis=-1)
@@ -473,6 +478,7 @@ def _check_l96(n_obs):
     assert jnp.linalg.norm(xa - x_true) < jnp.linalg.norm(x_b - x_true)
 
 
+@pytest.mark.slow
 def test_strong_4dvar_lorenz96_scattered_obs_smoke():
     _check_l96(n_obs=60)
 
@@ -568,6 +574,7 @@ class MixingForward(eqx.Module):
         return 0.8 * state + 0.1 * jnp.roll(state, 1)
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("which", ["strong", "weak", "incremental", "incremental_gn"])
 def test_scattered_time_points_match_grid_batch(which):
     """Scattered (t, i) point observations reproduce the grid-batch analysis.

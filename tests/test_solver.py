@@ -2,6 +2,7 @@
 
 import jax
 import jax.numpy as jnp
+import pytest
 
 from vardax import (
     LSTMState1D,
@@ -138,6 +139,7 @@ class TestOneStepSolve4dvarnet1D:
         )
         assert not jnp.allclose(result, x0)
 
+    @pytest.mark.slow
     def test_gradients_flow(self, rng, batch_1d):
         """Verify that gradients w.r.t. model parameters are non-zero."""
         from vardax import BilinAEPrior1D, ConvLSTMGradMod1D

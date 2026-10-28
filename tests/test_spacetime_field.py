@@ -100,6 +100,7 @@ class _FeatureObs(eqx.Module):
         return (self.Phi @ x[0])[None]
 
 
+@pytest.mark.slow
 def test_linear_gaussian_matches_oi():
     # With λ = 0 the cost is ½‖y - Φw‖²_{R⁻¹} + alpha/2 ‖w‖²: the 3D-Var cost
     # with B = alpha⁻¹ I, x_b = 0 and H = Φ, whose minimiser is the OI / BLUE
@@ -136,6 +137,7 @@ def test_padding_rows_change_nothing():
     assert bool(jnp.isfinite(padded.grad_norm))
 
 
+@pytest.mark.slow
 def test_cost_is_differentiable_in_the_observations():
     # Envelope theorem: dJ*/dy_k = ∂J/∂y_k at θ* = m_k (y_k - f*(s_k)) / sigma_k²,
     # zero on padding rows. BFGS (rtol = atol = 1e-6) in float32 leaves
@@ -176,6 +178,7 @@ def _advection_1d(c: float = 0.5):
     return residual
 
 
+@pytest.mark.slow
 def test_result_cost_is_the_full_objective_with_drawn_collocation():
     # result.cost must equal J(θ*) assembled by hand from the merged pieces,
     # with the collocation points the sampler draws from the key.
@@ -224,6 +227,7 @@ def test_jit_does_not_retrace_on_new_observations():
     assert not jnp.allclose(a.field.w, b.field.w)
 
 
+@pytest.mark.slow
 def test_optax_smoke_with_siren():
     # One fast end-to-end fit of a neural field with the default kind of
     # minimiser: shapes, finite diagnostics and a decreasing cost.
@@ -272,6 +276,7 @@ def test_initial_condition_uses_t0():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.slow
 def test_ensemble_smoke():
     model = SpaceTimeFieldVar(
         field=_siren(KEY),
@@ -313,6 +318,7 @@ def test_analysis_step():
     assert jnp.allclose(out.initial_condition(grid), expected)
 
 
+@pytest.mark.slow
 def test_analysis_step_collocation_window():
     # The step draws the collocation points once, at construction, from the
     # key; each cycle's observation times must fall in their time window.

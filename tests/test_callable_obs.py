@@ -81,6 +81,7 @@ class TestContract:
 
 
 class TestAgainstClosedForm:
+    @pytest.mark.slow
     def test_optimal_interpolation_mean(self, x64):
         p = _problem()
         oi = OptimalInterpolation(
@@ -91,6 +92,7 @@ class TestAgainstClosedForm:
         )
         assert jnp.allclose(oi(p["batch"])[0, 0], p["mean"], rtol=1e-8)
 
+    @pytest.mark.slow
     def test_threedvar_mean(self, x64):
         p = _problem()
         three = ThreeDVar(
@@ -101,6 +103,7 @@ class TestAgainstClosedForm:
         )
         assert jnp.allclose(three(p["batch"])[0, 0], p["mean"], rtol=1e-8)
 
+    @pytest.mark.slow
     def test_laplace_covariance(self, x64):
         p = _problem()
         three = ThreeDVar(
@@ -173,6 +176,7 @@ class TestReverseModeOnly:
         lin = CallableObs(fn=f, jac="bwd").linearize(x)
         assert jnp.allclose(lin.mv(v), jax.jacrev(f)(x) @ v, rtol=1e-12)
 
+    @pytest.mark.slow
     def test_posterior_with_vjp_only_model(self, x64):
         p = _problem()
         footprint = p["obs_op"].fn(jnp.eye(6)).T  # recover F (M, N)
@@ -240,6 +244,7 @@ class TestMaterialise:
         assert jnp.allclose(lin.mv(v), v @ matrix.T, rtol=1e-12)
         assert jnp.allclose(lin.transpose().mv(w), w @ matrix, rtol=1e-12)
 
+    @pytest.mark.slow
     def test_posterior_through_a_while_loop_vjp(self, x64):
         p = _problem()
         footprint = p["obs_op"].fn(jnp.eye(6)).T  # recover F (M, N)

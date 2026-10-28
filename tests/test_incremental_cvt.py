@@ -93,6 +93,7 @@ def _relative_error(estimate, exact):
     return float(np.linalg.norm(np.asarray(estimate) - exact) / np.linalg.norm(exact))
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("cvt", [True, False])
 def test_both_paths_reach_the_exact_analysis(x64, cvt):
     prior_cov = _smooth_background_cov()
@@ -112,6 +113,7 @@ def test_both_paths_reach_the_exact_analysis(x64, cvt):
     assert _relative_error(analysis, exact) < 1e-6
 
 
+@pytest.mark.slow
 def test_cvt_and_state_space_agree(x64):
     prior_cov = _smooth_background_cov()
     batch, B_op, R_op = _problem(prior_cov)
@@ -141,6 +143,7 @@ def _iterations_to_converge(cvt, prior_cov, batch, B_op, R_op, budgets):
     return np.inf
 
 
+@pytest.mark.slow
 def test_cvt_needs_no_more_inner_iterations(x64):
     """Smooth B: B⁻¹'s huge eigenvalues slow state-space CG; χ-space does not."""
     prior_cov = _smooth_background_cov(length_scale=3.0, jitter=1e-3)
@@ -152,6 +155,7 @@ def test_cvt_needs_no_more_inner_iterations(x64):
     assert with_cvt < np.inf
 
 
+@pytest.mark.slow
 def test_cvt_never_solves_against_the_prior(x64, monkeypatch):
     """Tag B and record every operator handed to lineax.linear_solve."""
     marker = object()
@@ -206,6 +210,7 @@ def test_default_config_uses_cvt():
     assert vdx.IncrementalConfig().cvt is True
 
 
+@pytest.mark.slow
 def test_docs_08_linear_gaussian_example_runs():
     """The docs/08 example (once a TypeError: no cvt field) executes."""
     page = pathlib.Path(__file__).parents[1] / "docs" / "08_incremental_4dvar.md"

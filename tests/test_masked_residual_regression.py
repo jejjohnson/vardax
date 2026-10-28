@@ -153,6 +153,7 @@ class TestMaskedResidualRegression:
         out = strong(batch)
         assert jnp.allclose(out, s["expected"], atol=1e-2)
 
+    @pytest.mark.slow
     def test_incremental_4dvar_with_non_mask_aware_obs(self, masked_linear_gaussian):
         s = masked_linear_gaussian
         batch = Batch1D(input=s["input"], mask=s["mask"], target=None)

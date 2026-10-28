@@ -58,6 +58,7 @@ def test_default_cg_fails_on_tiny_noise(x64):
         ThreeDVar(**kwargs)(batch)
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("r", [1e-12, 1e-14])
 def test_direct_cov_solver_matches_blue(x64, r):
     kwargs, batch, mean, q_b = _tiny_noise(r)
@@ -66,6 +67,7 @@ def test_direct_cov_solver_matches_blue(x64, r):
     assert rel < 1e-7
 
 
+@pytest.mark.slow
 def test_default_is_unchanged(x64):
     kwargs, batch, _, _ = _tiny_noise(1e-12)
     default = ThreeDVar(**kwargs)(batch)

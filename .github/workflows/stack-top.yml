@@ -1,0 +1,45 @@
+name: Stack top
+
+# Reusable check: is this pull request the top of a PR stack?
+#
+# A stacked PR's branch contains every commit of the PRs below it, so the
+# expensive jobs (tests, docs build) only need to run on the top PR. A PR
+# is "covered" when another open PR uses its head branch as its base.
+# Pushes and non-stacked PRs always count as the top.
+
+on:
+  workflow_call:
+    outputs:
+      is-top:
+        description: "'true' unless an open PR is stacked on this PR's branch"
+        value: ${{ jobs.check.outputs.is-top }}
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  check:
+    name: Stack top
+    runs-on: ubuntu-latest
+    outputs:
+      is-top: ${{ steps.check.outputs.is-top }}
+    steps:
+      - name: Look for PRs stacked on this branch
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_REF: ${{ github.head_ref }}
+        run: |
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "is-top=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          children=$(gh pr list --repo "${{ github.repository }}" \
+            --base "$HEAD_REF" --state open --json number --jq 'length')
+          if [ "$children" -gt 0 ]; then
+            echo "::notice::$children open PR(s) stack on $HEAD_REF; the top PR runs the tests."
+            echo "is-top=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "is-top=true" >> "$GITHUB_OUTPUT"
+          fi

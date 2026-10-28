@@ -105,6 +105,7 @@ class TestTimePatches:
 
 
 class TestXarrayIsLazy:
+    @pytest.mark.slow
     def test_core_import_does_not_load_xarray(self):
         # xarray lives in the optional [data] extra; the core import path
         # (vardax.__init__ -> priors_dynamical -> utils.patches) must not

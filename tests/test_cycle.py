@@ -17,6 +17,9 @@ from vardax import (
     VarSmootherCycle,
 )
 
+# end-to-end: several components (or pipekit / the docs) together
+pytestmark = pytest.mark.integration
+
 
 class IdentityForward(eqx.Module):
     @property

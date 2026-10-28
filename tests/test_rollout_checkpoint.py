@@ -117,6 +117,7 @@ class TestRolloutHelper:
         with pytest.raises(ValueError, match="checkpoint"):
             checkpoint_every(bad)
 
+    @pytest.mark.slow
     @pytest.mark.parametrize("checkpoint", [True, 10])
     def test_gradient_matches_reverse_mode(self, x64, checkpoint):
         # 2 time units of L96: long enough to matter, short enough that
@@ -173,6 +174,7 @@ def _decay_batch(n_sites=3, n_times=4):
 
 
 class TestModelSlots:
+    @pytest.mark.slow
     @pytest.mark.parametrize("name", ["strong", "weak", "incremental", "reduced_basis"])
     def test_checkpoint_keeps_the_analysis(self, name):
         batch = _decay_batch()
@@ -208,6 +210,7 @@ class TestModelSlots:
         assert trajectory.shape == (5, 3)
         assert seen == [adjoint]
 
+    @pytest.mark.slow
     def test_backsolve_gradient_matches_default(self):
         """Same gradient through a diffrax forward with either adjoint."""
         batch = _decay_batch()

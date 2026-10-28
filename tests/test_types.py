@@ -1,6 +1,7 @@
 """Tests for vardax._src._types."""
 
 import jax.numpy as jnp
+import pytest
 
 from vardax import (
     LSTMState1D,
@@ -41,6 +42,7 @@ class TestBatch2D:
 
 
 class TestBatch2DMultivar:
+    @pytest.mark.slow
     def test_ndim(self, batch_2d_multivar):
         assert batch_2d_multivar.input.ndim == 5
 
