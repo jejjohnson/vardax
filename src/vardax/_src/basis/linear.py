@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import math
 
+import einx
 import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike, Float
@@ -61,7 +62,9 @@ class LinearBasis(eqx.Module):
         state: Float[Array, ...] | None = None,
     ) -> Float[Array, ...]:
         r"""Apply $\Phi X$ — return the increment on ``output_shape``."""
-        return (self.phi @ X).reshape(self.output_shape)
+        # δx = Φ X
+        increment = einx.dot("n m, m -> n", self.phi, X)
+        return einx.id("(s...) -> s...", increment, s=self.output_shape)
 
     def prior_inv(self, X: Float[Array, " M"]) -> Float[Array, " M"]:
         r"""Apply $Q^{-1} X$ with diagonal $Q = \mathrm{diag}(\sigma^2)$."""

@@ -42,6 +42,7 @@ def time_patches(ts: Float[Array, " T"]) -> Float[Array, "T-1 2"]:
                [1., 2.],
                [2., 3.]], dtype=float32)
     """
+    # jnp, not einx: a single time gives zero pairs, which einx cannot size
     return jnp.stack([ts[:-1], ts[1:]], axis=-1)
 
 

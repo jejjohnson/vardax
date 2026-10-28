@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import math
 
+import einx
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -78,7 +79,7 @@ class RegressionHead(eqx.Module):
         )
 
     def map_estimate(self, ctx: Float[Array, " D"]) -> Float[Array, ...]:
-        return self.mlp_mu(ctx).reshape(self.state_shape)
+        return einx.id("(s...) -> s...", self.mlp_mu(ctx), s=self.state_shape)
 
     def sample(
         self,
@@ -86,8 +87,8 @@ class RegressionHead(eqx.Module):
         key: PRNGKeyArray,
         n: int,
     ) -> Float[Array, ...]:
-        mu = self.mlp_mu(ctx).reshape(self.state_shape)
-        log_var = self.mlp_log_var(ctx).reshape(self.state_shape)
+        mu = einx.id("(s...) -> s...", self.mlp_mu(ctx), s=self.state_shape)
+        log_var = einx.id("(s...) -> s...", self.mlp_log_var(ctx), s=self.state_shape)
         sigma = jnp.exp(0.5 * log_var)
         eps = jax.random.normal(key, (n, *self.state_shape))
         return mu + sigma * eps
@@ -97,8 +98,8 @@ class RegressionHead(eqx.Module):
         x: Float[Array, ...],
         ctx: Float[Array, " D"],
     ) -> Float[Array, ""]:
-        mu = self.mlp_mu(ctx).reshape(self.state_shape)
-        log_var = self.mlp_log_var(ctx).reshape(self.state_shape)
+        mu = einx.id("(s...) -> s...", self.mlp_mu(ctx), s=self.state_shape)
+        log_var = einx.id("(s...) -> s...", self.mlp_log_var(ctx), s=self.state_shape)
         # log N(x | mu, diag(exp(log_var))) — sum over state dims.
         return -0.5 * jnp.sum(((x - mu) ** 2) * jnp.exp(-log_var) + log_var + _LOG_2PI)
 

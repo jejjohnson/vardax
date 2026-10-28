@@ -179,7 +179,8 @@ def rollout(
 
     if block_length == 0:
         _, states = scan_steps(initial_state, forcing, n_steps)
-        return jnp.concatenate([initial_state[None], states])
+        # [x₀; x₁, …, x_T]; jnp, not einx: einx cannot size the T = 0 axis
+        return jnp.concatenate([jnp.expand_dims(initial_state, 0), states])
 
     n_blocks, tail_length = divmod(n_steps, block_length)
     checkpointed_block = jax.checkpoint(scan_steps, static_argnums=(2,))
@@ -188,6 +189,7 @@ def rollout(
     head_forcing = None
     if forcing is not None:
         head = forcing[: n_blocks * block_length]
+        # jnp, not einx: n_blocks is 0 when k exceeds T
         head_forcing = head.reshape(n_blocks, block_length, *forcing.shape[1:])
 
     def scan_block(
@@ -198,10 +200,11 @@ def rollout(
     state, blocked_states = jax.lax.scan(
         scan_block, initial_state, head_forcing, length=n_blocks
     )
+    # jnp, not einx: n_blocks is 0 when k exceeds T
     head_states = blocked_states.reshape(n_blocks * block_length, *state.shape)
 
     # --- tail block (k does not divide T) ---
-    pieces = [initial_state[None], head_states]
+    pieces = [jnp.expand_dims(initial_state, 0), head_states]
     if tail_length > 0:
         tail_forcing = None if forcing is None else forcing[n_blocks * block_length :]
         _, tail_states = checkpointed_block(state, tail_forcing, tail_length)

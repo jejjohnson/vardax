@@ -14,9 +14,11 @@ for higher-dimensional inputs.
 
 from __future__ import annotations
 
+import einx
 import equinox as eqx
-import jax.numpy as jnp
 from jaxtyping import Array, Float, PRNGKeyArray
+
+from vardax._src.utils.shapes import flatten
 
 
 class IdentityObsEncoder(eqx.Module):
@@ -31,7 +33,7 @@ class IdentityObsEncoder(eqx.Module):
         input: Float[Array, ...],
         mask: Float[Array, ...],
     ) -> Float[Array, " D"]:
-        return jnp.concatenate([input.ravel(), mask.ravel()])
+        return einx.id("a, b -> (a + b)", flatten(input), flatten(mask))
 
 
 class MLPObsEncoder(eqx.Module):
@@ -70,5 +72,5 @@ class MLPObsEncoder(eqx.Module):
         input: Float[Array, ...],
         mask: Float[Array, ...],
     ) -> Float[Array, " context_dim"]:
-        x = jnp.concatenate([input.ravel(), mask.ravel()])
+        x = einx.id("a, b -> (a + b)", flatten(input), flatten(mask))
         return self.mlp(x)

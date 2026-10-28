@@ -1,5 +1,6 @@
 """Constructors keep the caller's precision instead of forcing float32."""
 
+import einx
 import jax
 import jax.numpy as jnp
 
@@ -27,5 +28,5 @@ def test_interp_obs_weights_are_float64_under_x64():
         obs_op = vdx.interp_obs_from_coords((y_axis, x_axis), obs_coords)
         assert obs_op.weights.dtype == jnp.float64
         # bilinear weights must still sum to one at full precision
-        weight_sums = obs_op.weights.sum(axis=-1)
+        weight_sums = einx.sum("o [k]", obs_op.weights)
         assert jnp.allclose(weight_sums, 1.0, rtol=1e-12)

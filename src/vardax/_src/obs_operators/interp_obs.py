@@ -26,6 +26,7 @@ import lineax as lx
 import numpy as _np
 
 from vardax._src.errors import GridError, ShapeError
+from vardax._src.utils.shapes import flatten
 
 
 class InterpObs(eqx.Module):
@@ -56,8 +57,11 @@ class InterpObs(eqx.Module):
         mask: Float[Array, " n_obs"] | None = None,
     ) -> Float[Array, " n_obs"]:
         """Apply ``H`` (optionally masked) to a grid state."""
-        flat = state.reshape(-1)
-        out = (flat[self.indices] * self.weights).sum(axis=-1)
+        flat = flatten(state)
+        corners = flat[self.indices]
+        # yₒ = Σₖ wₒₖ x[iₒₖ]: bilinear weights over the four corners;
+        # jnp, not einx: a time step may have no observations
+        out = jnp.sum(corners * self.weights, axis=-1)
         if mask is not None:
             out = out * mask
         return out

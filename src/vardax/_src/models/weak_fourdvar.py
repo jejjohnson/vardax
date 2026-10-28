@@ -43,6 +43,7 @@ from vardax._src.obs_operators.point import (
     window_steps,
 )
 from vardax._src.protocols import Minimiser, StateParameterization
+from vardax._src.utils.shapes import as_shape
 
 
 class WeakFourDVar(eqx.Module):
@@ -274,7 +275,7 @@ class WeakFourDVar(eqx.Module):
         if param is not None:
             # Control (θ, η); x_0 = ψ(θ) and pen(θ) replaces the B term.
             def decode(theta: Any) -> Float[Array, " N"]:
-                return param.decode(theta).reshape(self.prior_mean.shape)
+                return as_shape(param.decode(theta), self.prior_mean.shape)
 
             def param_cost(control: Any, _args: Any) -> Float[Array, ""]:
                 theta, etas = control
@@ -303,7 +304,9 @@ class WeakFourDVar(eqx.Module):
             j_bg = 0.5 * jnp.sum(dx * B_inv_dx)
             return j_bg + model_and_obs_cost(x_0, etas)
 
-        y0 = jnp.concatenate([self.prior_mean[None, :], init_etas], axis=0)
+        # control [x_b; η₁, …, η_T]; jnp, not einx: einx cannot size T = 0
+        initial_state = jnp.expand_dims(self.prior_mean, 0)
+        y0 = jnp.concatenate([initial_state, init_etas])
 
         control_star = minimise(
             self.minimiser,

@@ -37,6 +37,7 @@ dependencies = [
     "optax>=0.2",
     "jaxtyping>=0.2.28",
     "diffrax>=0.5",
+    "einx>=0.4",
     "equinox>=0.11",
     "optimistix>=0.1",
     "lineax>=0.1",
@@ -200,6 +201,7 @@ ignore = [
     "PLR0917",  # too many positional arguments (sibling of PLR0913)
     "ISC001",   # conflicts with formatter
     "RUF002",   # ambiguous unicode characters in docstrings (math notation)
+    "RUF003",   # ambiguous unicode characters in comments (equation comments)
     "RUF022",   # __all__ not sorted (we use logical grouping)
     "RUF046",   # int(round(...)) is intentional for type safety
     "PYI061",   # style preference
