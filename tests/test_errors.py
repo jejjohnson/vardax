@@ -39,7 +39,7 @@ def test_invalid_hyperparameter_raises_configuration_error():
 
 @pytest.mark.unchecked_types
 def test_malformed_design_matrix_raises_shape_error():
-    with pytest.raises(vdx.ShapeError, match="phi must be 2-D"):
+    with pytest.raises(vdx.ShapeError, match="design_matrix must be 2-D"):
         vdx.linear_basis(jnp.ones(3))
 
 

@@ -15,8 +15,8 @@ class TestConvLSTMGradMod1D:
         lstm = LSTMState1D.zeros(B, hidden_dim, N)
         update, new_lstm = model(batch_1d.input, batch_1d.input, lstm)
         assert update.shape == batch_1d.input.shape
-        assert new_lstm.h.shape == (B, hidden_dim, N)
-        assert new_lstm.c.shape == (B, hidden_dim, N)
+        assert new_lstm.hidden.shape == (B, hidden_dim, N)
+        assert new_lstm.cell.shape == (B, hidden_dim, N)
 
     def test_lstm_state_changes(self, rng, batch_1d):
         B, T, N = batch_1d.input.shape
@@ -25,7 +25,7 @@ class TestConvLSTMGradMod1D:
         lstm = LSTMState1D.zeros(B, hidden_dim, N)
         _, new_lstm = model(batch_1d.input, batch_1d.input, lstm)
         # Hidden state should have changed from zero
-        assert not jnp.allclose(new_lstm.h, jnp.zeros_like(new_lstm.h))
+        assert not jnp.allclose(new_lstm.hidden, jnp.zeros_like(new_lstm.hidden))
 
 
 class TestConvLSTMGradMod2D:
@@ -37,5 +37,5 @@ class TestConvLSTMGradMod2D:
         lstm = LSTMState2D.zeros(B, hidden_dim, H, W)
         update, new_lstm = model(batch_2d.input, batch_2d.input, lstm)
         assert update.shape == batch_2d.input.shape
-        assert new_lstm.h.shape == (B, hidden_dim, H, W)
-        assert new_lstm.c.shape == (B, hidden_dim, H, W)
+        assert new_lstm.hidden.shape == (B, hidden_dim, H, W)
+        assert new_lstm.cell.shape == (B, hidden_dim, H, W)

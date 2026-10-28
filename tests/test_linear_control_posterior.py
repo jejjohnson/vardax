@@ -78,7 +78,7 @@ def test_whitened_control_matches_state_space(x64, make_adapter):
     n = B.shape[0]
     L = jnp.linalg.cholesky(B)
     whitened = vdx.LinearParameterization(
-        vdx.linear_basis(L, variance=1.0), x_b=common["prior_mean"]
+        vdx.linear_basis(L, variance=1.0), background=common["prior_mean"]
     )
     model = vdx.ThreeDVar(**common, parameterization=whitened)
     analysis = model(batch)[0]
@@ -98,7 +98,7 @@ def test_reduced_control_is_phi_p_theta_phi_t(x64):
     phi = jnp.asarray(np.random.default_rng(3).normal(size=(n, 3)))
     variance = jnp.asarray([0.5, 2.0, 4.0])
     param = vdx.LinearParameterization(
-        vdx.linear_basis(phi, variance=variance), x_b=common["prior_mean"]
+        vdx.linear_basis(phi, variance=variance), background=common["prior_mean"]
     )
     model = vdx.ThreeDVar(**common, parameterization=param)
     analysis = model(batch)[0]
@@ -170,7 +170,7 @@ def test_strong_whitened_control_matches_state_space(x64, make_adapter):
     B, _, _, common, batch = _rollout_problem()
     whitened = vdx.LinearParameterization(
         vdx.linear_basis(jnp.linalg.cholesky(B), variance=1.0),
-        x_b=common["prior_mean"],
+        background=common["prior_mean"],
     )
     state_model = vdx.StrongFourDVar(**common)
     param_model = vdx.StrongFourDVar(**common, parameterization=whitened)
@@ -202,7 +202,7 @@ def test_weak_fourdvar_parameterization_still_raises(x64):
     B, _, _, common, batch = _rollout_problem()
     eye = lx.IdentityLinearOperator(jax.ShapeDtypeStruct((N_STATE,), jnp.float64))
     param = vdx.LinearParameterization(
-        vdx.linear_basis(jnp.linalg.cholesky(B)), x_b=common["prior_mean"]
+        vdx.linear_basis(jnp.linalg.cholesky(B)), background=common["prior_mean"]
     )
     model = vdx.WeakFourDVar(**common, model_err_cov_op=eye, parameterization=param)
     analysis = (jnp.zeros(N_STATE), jnp.zeros((N_STEPS, N_STATE)))
@@ -290,7 +290,7 @@ EXPECTED_MASKED = jnp.diag(jnp.asarray([0.5, 1.0]))
 def test_single_time_linear_control_masks_missing_obs(x64, make_adapter):
     """Φ = I, Q = R = I, mask [1, 0]: diag(½, 1), not diag(½, ½)."""
     param = vdx.LinearParameterization(
-        vdx.linear_basis(jnp.eye(2), variance=1.0), x_b=jnp.zeros((1, 2))
+        vdx.linear_basis(jnp.eye(2), variance=1.0), background=jnp.zeros((1, 2))
     )
     model, batch = _single_time_masked(vdx.ThreeDVar, parameterization=param)
     eye = lx.IdentityLinearOperator(jax.ShapeDtypeStruct((1, 2), jnp.float64))

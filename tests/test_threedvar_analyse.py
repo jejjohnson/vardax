@@ -62,7 +62,7 @@ def test_step_cap_is_visible(x64):
 
 def test_parameterized_value_is_the_control(x64):
     basis = vdx.linear_basis(jnp.eye(3)[:, :2], variance=1.0)
-    param = vdx.LinearParameterization(basis, x_b=jnp.zeros((1, 3)))
+    param = vdx.LinearParameterization(basis, background=jnp.zeros((1, 3)))
     analysis, result = _model(parameterization=param).analyse(_batch(1))
     assert result.value.shape == (1, 2)
     assert jnp.allclose(analysis[0, 0, :2], result.value[0], atol=1e-6)

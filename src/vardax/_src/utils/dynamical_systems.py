@@ -216,7 +216,7 @@ class Lorenz96(eqx.Module):
     The module is a diffrax-compatible right-hand side ``f(t, y, args)``.
 
     Attributes:
-        F: Forcing constant $F$ (classically 8).
+        forcing: Forcing constant $F$ (classically 8).
 
     Examples:
         The uniform state $x_k = F$ is a fixed point, and at the origin the
@@ -224,7 +224,7 @@ class Lorenz96(eqx.Module):
 
         >>> import jax.numpy as jnp
         >>> import vardax as vdx
-        >>> f = vdx.Lorenz96(F=8.0)
+        >>> f = vdx.Lorenz96(forcing=8.0)
         >>> bool(jnp.allclose(f(0.0, jnp.full(6, 8.0), None), 0.0))
         True
         >>> bool(jnp.allclose(f(0.0, jnp.zeros(6), None), 8.0))
@@ -242,7 +242,7 @@ class Lorenz96(eqx.Module):
         (6, 5)
     """
 
-    F: float
+    forcing: float
 
     def __call__(
         self,
@@ -264,12 +264,12 @@ class Lorenz96(eqx.Module):
         y_km2 = jnp.roll(y, 2)  # x_{k-2}
         y_km1 = jnp.roll(y, 1)  # x_{k-1}
         y_kp1 = jnp.roll(y, -1)  # x_{k+1}
-        return (y_kp1 - y_km2) * y_km1 - y + self.F
+        return (y_kp1 - y_km2) * y_km1 - y + self.forcing
 
     def get_config(self) -> dict[str, Any]:
         return {
             # float(): the forcing is a leaf and may be a 0-d array
-            "F": float(self.F),
+            "forcing": float(self.forcing),
         }
 
     @classmethod
@@ -280,8 +280,8 @@ class Lorenz96(eqx.Module):
 def simulate_lorenz96(
     key: Array,
     *,
-    N: int = 40,
-    F: float = 8.0,
+    n_sites: int = 40,
+    forcing: float = 8.0,
     dt: float = 0.01,
     n_steps: int = 5000,
     n_burn_in: int = 1000,
@@ -300,8 +300,8 @@ def simulate_lorenz96(
 
     Args:
         key: JAX PRNG key used to perturb the initial condition.
-        N: Number of variables (spatial dimension).
-        F: Forcing constant.
+        n_sites: Number of variables (spatial dimension).
+        forcing: Forcing constant.
         dt: Integration time step.
         n_steps: Total number of integration steps *after* burn-in.
         n_burn_in: Number of initial steps to discard (burn-in).
@@ -314,7 +314,7 @@ def simulate_lorenz96(
         >>> import jax
         >>> import vardax as vdx
         >>> t, states = vdx.simulate_lorenz96(
-        ...     jax.random.PRNGKey(0), N=8, n_steps=10, n_burn_in=0
+        ...     jax.random.PRNGKey(0), n_sites=8, n_steps=10, n_burn_in=0
         ... )
         >>> t.shape, states.shape
         ((11,), (11, 8))
@@ -323,7 +323,7 @@ def simulate_lorenz96(
 
         >>> import jax.numpy as jnp
         >>> _, other = vdx.simulate_lorenz96(
-        ...     jax.random.PRNGKey(1), N=8, n_steps=10, n_burn_in=0
+        ...     jax.random.PRNGKey(1), n_sites=8, n_steps=10, n_burn_in=0
         ... )
         >>> bool(jnp.allclose(states[0], other[0]))
         False
@@ -336,11 +336,11 @@ def simulate_lorenz96(
         >>> type(ax).__name__
         'Axes'
     """
-    model = Lorenz96(F=F)
+    model = Lorenz96(forcing=forcing)
 
     # Standard L96 initialization: uniform forcing with a small random perturbation
-    initial_state = jnp.full((N,), F)
-    noise = jax.random.normal(key, shape=(N,)) * 0.01
+    initial_state = jnp.full((n_sites,), forcing)
+    noise = jax.random.normal(key, shape=(n_sites,)) * 0.01
     initial_state = initial_state + noise
 
     total_steps = n_burn_in + n_steps

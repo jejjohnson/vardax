@@ -75,7 +75,7 @@ def _blue(B, H, R, x_b, y):
 
 def _oi(p: dict) -> OptimalInterpolation:
     return OptimalInterpolation(
-        obs_op=LinearObs(H_mat=lx.MatrixLinearOperator(p["model_H"])),
+        obs_op=LinearObs(operator=lx.MatrixLinearOperator(p["model_H"])),
         prior_mean=p["prior_mean"],
         prior_cov_op=_psd(p["B"]),
         obs_cov_op=_psd(p["model_R"]),
@@ -89,7 +89,7 @@ def _threedvar(p: dict) -> ThreeDVar:
     import optimistix as optx
 
     return ThreeDVar(
-        obs_op=LinearObs(H_mat=lx.MatrixLinearOperator(p["model_H"])),
+        obs_op=LinearObs(operator=lx.MatrixLinearOperator(p["model_H"])),
         prior_mean=p["prior_mean"],
         prior_cov_op=_psd(p["B"]),
         obs_cov_op=_psd(p["model_R"]),
@@ -103,7 +103,7 @@ def _call(step, p: dict, forecast, obs, *, obs_err_cov="R"):
     return eqx.filter_jit(step)(
         forecast,
         obs,
-        obs_op=LinearObs(H_mat=lx.MatrixLinearOperator(p["H"])),
+        obs_op=LinearObs(operator=lx.MatrixLinearOperator(p["H"])),
         obs_err_cov=_psd(p["R"]) if obs_err_cov == "R" else obs_err_cov,
     )
 
@@ -260,7 +260,7 @@ class TestTwoCycleVarDACycle:
             forward = AffineForward()
             cycle = VarDACycle(
                 forward=forward,
-                obs_op=LinearObs(H_mat=lx.MatrixLinearOperator(p["H"])),
+                obs_op=LinearObs(operator=lx.MatrixLinearOperator(p["H"])),
                 model=make_model(p),
                 obs_source=Lambda(lambda i: ys[i]),
                 n_steps=2,

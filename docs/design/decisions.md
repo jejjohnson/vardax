@@ -147,7 +147,7 @@ so the cost is minimal.
 
 ## D9: Averaging kernel + multi-instrument as first-class
 
-`AveragingKernel(A, x_a, h)` and `MultiInstrumentFusion(registry)` are
+`AveragingKernel(kernel_matrix, prior_profile, pressure_weights)` and `MultiInstrumentFusion(registry)` are
 part of the day-one `vardax.obs_operators` package. Skipping the
 averaging kernel is the most common cause of bias in operational
 satellite inversions.
@@ -553,7 +553,7 @@ background) and a strong-constraint mode where the model propagates
   is an additive `nan_to_num: bool = False` kwarg on `obs_cost_1d/2d`
   (chosen over separate `*_nan` variants to avoid a parallel family —
   supersedes the naming sketched in #16), and
-  `strong_variational_cost` defaults `xb = x0` (no background term)
+  `strong_variational_cost` defaults `background = initial_state` (no background term)
   and weights `alpha_obs = alpha_bg = 0.5` to mirror
   `variational_cost`'s convention.
 

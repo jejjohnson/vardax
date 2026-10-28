@@ -54,7 +54,7 @@ class Lorenz96RK4(eqx.Module):
     dt: float = 0.01
 
     def step(self, x, dt):
-        f = vdx.Lorenz96(F=8.0)
+        f = vdx.Lorenz96(forcing=8.0)
         k1 = f(0.0, x, None)
         k2 = f(0.0, x + 0.5 * dt * k1, None)
         k3 = f(0.0, x + 0.5 * dt * k2, None)
@@ -369,7 +369,7 @@ class TestNeuralFieldParameterization:
     def test_siren_strong_4dvar_lorenz96_reduces_cost(self):
         key_x, key_o = jax.random.split(jax.random.PRNGKey(3))
         forward = Lorenz96RK4()
-        _, states = vdx.simulate_lorenz96(key_x, N=40, n_steps=1, n_burn_in=500)
+        _, states = vdx.simulate_lorenz96(key_x, n_sites=40, n_steps=1, n_burn_in=500)
         x_true = states[0]
         T = 10
         traj = [x_true]

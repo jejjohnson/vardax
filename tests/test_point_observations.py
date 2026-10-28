@@ -48,7 +48,7 @@ class Lorenz96RK4(eqx.Module):
     dt: float = 0.05
 
     def step(self, x, dt):
-        f = vdx.Lorenz96(F=8.0)
+        f = vdx.Lorenz96(forcing=8.0)
         k1 = f(0.0, x, None)
         k2 = f(0.0, x + 0.5 * dt * k1, None)
         k3 = f(0.0, x + 0.5 * dt * k2, None)
@@ -423,7 +423,7 @@ def test_threedvar_field_point_obs_with_neural_field():
 def _l96_problem(n_obs, key):
     k_truth, k_b, k_pos, k_t, k_o = jax.random.split(key, 5)
     forward = Lorenz96RK4()
-    _, states = vdx.simulate_lorenz96(k_truth, N=40, n_steps=1, n_burn_in=500)
+    _, states = vdx.simulate_lorenz96(k_truth, n_sites=40, n_steps=1, n_burn_in=500)
     x_true = states[0]
     n_times = 6
     traj = [x_true]

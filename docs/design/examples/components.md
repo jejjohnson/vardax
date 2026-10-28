@@ -58,9 +58,9 @@ import lineax as lx
 from vardax.obs_operators import AveragingKernel
 
 ak = AveragingKernel(
-    A=lx.MatrixLinearOperator(A_matrix),       # or gaussx structured op
-    x_a=retrieval_prior,
-    h=weighting_vector,
+    kernel_matrix=lx.MatrixLinearOperator(A_matrix),       # or gaussx structured op
+    prior_profile=retrieval_prior,
+    pressure_weights=weighting_vector,
 )
 
 # ŷ = A · (h ⊙ x + (1-h) ⊙ x_a)
@@ -81,9 +81,9 @@ from vardax.obs_operators import (
 )
 
 tropomi_spec = InstrumentSpec(
-    obs_op=AveragingKernel(A=tropomi_A, x_a=tropomi_xa, h=tropomi_h),
+    obs_op=AveragingKernel(kernel_matrix=tropomi_A, prior_profile=tropomi_xa, pressure_weights=tropomi_h),
     mask=tropomi_qa_flag,
-    R_op=lx.DiagonalLinearOperator(tropomi_uncertainty),
+    obs_cov_op=lx.DiagonalLinearOperator(tropomi_uncertainty),
     instrument_id="TROPOMI",
 )
 emit_spec = InstrumentSpec(...)
@@ -190,7 +190,7 @@ from vardax.models import OptimalInterpolation
 from vardax.obs_operators import LinearObs
 
 model = OptimalInterpolation(
-    obs_op=LinearObs(H_mat=H_lin_op),   # must be linear
+    obs_op=LinearObs(operator=H_lin_op),   # must be linear
     prior_mean=x_b,
     prior_cov_op=gx.MaternLinearOperator(coords, length_scale=10.0, sigma=0.1),
     obs_cov_op=lx.DiagonalLinearOperator(obs_uncertainty),
@@ -209,7 +209,7 @@ import optimistix as optx
 from vardax.models import ThreeDVar
 
 model = ThreeDVar(
-    obs_op=AveragingKernel(A=A, x_a=xa, h=h),   # nonlinear via h ⊙ x term
+    obs_op=AveragingKernel(kernel_matrix=A, prior_profile=xa, pressure_weights=h),   # nonlinear via h ⊙ x term
     prior_mean=x_b,
     prior_cov_op=B_op, obs_cov_op=R_op,
     minimiser=optx.GaussNewton(rtol=1e-5, atol=1e-5),
@@ -229,7 +229,7 @@ import diffrax as dfx
 
 model = IncrementalFourDVar(
     forward=somax_model,
-    obs_op=AveragingKernel(A=A, x_a=xa, h=h),
+    obs_op=AveragingKernel(kernel_matrix=A, prior_profile=xa, pressure_weights=h),
     prior_mean=x_b,
     prior_cov_op=B_op, obs_cov_op=R_op,
     config=IncrementalConfig(n_outer=3, n_inner=20, cvt=True),

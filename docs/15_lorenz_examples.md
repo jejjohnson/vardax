@@ -144,7 +144,7 @@ Lorenz-63.
 from vardax._src.utils.dynamical_systems import simulate_lorenz96
 
 key = jax.random.PRNGKey(0)
-time, trajectory = simulate_lorenz96(key, N=40, F=8.0, dt=0.01, n_steps=5000)
+time, trajectory = simulate_lorenz96(key, n_sites=40, forcing=8.0, dt=0.01, n_steps=5000)
 # trajectory: (5001, 40)
 ```
 

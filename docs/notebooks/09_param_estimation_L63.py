@@ -386,7 +386,7 @@ def cost_joint(control, ts, batch, xb):
         ts,
         batch,
         forward_fn=ft.partial(forward_fn, theta=control["theta"]),
-        xb=xb,
+        background=xb,
         alpha_obs=1.0,
         alpha_bg=0.1,
         nan_to_num=True,

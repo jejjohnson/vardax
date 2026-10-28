@@ -25,7 +25,7 @@ Public surface:
 - [`InstrumentRegistry`][vardax.InstrumentRegistry] —
   ``{instrument_id: InstrumentSpec}``
 - [`InstrumentSpec`][vardax.InstrumentSpec] —
-  ``(obs_op, mask, R_op, id)`` tuple
+  ``(obs_op, mask, obs_cov_op, id)`` tuple
 - [`GridPointObs`][vardax.GridPointObs] — gridded state or trajectory at
   scattered, time-stamped points ([`PointObsBatch`][vardax.PointObsBatch])
 - [`FieldPointObs`][vardax.FieldPointObs] — a callable field at scattered

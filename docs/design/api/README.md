@@ -50,7 +50,7 @@ All seven implement `.as_analysis_step()` returning a
 | `IncrementalConfig` | — | n_outer, n_inner, cg_atol, cg_rtol, cvt |
 | `AmortizedConfig` | — | head_type, n_samples, temperature |
 | `Posterior` | — | mean, cov (gaussx op), samples, provenance |
-| `InstrumentSpec` | — | (obs_op, mask, R_op, instrument_id) |
+| `InstrumentSpec` | — | (obs_op, mask, obs_cov_op, instrument_id) |
 | `InstrumentRegistry` | — | dict[instrument_id, InstrumentSpec] |
 
 Removed in v0.4: `GradMode` (replaced by adjoint constructor slots).

@@ -83,7 +83,7 @@ class LaplaceCovariance(eqx.Module):
         >>> from types import SimpleNamespace
         >>> eye = lx.IdentityLinearOperator(jax.ShapeDtypeStruct((4,), jnp.float32))
         >>> laplace = vdx.LaplaceCovariance(prior_cov_op=eye, obs_cov_op=eye)
-        >>> model = SimpleNamespace(obs_op=vdx.LinearObs(H_mat=eye))
+        >>> model = SimpleNamespace(obs_op=vdx.LinearObs(operator=eye))
         >>> post = laplace(jnp.zeros(4), model, batch=None)
         >>> post.mean.shape
         (4,)

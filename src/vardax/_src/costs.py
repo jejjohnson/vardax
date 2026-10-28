@@ -343,8 +343,8 @@ def decomposed_loss(
 
 
 def background_cost(
-    x0: Float[Array, ...],
-    xb: Float[Array, ...],
+    initial_state: Float[Array, ...],
+    background: Float[Array, ...],
 ) -> Float[Array, ""]:
     r"""Background cost $\operatorname{mean}\big((x_0 - x_b)^2\big)$.
 
@@ -360,8 +360,8 @@ def background_cost(
         2. Return the mean of its square.
 
     Args:
-        x0: Initial state estimate $x_0$.
-        xb: Background state $x_b$.
+        initial_state: Initial state estimate $x_0$.
+        background: Background state $x_b$.
 
     Returns:
         Scalar background cost.
@@ -378,16 +378,16 @@ def background_cost(
         >>> float(background_cost(x0, x0 - 0.5))
         0.25
     """
-    return jnp.mean((x0 - xb) ** 2)
+    return jnp.mean((initial_state - background) ** 2)
 
 
 def strong_variational_cost(
-    x0: Float[Array, ...],
+    initial_state: Float[Array, ...],
     ts: Float[Array, " T"],
     batch: Batch1D,
     forward_fn: Callable[..., Any],
     *,
-    xb: Float[Array, ...] | None = None,
+    background: Float[Array, ...] | None = None,
     alpha_obs: float = 0.5,
     alpha_bg: float = 0.5,
     nan_to_num: bool = False,
@@ -400,7 +400,8 @@ def strong_variational_cost(
     and $J_b = \operatorname{mean}\big((x_0 - x_b)^2\big)$.
 
     The dynamical model is enforced as a **hard** constraint: the initial
-    state ``x0`` is propagated through the dynamics ``forward_fn(x0, ts)``
+    state ``initial_state`` is propagated through the dynamics
+    ``forward_fn(initial_state, ts)``
     and only the resulting trajectory is scored against the observations.
     This differs from the weak / soft-constraint
     [`variational_cost`][vardax.variational_cost], where the model appears
@@ -410,24 +411,25 @@ def strong_variational_cost(
     form that mirrors [`variational_cost`][vardax.variational_cost].
 
     Algorithm:
-        1. Propagate $x_0$ through ``forward_fn(x0, ts)`` to get the
+        1. Propagate $x_0$ through ``forward_fn(initial_state, ts)`` to get the
            trajectory $\varphi(x_0)$.
         2. Score the trajectory against the observations with the mask.
-        3. Add the background term, defaulting to zero when ``xb`` is
+        3. Add the background term, defaulting to zero when ``background`` is
            omitted.
         4. Return the weighted sum.
 
     Args:
-        x0: Initial state $x_0$ (the control variable), whatever
+        initial_state: Initial state $x_0$ (the control variable), whatever
             ``forward_fn`` expects.
         ts: Time coordinates $t$ passed to ``forward_fn``.
         batch: Observed data batch supplying ``input`` (``y``) and ``mask``
             (``m``), matching ``forward_fn``'s trajectory output.
-        forward_fn: Callable ``(x0, ts) -> trajectory`` producing a state
+        forward_fn: Callable ``(initial_state, ts) -> trajectory`` producing a state
             trajectory the same shape as ``batch.input``. A
             [`DynTrajectory`][vardax.DynTrajectory] (optionally ``vmap``-ed
             over the batch axis) is the canonical choice.
-        xb: Background state for the background term. Defaults to ``x0``
+        background: Background state for the background term. Defaults to
+            ``initial_state``
             (i.e. no background penalty).
         alpha_obs: Weight for the observation term (default ``0.5``).
         alpha_bg: Weight for the background term (default ``0.5``).
@@ -449,9 +451,11 @@ def strong_variational_cost(
         >>> float(vardax.strong_variational_cost(x0, ts, batch, forward))
         0.5
 
-        A background away from ``x0`` adds the background term.
+        A background away from ``initial_state`` adds the background term.
 
-        >>> cost = vardax.strong_variational_cost(x0, ts, batch, forward, xb=x0 - 1.0)
+        >>> cost = vardax.strong_variational_cost(
+        ...     x0, ts, batch, forward, background=x0 - 1.0
+        ... )
         >>> float(cost)
         1.0
 
@@ -462,16 +466,16 @@ def strong_variational_cost(
         >>> g.shape
         (1, 4)
     """
-    if xb is None:
-        xb = x0
-    trajectory = forward_fn(x0, ts)
+    if background is None:
+        background = initial_state
+    trajectory = forward_fn(initial_state, ts)
     obs = batch.input
     if nan_to_num:
         obs = jnp.nan_to_num(obs)
     # J_o = mean((m ⊙ (φ(x₀) − y))²)
     observation_term_cost = jnp.mean((batch.mask * (trajectory - obs)) ** 2)
     # J_b = mean((x₀ − x_b)²)
-    background_term_cost = background_cost(x0, xb)
+    background_term_cost = background_cost(initial_state, background)
     return alpha_obs * observation_term_cost + alpha_bg * background_term_cost
 
 

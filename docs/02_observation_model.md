@@ -81,7 +81,7 @@ be exploited.
 
 ```python
 from vardax import LinearObs
-obs_op = LinearObs(H_mat=footprint_op)
+obs_op = LinearObs(operator=footprint_op)
 ```
 
 ### Averaging kernel — RTM L2 products
@@ -114,7 +114,7 @@ because this is a day-one requirement, not a future feature.
 
 ```python
 from vardax import AveragingKernel
-ak = AveragingKernel(A=A_op, x_a=retrieval_prior, h=weighting_vector)
+ak = AveragingKernel(kernel_matrix=A_op, prior_profile=retrieval_prior, pressure_weights=weighting_vector)
 ```
 
 When $A$ has structure (Kronecker for separable kernels, low-rank for
@@ -149,8 +149,8 @@ from vardax import (
 fusion = MultiInstrumentFusion(
     registry=InstrumentRegistry(entries={
         "TROPOMI": InstrumentSpec(
-            obs_op=AveragingKernel(A=A_t, x_a=xa_t, h=h_t),
-            mask=tropomi_qa, R_op=tropomi_R, instrument_id="TROPOMI",
+            obs_op=AveragingKernel(kernel_matrix=A_t, prior_profile=xa_t, pressure_weights=h_t),
+            mask=tropomi_qa, obs_cov_op=tropomi_R, instrument_id="TROPOMI",
         ),
         "EMIT": InstrumentSpec(...),
         "GHGSat": InstrumentSpec(...),

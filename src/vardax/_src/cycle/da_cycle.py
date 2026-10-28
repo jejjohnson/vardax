@@ -93,7 +93,7 @@ def VarDACycle(
         ...         return state
         >>> eye = lx.IdentityLinearOperator(jax.ShapeDtypeStruct((1, 4), jnp.float32))
         >>> oi = vdx.OptimalInterpolation(
-        ...     obs_op=vdx.LinearObs(H_mat=eye),
+        ...     obs_op=vdx.LinearObs(operator=eye),
         ...     prior_mean=jnp.zeros((1, 4)),
         ...     prior_cov_op=eye,
         ...     obs_cov_op=eye,
@@ -187,7 +187,7 @@ def VarSmootherCycle(
         ...         return state
         >>> eye = lx.IdentityLinearOperator(jax.ShapeDtypeStruct((1, 4), jnp.float32))
         >>> oi = vdx.OptimalInterpolation(
-        ...     obs_op=vdx.LinearObs(H_mat=eye),
+        ...     obs_op=vdx.LinearObs(operator=eye),
         ...     prior_mean=jnp.zeros((1, 4)),
         ...     prior_cov_op=eye,
         ...     obs_cov_op=eye,

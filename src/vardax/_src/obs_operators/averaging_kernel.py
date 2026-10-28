@@ -40,12 +40,12 @@ class AveragingKernel(eqx.Module):
            anything, because the map is affine in $x$.
 
     Attributes:
-        A: Averaging kernel matrix, stored as an
+        kernel_matrix: Averaging kernel matrix, stored as an
             ``lineax.AbstractLinearOperator``. May be ``MatrixLinearOperator``
             for dense kernels or a structured operator (Kronecker for
             separable kernels, LowRank for retrievals with low DOF).
-        x_a: Retrieval prior, same shape as the model state.
-        h: Weighting vector (often pressure-weighted).
+        prior_profile: Retrieval prior, same shape as the model state.
+        pressure_weights: Weighting vector (often pressure-weighted).
 
     Examples:
         With $h = 1$ the prior drops out and the operator is just $A x$:
@@ -54,14 +54,20 @@ class AveragingKernel(eqx.Module):
         >>> import vardax as vdx
         >>> A = jnp.array([[0.5, 0.5], [0.0, 1.0]])
         >>> kernel = lx.MatrixLinearOperator(A)
-        >>> op = vdx.AveragingKernel(A=kernel, x_a=jnp.zeros(2), h=jnp.ones(2))
+        >>> op = vdx.AveragingKernel(
+        ...     kernel_matrix=kernel,
+        ...     prior_profile=jnp.zeros(2),
+        ...     pressure_weights=jnp.ones(2),
+        ... )
         >>> bool(jnp.allclose(op(jnp.array([1.0, 3.0])), A @ jnp.array([1.0, 3.0])))
         True
 
         Where $h = 0$ the output falls back to the retrieval prior $x_a$:
 
         >>> op0 = vdx.AveragingKernel(
-        ...     A=kernel, x_a=jnp.array([2.0, 2.0]), h=jnp.zeros(2)
+        ...     kernel_matrix=kernel,
+        ...     prior_profile=jnp.array([2.0, 2.0]),
+        ...     pressure_weights=jnp.zeros(2),
         ... )
         >>> bool(jnp.allclose(op0(jnp.array([9.0, 9.0])), A @ jnp.array([2.0, 2.0])))
         True
@@ -72,13 +78,14 @@ class AveragingKernel(eqx.Module):
         True
     """
 
-    A: lx.AbstractLinearOperator
-    x_a: Float[Array, " N"]
-    h: Float[Array, " N"]
+    kernel_matrix: lx.AbstractLinearOperator
+    prior_profile: Float[Array, " N"]
+    pressure_weights: Float[Array, " N"]
 
     def __call__(self, x: Float[Array, " N"]) -> Float[Array, " N"]:
-        inner = self.h * x + (1.0 - self.h) * self.x_a
-        return self.A.mv(inner)
+        w = self.pressure_weights
+        inner = w * x + (1.0 - w) * self.prior_profile
+        return self.kernel_matrix.mv(inner)
 
     def linearize(self, x: Float[Array, " N"]) -> lx.AbstractLinearOperator:
         r"""Tangent-linear operator at ``x``: $A \cdot \mathrm{diag}(h)$.
@@ -90,14 +97,14 @@ class AveragingKernel(eqx.Module):
         Returns:
             The operator $A \, \mathrm{diag}(h)$.
         """
-        diag_h = lx.DiagonalLinearOperator(self.h)
-        return self.A @ diag_h
+        diag_w = lx.DiagonalLinearOperator(self.pressure_weights)
+        return self.kernel_matrix @ diag_w
 
 
 def averaging_kernel_from_l2(
-    A_matrix: Float[Array, "N N"],
-    x_a: Float[Array, " N"],
-    h: Float[Array, " N"],
+    kernel_matrix: Float[Array, "N N"],
+    prior_profile: Float[Array, " N"],
+    pressure_weights: Float[Array, " N"],
 ) -> AveragingKernel:
     """Convenience constructor from a dense averaging-kernel matrix.
 
@@ -105,12 +112,15 @@ def averaging_kernel_from_l2(
     satisfies the same interface as structured kernels.
 
     Args:
-        A_matrix: Dense averaging-kernel matrix of shape ``(N, N)``.
-        x_a: Retrieval prior of shape ``(N,)``.
-        h: Weighting vector of shape ``(N,)``.
+        kernel_matrix: Dense averaging-kernel matrix of shape ``(N, N)``.
+        prior_profile: Retrieval prior of shape ``(N,)``.
+        pressure_weights: Weighting vector of shape ``(N,)``.
 
     Returns:
         Configured ``AveragingKernel`` instance.
     """
-    A = lx.MatrixLinearOperator(jnp.asarray(A_matrix))
-    return AveragingKernel(A=A, x_a=jnp.asarray(x_a), h=jnp.asarray(h))
+    return AveragingKernel(
+        kernel_matrix=lx.MatrixLinearOperator(jnp.asarray(kernel_matrix)),
+        prior_profile=jnp.asarray(prior_profile),
+        pressure_weights=jnp.asarray(pressure_weights),
+    )

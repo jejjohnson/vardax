@@ -138,6 +138,6 @@ def test_adapter_reads_model_covariances(x64):
 
 def test_adapter_without_covariances_anywhere_raises():
     eye = lx.IdentityLinearOperator(jax.ShapeDtypeStruct((N_STATE,), jnp.float32))
-    view = SimpleNamespace(obs_op=vdx.LinearObs(H_mat=eye))
+    view = SimpleNamespace(obs_op=vdx.LinearObs(operator=eye))
     with pytest.raises(ValueError, match="pass prior_cov_op="):
         vdx.LaplaceCovariance()(jnp.zeros(N_STATE), view, batch=None)

@@ -60,8 +60,8 @@ key = jax.random.PRNGKey(0)
 N = 40
 time_coords, states = simulate_lorenz96(
     key,
-    N=N,
-    F=8.0,
+    n_sites=N,
+    forcing=8.0,
     dt=0.01,
     n_steps=5000,
     n_burn_in=1000,

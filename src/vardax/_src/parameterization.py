@@ -45,7 +45,7 @@ class LinearParameterization(eqx.Module):
 
     $\psi(X) = x_b + \Phi(t) X$ (with $t = 0$ when not given) and
     $\mathrm{pen}(X) = \tfrac12 X^\top Q^{-1} X$, so a model built with
-    ``parameterization=LinearParameterization(basis, x_b)`` minimises the
+    ``parameterization=LinearParameterization(basis, background)`` minimises the
     same cost as ``ReducedBasisFourDVar(basis=basis)`` with ``prior_mean=x_b``.
 
     Algorithm:
@@ -56,12 +56,12 @@ class LinearParameterization(eqx.Module):
 
     Attributes:
         basis: The `ReducedBasis` ($\Phi$, $Q^{-1}$, ``nbasis``).
-        x_b: Background state the increment is added to.
+        background: Background state the increment is added to.
 
     Examples:
         >>> import jax.numpy as jnp, vardax
         >>> basis = vardax.linear_basis(jnp.eye(4)[:, :2], variance=2.0)
-        >>> param = vardax.LinearParameterization(basis, x_b=jnp.ones(4))
+        >>> param = vardax.LinearParameterization(basis, background=jnp.ones(4))
         >>> X = param.init_control()
         >>> X.shape
         (2,)
@@ -72,7 +72,7 @@ class LinearParameterization(eqx.Module):
 
         The initial control decodes to the background, whatever the basis.
 
-        >>> bool(jnp.allclose(param.decode(X), param.x_b))
+        >>> bool(jnp.allclose(param.decode(X), param.background))
         True
 
         It satisfies the [`StateParameterization`][vardax.StateParameterization]
@@ -83,10 +83,10 @@ class LinearParameterization(eqx.Module):
     """
 
     basis: Any
-    x_b: Float[Array, ...]
+    background: Float[Array, ...]
 
     def decode(self, theta: Float[Array, " M"], t: float | None = None) -> Array:
-        """Return the state $x_b + \\Phi(t) X$, shaped like ``x_b``.
+        """Return the state $x_b + \\Phi(t) X$, shaped like ``background``.
 
         Args:
             theta: Coefficient vector $X$.
@@ -97,7 +97,7 @@ class LinearParameterization(eqx.Module):
         """
         increment = self.basis.operg(0.0 if t is None else t, theta)
         # x = x_b + Φ(t) X
-        return self.x_b + as_shape(increment, self.x_b.shape)
+        return self.background + as_shape(increment, self.background.shape)
 
     def penalty(self, theta: Float[Array, " M"]) -> Float[Array, ""]:
         """Return $\\tfrac12 X^\\top Q^{-1} X$.
@@ -120,7 +120,7 @@ class LinearParameterization(eqx.Module):
             The zero coefficient vector $X = 0$.
         """
         del key
-        return jnp.zeros((self.basis.nbasis,), dtype=self.x_b.dtype)
+        return jnp.zeros((self.basis.nbasis,), dtype=self.background.dtype)
 
 
 class NeuralFieldParameterization(eqx.Module):

@@ -196,7 +196,7 @@ class TestStrongVariationalCost:
             ts,
             batch,
             forward_fn,
-            xb=jnp.zeros((1, 4)),
+            background=jnp.zeros((1, 4)),
             alpha_obs=1.0,
             alpha_bg=1.0,
         )

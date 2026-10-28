@@ -1,6 +1,6 @@
 """Linear-projection observation operator.
 
-``H(x) = H_mat @ x`` where ``H_mat`` is supplied as a
+``H(x) = operator @ x`` where ``operator`` is supplied as a
 ``lineax.AbstractLinearOperator`` so structure (sparse, low-rank,
 Kronecker) can be exploited without materialising the dense matrix.
 
@@ -16,13 +16,13 @@ import lineax as lx
 
 
 class LinearObs(eqx.Module):
-    r"""$H(x) = H x$ for a linear operator $H$ (``H_mat``).
+    r"""$H(x) = H x$ for a linear operator $H$ (``operator``).
 
     Examples:
         >>> import jax.numpy as jnp, lineax as lx
         >>> import vardax as vdx
         >>> H = lx.MatrixLinearOperator(jnp.eye(3)[:2])
-        >>> obs = vdx.LinearObs(H_mat=H)
+        >>> obs = vdx.LinearObs(operator=H)
         >>> obs(jnp.array([1.0, 2.0, 3.0]))
         Array([1., 2.], dtype=float32)
         >>> obs.linearize(jnp.zeros(3)) is H
@@ -30,7 +30,9 @@ class LinearObs(eqx.Module):
 
         A structured operator is applied without a dense matrix:
 
-        >>> diag = vdx.LinearObs(H_mat=lx.DiagonalLinearOperator(jnp.array([2.0, 3.0])))
+        >>> diag = vdx.LinearObs(
+        ...     operator=lx.DiagonalLinearOperator(jnp.array([2.0, 3.0]))
+        ... )
         >>> diag(jnp.ones(2))
         Array([2., 3.], dtype=float32)
 
@@ -41,18 +43,18 @@ class LinearObs(eqx.Module):
         True
     """
 
-    H_mat: lx.AbstractLinearOperator
+    operator: lx.AbstractLinearOperator
 
     def __call__(self, x: Float[Array, ...]) -> Float[Array, ...]:
-        return self.H_mat.mv(x)
+        return self.operator.mv(x)
 
     def linearize(self, x: Float[Array, ...]) -> lx.AbstractLinearOperator:
-        """Tangent-linear operator at ``x``: just ``H_mat`` (linear).
+        """Tangent-linear operator at ``x``: just ``operator`` (linear).
 
         Args:
             x: State at which to linearise; unused.
 
         Returns:
-            The stored operator ``H_mat``.
+            The stored operator ``operator``.
         """
-        return self.H_mat
+        return self.operator

@@ -304,8 +304,8 @@ class ReducedBasis(Protocol):
     can satisfy the same contract.
 
     Members:
-        ``operg(t, X, state=None) -> increment``
-        ``prior_inv(X) -> Q⁻¹ X``
+        ``operg(t, coefficients, state=None) -> increment``
+        ``prior_inv(coefficients) -> Q⁻¹ coefficients``
         ``nbasis: int`` property
 
     Examples:
@@ -324,9 +324,9 @@ class ReducedBasis(Protocol):
         (2,)
     """
 
-    def operg(self, t: float, X: Any, state: Any = None) -> Any: ...
+    def operg(self, t: float, coefficients: Any, state: Any = None) -> Any: ...
 
-    def prior_inv(self, X: Any) -> Any: ...
+    def prior_inv(self, coefficients: Any) -> Any: ...
 
     @property
     def nbasis(self) -> int: ...
@@ -358,7 +358,7 @@ class StateParameterization(Protocol):
     Examples:
         >>> import jax.numpy as jnp, vardax
         >>> basis = vardax.linear_basis(jnp.eye(4)[:, :2], variance=1.0)
-        >>> param = vardax.LinearParameterization(basis, x_b=jnp.zeros(4))
+        >>> param = vardax.LinearParameterization(basis, background=jnp.zeros(4))
         >>> isinstance(param, vardax.StateParameterization)
         True
         >>> param.decode(param.init_control()).shape

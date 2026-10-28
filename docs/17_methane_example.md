@@ -107,7 +107,7 @@ fusion = vdx.MultiInstrumentFusion(
         op.instrument: vdx.InstrumentSpec(
             obs_op=averaging_kernel_from_l2(op.l2_ds),  # an AveragingKernel
             mask=op.quality_mask,
-            R_op=lx.DiagonalLinearOperator(op.retrieval_variance),
+            obs_cov_op=lx.DiagonalLinearOperator(op.retrieval_variance),
             instrument_id=op.instrument,
         )
         for op in overpasses
@@ -121,7 +121,7 @@ B_op = gx.LogNormalLinearOperator(mu=Q_prior_mu, sigma=Q_prior_sigma_log)
 
 # (5) Block-diag R across instruments
 R_op = lx.BlockDiagonalLinearOperator([
-    spec.R_op for spec in fusion.registry.entries.values()
+    spec.obs_cov_op for spec in fusion.registry.entries.values()
 ])
 
 # (6) Configure incremental 4DVar inversion

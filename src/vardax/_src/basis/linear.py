@@ -44,7 +44,7 @@ class LinearBasis(eqx.Module):
     Build via :func:`linear_basis` (or a family constructor:
     :func:`vardax.rbf_basis`, :func:`vardax.fourier_basis`,
     :func:`vardax.wavelet_basis`, :func:`vardax.eof_basis`); direct
-    instantiation expects the precomputed ``phi`` ``(N, M)`` matrix,
+    instantiation expects the precomputed ``design_matrix`` ``(N, M)`` matrix,
     ``variance`` ``(M,)``, and the grid ``output_shape`` with
     ``prod(output_shape) == N``.
 
@@ -73,48 +73,48 @@ class LinearBasis(eqx.Module):
         (2, 2)
     """
 
-    phi: Float[Array, "N M"]
+    design_matrix: Float[Array, "N M"]
     variance: Float[Array, " M"]
     output_shape: tuple[int, ...] = eqx.field(static=True)
 
     def operg(
         self,
         t: float,
-        X: Float[Array, " M"],
+        coefficients: Float[Array, " M"],
         state: Float[Array, ...] | None = None,
     ) -> Float[Array, ...]:
         r"""Apply $\Phi X$ and return the increment on ``output_shape``.
 
         Args:
             t: Time; ignored because the basis is stationary.
-            X: Coefficient vector.
+            coefficients: Coefficient vector.
             state: Current state; ignored by this basis.
 
         Returns:
             State increment $\Phi X$ reshaped onto ``output_shape``.
         """
         # δx = Φ X
-        increment = einx.dot("n m, m -> n", self.phi, X)
+        increment = einx.dot("n m, m -> n", self.design_matrix, coefficients)
         return einx.id("(s...) -> s...", increment, s=self.output_shape)
 
-    def prior_inv(self, X: Float[Array, " M"]) -> Float[Array, " M"]:
+    def prior_inv(self, coefficients: Float[Array, " M"]) -> Float[Array, " M"]:
         r"""Apply $Q^{-1} X$ with diagonal $Q = \mathrm{diag}(\sigma^2)$.
 
         Args:
-            X: Coefficient vector.
+            coefficients: Coefficient vector.
 
         Returns:
             The vector $X / \sigma^2$.
         """
-        return X / self.variance
+        return coefficients / self.variance
 
     @property
     def nbasis(self) -> int:
-        return int(self.phi.shape[1])
+        return int(self.design_matrix.shape[1])
 
 
 def linear_basis(
-    phi: Float[ArrayLike, "N M"],
+    design_matrix: Float[ArrayLike, "N M"],
     *,
     variance: float | Float[ArrayLike, " M"] = 1.0,
     output_shape: tuple[int, ...] | None = None,
@@ -126,7 +126,7 @@ def linear_basis(
     hand-rolled …) becomes a `ReducedBasis`.
 
     Args:
-        phi: Design matrix $\Phi$ mapping coefficients to the flattened
+        design_matrix: Design matrix $\Phi$ mapping coefficients to the flattened
             state.
         variance: Scalar or per-coefficient prior variance.
         output_shape: Grid shape the increment is reshaped to; must
@@ -136,7 +136,7 @@ def linear_basis(
         Configured `LinearBasis`.
 
     Raises:
-        ShapeError: If ``phi`` is not 2-D or ``output_shape`` does not
+        ShapeError: If ``design_matrix`` is not 2-D or ``output_shape`` does not
             multiply to the number of rows.
         ConfigurationError: If ``variance`` is not finite and positive.
 
@@ -156,11 +156,13 @@ def linear_basis(
         ... )  # doctest: +IGNORE_EXCEPTION_DETAIL
         Traceback (most recent call last):
         ...
-        ShapeError: prod(output_shape)=4 does not match phi rows N=3.
+        ShapeError: prod(output_shape)=4 does not match design_matrix rows N=3.
     """
-    design_matrix = jnp.asarray(phi)
+    design_matrix = jnp.asarray(design_matrix)
     if design_matrix.ndim != 2:
-        raise ShapeError(f"phi must be 2-D (N, M); got shape {design_matrix.shape}.")
+        raise ShapeError(
+            f"design_matrix must be 2-D (N, M); got shape {design_matrix.shape}."
+        )
     state_dim, n_atoms = int(design_matrix.shape[0]), int(design_matrix.shape[1])
     shape = (
         (state_dim,)
@@ -169,11 +171,11 @@ def linear_basis(
     )
     if math.prod(shape) != state_dim:
         raise ShapeError(
-            f"prod(output_shape)={math.prod(shape)} does not match phi rows "
+            f"prod(output_shape)={math.prod(shape)} does not match design_matrix rows "
             f"N={state_dim}."
         )
     return LinearBasis(
-        phi=design_matrix,
+        design_matrix=design_matrix,
         # the prior variance follows Φ's dtype, so x64 callers keep float64
         variance=jnp.asarray(
             _as_variance(variance, n_atoms),

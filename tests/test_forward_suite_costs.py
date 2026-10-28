@@ -332,7 +332,7 @@ class TestStrongVariationalCost:
             jnp.asarray(self.ts),
             self._batch(y, m),
             _forward,
-            xb=jnp.asarray(xb),
+            background=jnp.asarray(xb),
             alpha_obs=a_o,
             alpha_bg=a_b,
             nan_to_num=True,
@@ -349,16 +349,20 @@ class TestStrongVariationalCost:
     def test_property_nonneg_and_background_default(self, x0, xb, y, m):
         with jax.enable_x64(True):
             ts, batch = jnp.asarray(self.ts), self._batch(y, m)
-            cost = vdx.strong_variational_cost(x0, ts, batch, _forward, xb=xb)
+            cost = vdx.strong_variational_cost(x0, ts, batch, _forward, background=xb)
             assert cost >= 0
             # xb defaults to x0, which switches the background term off
             default = vdx.strong_variational_cost(x0, ts, batch, _forward)
-            explicit = vdx.strong_variational_cost(x0, ts, batch, _forward, xb=x0)
+            explicit = vdx.strong_variational_cost(
+                x0, ts, batch, _forward, background=x0
+            )
             np.testing.assert_allclose(default, explicit, rtol=1e-12, atol=1e-15)
             # without a background weight xb cannot matter
             kw = {"alpha_bg": 0.0}
             np.testing.assert_allclose(
-                vdx.strong_variational_cost(x0, ts, batch, _forward, xb=xb, **kw),
+                vdx.strong_variational_cost(
+                    x0, ts, batch, _forward, background=xb, **kw
+                ),
                 default,
                 rtol=1e-12,
                 atol=1e-14,
@@ -373,7 +377,7 @@ class TestStrongVariationalCost:
             (rng.uniform(size=self.y_shape) > 0.3).astype(float),
         )
         ts = jnp.asarray(self.ts)
-        f = lambda s: vdx.strong_variational_cost(s, ts, batch, _forward, xb=xb)
+        f = lambda s: vdx.strong_variational_cost(s, ts, batch, _forward, background=xb)
         _close_grad(jax.grad(f)(jnp.asarray(x0)), _central_diff(f, x0))
 
     def test_jit_vmap_match_loop(self, x64):

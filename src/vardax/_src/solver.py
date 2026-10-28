@@ -44,10 +44,10 @@ class SolverState1D(eqx.Module):
         >>> state = vdx.SolverState1D(
         ...     x=jnp.zeros((2, 3, 4)), lstm=vdx.LSTMState1D.zeros(2, 5, 4), step=0
         ... )
-        >>> state.x.shape, state.lstm.h.shape, state.step
+        >>> state.x.shape, state.lstm.hidden.shape, state.step
         ((2, 3, 4), (2, 5, 4), 0)
 
-        It is an Equinox module, so it is a pytree (x, h, c and the step counter):
+        It is an Equinox module, so it is a pytree (x, hidden, cell and the step counter):
 
         >>> import jax
         >>> len(jax.tree_util.tree_leaves(state))
@@ -80,7 +80,7 @@ class SolverState2D(eqx.Module):
         ...     lstm=vdx.LSTMState2D.zeros(1, 2, 4, 5),
         ...     step=0,
         ... )
-        >>> state.x.shape, state.lstm.c.shape
+        >>> state.x.shape, state.lstm.cell.shape
         ((1, 3, 4, 5), (1, 2, 4, 5))
     """
 

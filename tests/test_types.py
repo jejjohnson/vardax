@@ -54,16 +54,16 @@ class TestBatch2DMultivar:
 class TestLSTMState1D:
     def test_zeros(self):
         state = LSTMState1D.zeros(batch_size=2, hidden_dim=16, seq_len=8)
-        assert state.h.shape == (2, 16, 8)
-        assert state.c.shape == (2, 16, 8)
-        assert jnp.all(state.h == 0)
-        assert jnp.all(state.c == 0)
+        assert state.hidden.shape == (2, 16, 8)
+        assert state.cell.shape == (2, 16, 8)
+        assert jnp.all(state.hidden == 0)
+        assert jnp.all(state.cell == 0)
 
 
 class TestLSTMState2D:
     def test_zeros(self):
         state = LSTMState2D.zeros(batch_size=2, hidden_dim=16, height=4, width=4)
-        assert state.h.shape == (2, 16, 4, 4)
-        assert state.c.shape == (2, 16, 4, 4)
-        assert jnp.all(state.h == 0)
-        assert jnp.all(state.c == 0)
+        assert state.hidden.shape == (2, 16, 4, 4)
+        assert state.cell.shape == (2, 16, 4, 4)
+        assert jnp.all(state.hidden == 0)
+        assert jnp.all(state.cell == 0)

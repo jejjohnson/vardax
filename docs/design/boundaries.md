@@ -121,7 +121,7 @@ Conformance test suite `tests/test_pipekit_protocols.py` added.
 
 ### Epic 2: Observation Operators (Decision D9)
 
-`MaskedIdentity`, `LinearObs`, `AveragingKernel(A, x_a, h)`,
+`MaskedIdentity`, `LinearObs`, `AveragingKernel(kernel_matrix, prior_profile, pressure_weights)`,
 `MultiInstrumentFusion(registry)`, `InstrumentRegistry`. All expose
 `linearize()` via `lineax.JacobianLinearOperator` or a structured
 override.

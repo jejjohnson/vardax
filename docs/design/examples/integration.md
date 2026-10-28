@@ -75,7 +75,7 @@ inversion = IncrementalFourDVar(
     prior_mean=Q_prior_mean,
     prior_cov_op=gx.LogNormalLinearOperator(Q_prior_mu, Q_prior_sigma_log),
     obs_cov_op=lx.BlockDiagonalLinearOperator([
-        spec.R_op for spec in fusion.registry.entries.values()
+        spec.obs_cov_op for spec in fusion.registry.entries.values()
     ]),
     config=IncrementalConfig(n_outer=3, n_inner=20),
 )

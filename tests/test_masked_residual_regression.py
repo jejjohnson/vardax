@@ -55,7 +55,7 @@ class IdentityForward(eqx.Module):
 def masked_linear_gaussian():
     """Linear-Gaussian setup with a gap mask.
 
-    obs_op is ``LinearObs(H_mat=I)`` (not mask-aware). Mask is
+    obs_op is ``LinearObs(operator=I)`` (not mask-aware). Mask is
     ``[1, 0, 1, 0]`` along the spatial axis so the analysis should
     only update the *observed* entries.
     """
@@ -101,14 +101,14 @@ def masked_linear_gaussian():
 def _identity_linear_obs_state(N: int) -> LinearObs:
     """``LinearObs`` on a flat state ``(N,)`` — used by 4DVar variants."""
     return LinearObs(
-        H_mat=lx.IdentityLinearOperator(jax.ShapeDtypeStruct((N,), jnp.float32))
+        operator=lx.IdentityLinearOperator(jax.ShapeDtypeStruct((N,), jnp.float32))
     )
 
 
 def _identity_linear_obs_with_time(N: int) -> LinearObs:
     """``LinearObs`` on a ``(T=1, N)`` shape — used by OI / ThreeDVar."""
     return LinearObs(
-        H_mat=lx.IdentityLinearOperator(jax.ShapeDtypeStruct((1, N), jnp.float32))
+        operator=lx.IdentityLinearOperator(jax.ShapeDtypeStruct((1, N), jnp.float32))
     )
 
 

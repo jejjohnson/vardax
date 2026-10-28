@@ -40,7 +40,7 @@ def oi_model():
     H = lx.IdentityLinearOperator(jax.ShapeDtypeStruct((1, N), jnp.float32))
     cov = lx.IdentityLinearOperator(jax.ShapeDtypeStruct((1, N), jnp.float32))
     return OptimalInterpolation(
-        obs_op=LinearObs(H_mat=H),
+        obs_op=LinearObs(operator=H),
         prior_mean=jnp.zeros((1, N)),
         prior_cov_op=cov,
         obs_cov_op=cov,

@@ -60,7 +60,7 @@ def lg_problem():
     T_plus_1 = 3  # 2 rollout steps + 1 initial
 
     H = lx.IdentityLinearOperator(jax.ShapeDtypeStruct((N,), jnp.float32))
-    obs_op = LinearObs(H_mat=H)
+    obs_op = LinearObs(operator=H)
     state_op = lx.IdentityLinearOperator(jax.ShapeDtypeStruct((N,), jnp.float32))
 
     # Truth + obs
@@ -251,7 +251,7 @@ def test_analysis_step_threads_obs_op_and_err_cov(lg_problem):
     # the analysis stays near the zero prior_mean). The cycle hands in the
     # correct identity obs_op, which should override the bad one.
     zero_H = lx.MatrixLinearOperator(jnp.zeros((N, N), dtype=jnp.float32))
-    bad_obs_op = LinearObs(H_mat=zero_H)
+    bad_obs_op = LinearObs(operator=zero_H)
     ana_bad = ReducedBasisFourDVar(
         p["fwd"],
         obs_op=bad_obs_op,
@@ -332,7 +332,7 @@ def test_masked_obs_marginalize_correlated_r():
     )
     ana = ReducedBasisFourDVar(
         fwd,
-        obs_op=LinearObs(H_mat=H),
+        obs_op=LinearObs(operator=H),
         prior_mean=jnp.zeros(N),
         prior_cov_op=B,
         obs_cov_op=R,
@@ -394,11 +394,13 @@ def test_basis_path_recovers_increment(lg_problem):
 
     # State lives as a flat (N,) vector inside vardax, so rebuild the
     # basis with a flat output_shape instead of the 2-D grid.
-    flat_basis = LinearBasis(phi=basis.phi, variance=basis.variance, output_shape=(N,))
+    flat_basis = LinearBasis(
+        design_matrix=basis.design_matrix, variance=basis.variance, output_shape=(N,)
+    )
 
     truth = flat_basis.operg(0.0, jnp.array([1.0, -0.5]))
     H = lx.IdentityLinearOperator(jax.ShapeDtypeStruct((N,), jnp.float32))
-    obs_op = LinearObs(H_mat=H)
+    obs_op = LinearObs(operator=H)
     state_op = lx.IdentityLinearOperator(jax.ShapeDtypeStruct((N,), jnp.float32))
 
     # Two-step window, identity forward, full obs at every step.

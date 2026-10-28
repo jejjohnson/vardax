@@ -43,9 +43,9 @@ $$
 ```python
 from vardax import LinearObs
 
-obs_op = LinearObs(H_mat=footprint_op)         # AbstractLinearOperator
+obs_op = LinearObs(operator=footprint_op)         # AbstractLinearOperator
 y_pred = obs_op(x)
-H_lin = obs_op.linearize(x)                    # H_mat itself
+H_lin = obs_op.linearize(x)                    # the operator itself
 ```
 
 Use cases:
@@ -99,9 +99,9 @@ from vardax import AveragingKernel
 
 def averaging_kernel_from_l2(ds: xr.Dataset) -> AveragingKernel:
     return AveragingKernel(
-        A=lx.MatrixLinearOperator(jnp.asarray(ds.averaging_kernel.values)),
-        x_a=jnp.asarray(ds.retrieval_prior.values),
-        h=jnp.asarray(ds.weighting_vector.values),
+        kernel_matrix=lx.MatrixLinearOperator(jnp.asarray(ds.averaging_kernel.values)),
+        prior_profile=jnp.asarray(ds.retrieval_prior.values),
+        pressure_weights=jnp.asarray(ds.weighting_vector.values),
     )
 
 tropomi = averaging_kernel_from_l2(tropomi_ds)
@@ -119,7 +119,7 @@ A_kron = gx.KroneckerLinearOperator([
     gx.MatrixLinearOperator(vertical_kernel),
     gx.MatrixLinearOperator(horizontal_kernel),
 ])
-ak = AveragingKernel(A=A_kron, x_a=xa, h=h)
+ak = AveragingKernel(kernel_matrix=A_kron, prior_profile=xa, pressure_weights=h)
 ```
 
 Kronecker structure means $A$ never materialised; mat-vec
@@ -164,15 +164,15 @@ from vardax import (
 )
 
 tropomi_spec = InstrumentSpec(
-    obs_op=AveragingKernel(A=A_t, x_a=xa_t, h=h_t),
+    obs_op=AveragingKernel(kernel_matrix=A_t, prior_profile=xa_t, pressure_weights=h_t),
     mask=tropomi_qa,
-    R_op=lx.DiagonalLinearOperator(tropomi_uncertainty),
+    obs_cov_op=lx.DiagonalLinearOperator(tropomi_uncertainty),
     instrument_id="TROPOMI",
 )
 emit_spec = InstrumentSpec(
-    obs_op=AveragingKernel(A=A_e, x_a=xa_e, h=h_e),
+    obs_op=AveragingKernel(kernel_matrix=A_e, prior_profile=xa_e, pressure_weights=h_e),
     mask=emit_qa,
-    R_op=lx.DiagonalLinearOperator(emit_uncertainty),
+    obs_cov_op=lx.DiagonalLinearOperator(emit_uncertainty),
     instrument_id="EMIT",
 )
 

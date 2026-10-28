@@ -142,7 +142,7 @@ class TestObservationOperatorConformance:
 
         from vardax import LinearObs, ObservationOperator
 
-        op = LinearObs(H_mat=lx.MatrixLinearOperator(jnp.eye(3)))
+        op = LinearObs(operator=lx.MatrixLinearOperator(jnp.eye(3)))
         assert isinstance(op, ObservationOperator)
         assert isinstance(op.linearize(jnp.zeros(3)), lx.AbstractLinearOperator)
 
@@ -158,9 +158,9 @@ class TestObservationOperatorConformance:
         from vardax import AveragingKernel, ObservationOperator
 
         op = AveragingKernel(
-            A=lx.MatrixLinearOperator(0.5 * jnp.eye(3)),
-            x_a=jnp.zeros(3),
-            h=jnp.ones(3),
+            kernel_matrix=lx.MatrixLinearOperator(0.5 * jnp.eye(3)),
+            prior_profile=jnp.zeros(3),
+            pressure_weights=jnp.ones(3),
         )
         assert isinstance(op, ObservationOperator)
 
@@ -176,9 +176,9 @@ class TestObservationOperatorConformance:
         )
 
         spec = InstrumentSpec(
-            obs_op=LinearObs(H_mat=lx.MatrixLinearOperator(jnp.eye(2))),
+            obs_op=LinearObs(operator=lx.MatrixLinearOperator(jnp.eye(2))),
             mask=jnp.ones(2),
-            R_op=lx.DiagonalLinearOperator(0.1 * jnp.ones(2)),
+            obs_cov_op=lx.DiagonalLinearOperator(0.1 * jnp.ones(2)),
             instrument_id="a",
         )
         fusion = MultiInstrumentFusion(registry=InstrumentRegistry(entries={"a": spec}))

@@ -113,7 +113,7 @@ B_op = gx.LogNormalLinearOperator(mu=Q_prior_mu, sigma=Q_prior_sigma)
 
 # (5) Block-diag R across instruments
 R_op = lx.BlockDiagonalLinearOperator([
-    spec.R_op for spec in fusion.registry.entries.values()
+    spec.obs_cov_op for spec in fusion.registry.entries.values()
 ])
 
 # (6) Configure inversion
