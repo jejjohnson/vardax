@@ -163,11 +163,11 @@ class PointObsBatch(eqx.Module):
         1
     """
 
-    coords: Float[Array, "N_obs D"]
-    values: Float[Array, " N_obs"]
-    sigma: Float[Array, " N_obs"]
-    valid: Bool[Array, " N_obs"]
-    time_index: Int[Array, " N_obs"] | None = None
+    coords: Float[Array, "*batch N_obs D"]
+    values: Float[Array, "*batch N_obs"]
+    sigma: Float[Array, "*batch N_obs"]
+    valid: Bool[Array, "*batch N_obs"]
+    time_index: Int[Array, "*batch N_obs"] | None = None
     n_times: int | None = eqx.field(static=True, default=None)
 
 
