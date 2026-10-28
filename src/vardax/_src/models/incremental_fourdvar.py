@@ -102,6 +102,20 @@ class IncrementalConfig(eqx.Module):
     cvt: bool = eqx.field(static=True, default=True)
     covariance_tol: float = eqx.field(static=True, default=1e-6)
 
+    def get_config(self) -> dict[str, Any]:
+        return {
+            "n_outer": self.n_outer,
+            "n_inner": self.n_inner,
+            "cg_atol": self.cg_atol,
+            "cg_rtol": self.cg_rtol,
+            "cvt": self.cvt,
+            "covariance_tol": self.covariance_tol,
+        }
+
+    @classmethod
+    def from_config(cls, config: dict[str, Any]) -> IncrementalConfig:
+        return cls(**config)
+
 
 class IncrementalFourDVar(eqx.Module):
     r"""Operational incremental 4DVar (Decision D11).

@@ -20,6 +20,7 @@ inner-solve layer — see
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import Any
 
 from jaxtyping import Array, PyTree
 import optimistix as optx
@@ -132,3 +133,12 @@ class KStepAdjoint(optx.AbstractAdjoint):
 
     def __repr__(self) -> str:  # pragma: no cover - cosmetic
         return f"KStepAdjoint(k={self.k})"
+
+    def get_config(self) -> dict[str, Any]:
+        return {
+            "k": self.k,
+        }
+
+    @classmethod
+    def from_config(cls, config: dict[str, Any]) -> KStepAdjoint:
+        return cls(**config)

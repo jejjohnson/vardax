@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from diffrax import ODETerm, SaveAt, Tsit5, diffeqsolve
 import equinox as eqx
 import jax
@@ -80,6 +82,18 @@ class Lorenz63(eqx.Module):
         # dz/dt = xy − βz
         dz_dt = state_x * state_y - self.beta * state_z
         return jnp.array([dx_dt, dy_dt, dz_dt])
+
+    def get_config(self) -> dict[str, Any]:
+        return {
+            # float(): the parameters are leaves and may be 0-d arrays
+            "sigma": float(self.sigma),
+            "rho": float(self.rho),
+            "beta": float(self.beta),
+        }
+
+    @classmethod
+    def from_config(cls, config: dict[str, Any]) -> Lorenz63:
+        return cls(**config)
 
 
 def simulate_lorenz63(
@@ -251,6 +265,16 @@ class Lorenz96(eqx.Module):
         y_km1 = jnp.roll(y, 1)  # x_{k-1}
         y_kp1 = jnp.roll(y, -1)  # x_{k+1}
         return (y_kp1 - y_km2) * y_km1 - y + self.F
+
+    def get_config(self) -> dict[str, Any]:
+        return {
+            # float(): the forcing is a leaf and may be a 0-d array
+            "F": float(self.F),
+        }
+
+    @classmethod
+    def from_config(cls, config: dict[str, Any]) -> Lorenz96:
+        return cls(**config)
 
 
 def simulate_lorenz96(
