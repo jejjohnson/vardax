@@ -36,6 +36,13 @@ def _unchecked_types(request):
 
 
 @pytest.fixture
+def x64():
+    """Run the test in float64, for closed-form oracles at ``rtol=1e-12``."""
+    with jax.enable_x64(True):
+        yield
+
+
+@pytest.fixture
 def rng():
     return jax.random.PRNGKey(0)
 
