@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>vardax — seven methods, one cost</title>
+<link rel="stylesheet" href="_base.css">
+<style>
+  #diagram { width: 1560px; }
+  .grid {
+    display: grid;
+    grid-template-columns: 290px 330px 300px 250px;
+    column-gap: 92px;
+    align-items: center;
+  }
+  .lane .node + .node { margin-top: 18px; }
+  .lane .group + .group { margin-top: 16px; }
+  .group-head {
+    font-size: 11px; font-weight: 700; letter-spacing: 0.08em;
+    text-transform: uppercase; color: var(--accent); margin: 0 0 8px 2px;
+  }
+  .term { margin-top: 12px; }
+  .term .eq {
+    font-family: var(--mono); font-size: 13px; color: var(--ink-accent);
+    background: var(--card); border: 1.5px solid var(--accent);
+    border-radius: 10px; padding: 9px 12px;
+  }
+  .term .eq.optional { border-style: dashed; }
+  .term .lbl { font-size: 12px; color: var(--muted); margin: 0 0 4px 2px; }
+  .argmin {
+    font-family: var(--mono); font-size: 15px; font-weight: 700;
+    color: var(--ink-accent); margin: 2px 0 0 2px;
+  }
+  .base-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 16px;
+    margin-top: 34px;
+  }
+  .slab {
+    display: flex; align-items: center; gap: 14px;
+    border-radius: 14px; padding: 12px 16px;
+    background: var(--base-bg); border: 1.5px solid #cbd5e1;
+  }
+  .slab .lib { font-weight: 700; font-size: 15px; white-space: nowrap; }
+  .slab .what { font-size: 12.5px; color: var(--muted); line-height: 1.45; }
+  .slab code { font-family: var(--mono); font-size: 12px; color: var(--ink); white-space: nowrap; }
+</style>
+</head>
+<body>
+<div id="diagram">
+  <div class="title">vardax — seven analysis methods, one cost</div>
+  <div class="subtitle">Plug in the seams, pick a method, cycle it. Switching method is a constructor change, not a rewrite.</div>
+
+  <div class="grid">
+    <!-- column 1: the seams -->
+    <div class="lane find" id="lane-seams">
+      <div class="lane-head"><span class="verb">seams</span><span class="pkg">what you supply</span></div>
+      <div class="node">
+        <div class="name">observation operator <code>H</code></div>
+        <div class="desc"><code>MaskedIdentity</code> · <code>LinearObs</code> · <code>InterpObs</code> · <code>AveragingKernel</code> · <code>MultiInstrumentFusion</code></div>
+      </div>
+      <div class="node">
+        <div class="name">covariances <code>B</code> · <code>R</code> · <code>Q</code></div>
+        <div class="desc"><code>lineax</code> operators — diagonal, Matérn, Kronecker, low rank from <code>gaussx</code></div>
+      </div>
+      <div class="node">
+        <div class="name">forward model <code>M</code></div>
+        <div class="desc"><code>DynTrajectory</code> as a forward model via <code>.as_forward_model(dt)</code>, or a <code>somax</code> model</div>
+      </div>
+      <div class="node">
+        <div class="name">minimiser · adjoint</div>
+        <div class="desc"><code>optimistix</code> BFGS · <code>OneStepAdjoint</code> · <code>ImplicitAdjoint</code></div>
+      </div>
+    </div>
+
+    <!-- column 2: the one cost -->
+    <div class="lane compute" id="lane-cost">
+      <div class="lane-head"><span class="verb">one cost</span><span class="pkg">J(x, η)</span></div>
+      <div class="argmin">x* = argmin J(x, η)</div>
+      <div class="term">
+        <div class="lbl">background</div>
+        <div class="eq">½ ‖x − x<sub>b</sub>‖²<sub>B⁻¹</sub></div>
+      </div>
+      <div class="term">
+        <div class="lbl">observations</div>
+        <div class="eq">½ Σ<sub>t</sub> ‖y<sub>t</sub> − H<sub>t</sub>(M<sub>t</sub>(x; η))‖²<sub>R⁻¹</sub></div>
+      </div>
+      <div class="term">
+        <div class="lbl">model error (weak constraint only)</div>
+        <div class="eq optional">½ Σ<sub>t</sub> ‖η<sub>t</sub>‖²<sub>Q⁻¹</sub></div>
+      </div>
+    </div>
+
+    <!-- column 3: the seven methods -->
+    <div class="lane cut" id="lane-methods">
+      <div class="lane-head"><span class="verb">methods</span><span class="pkg">how J is minimised</span></div>
+      <div class="group">
+        <div class="group-head">closed form</div>
+        <div class="node"><div class="name"><code>OptimalInterpolation</code></div></div>
+      </div>
+      <div class="group">
+        <div class="group-head">iterative</div>
+        <div class="node">
+          <div class="name"><code>ThreeDVar</code> · <code>StrongFourDVar</code></div>
+          <div class="desc"><code>WeakFourDVar</code> · <code>IncrementalFourDVar</code></div>
+        </div>
+      </div>
+      <div class="group">
+        <div class="group-head">learned</div>
+        <div class="node"><div class="name"><code>FourDVarNet1D</code> · <code>FourDVarNet2D</code></div></div>
+      </div>
+      <div class="group">
+        <div class="group-head">amortized</div>
+        <div class="node"><div class="name"><code>AmortizedPosterior</code></div></div>
+      </div>
+    </div>
+
+    <!-- column 4: what comes out -->
+    <div class="lane out" id="lane-out">
+      <div class="lane-head"><span class="verb">out</span><span class="pkg">every method</span></div>
+      <div class="node" id="analysis">
+        <div class="name">analysis <code>x*</code></div>
+        <div class="desc"><code>model(batch)</code></div>
+      </div>
+      <div class="node" id="posterior">
+        <div class="name">uncertainty</div>
+        <div class="desc"><code>LaplaceCovariance</code> · <code>GaussNewtonHessian</code> · <code>EnsembleCovariance</code></div>
+      </div>
+      <div class="node solid" id="cycle">
+        <div class="name">cycled assimilation</div>
+        <div class="desc"><code>.as_analysis_step()</code> → <code>VarDACycle</code> · <code>VarSmootherCycle</code></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="base-row">
+    <div class="slab">
+      <div class="lib">lineax · gaussx</div>
+      <div class="what">Covariances stay operators and are solved with CG or Lanczos, never densified unless you ask.</div>
+    </div>
+    <div class="slab">
+      <div class="lib">diffrax · optimistix</div>
+      <div class="what">Gradients come from their adjoints, so no adjoint is written by hand.</div>
+    </div>
+    <div class="slab">
+      <div class="lib">pipekit</div>
+      <div class="what"><code>AnalysisStep</code> and <code>DACycle</code> — whatever orchestrates pipekit operators orchestrates vardax.</div>
+    </div>
+  </div>
+</div>
+<script src="_connect.js"></script>
+<script>
+  wire("lane-seams", "lane-cost", { label: "<span class='t'>H · B · R · M</span>", color: "#7b6bb5" });
+  wire("lane-cost", "lane-methods", { label: "<span class='t'>J</span><span class='s'>× 7</span>", color: "#cf9418" });
+  wire("lane-methods", "lane-out", { label: "<span class='t'>x*</span>", color: "#3f6fb5" });
+  wire("analysis", "posterior", { from: "bottom", to: "top", bend: 14, color: "#c2474f" });
+  wire("posterior", "cycle", { from: "bottom", to: "top", bend: 14, color: "#c2474f" });
+  ready();
+</script>
+</body>
+</html>

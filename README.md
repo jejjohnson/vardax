@@ -1,19 +1,27 @@
 <div align="center">
 
-# vardax
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/logo-dark.svg">
+  <img alt="vardax" src="docs/assets/logo-light.svg" width="340">
+</picture>
 
 **Variational data assimilation in JAX — seven analysis methods, one cost function, zero hand-written adjoints.**
 
 [![CI Tests](https://github.com/jejjohnson/vardax/actions/workflows/ci.yml/badge.svg)](https://github.com/jejjohnson/vardax/actions/workflows/ci.yml)
+[![Lint](https://github.com/jejjohnson/vardax/actions/workflows/lint.yml/badge.svg)](https://github.com/jejjohnson/vardax/actions/workflows/lint.yml)
+[![Type Check](https://github.com/jejjohnson/vardax/actions/workflows/typecheck.yml/badge.svg)](https://github.com/jejjohnson/vardax/actions/workflows/typecheck.yml)
 [![Docs](https://github.com/jejjohnson/vardax/actions/workflows/pages.yml/badge.svg)](https://jejjohnson.github.io/vardax/)
 [![codecov](https://codecov.io/gh/jejjohnson/vardax/branch/main/graph/badge.svg)](https://codecov.io/gh/jejjohnson/vardax)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
+[![uv](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/uv/main/assets/badge/v0.json)](https://github.com/astral-sh/uv)
+[![pre-commit](https://img.shields.io/badge/pre--commit-enabled-brightgreen?logo=pre-commit)](https://pre-commit.com/)
 
-[Documentation](https://jejjohnson.github.io/vardax/) ·
-[Tutorials](https://jejjohnson.github.io/vardax/notebooks/) ·
-[Maths reference](https://jejjohnson.github.io/vardax/01_problem_setting/) ·
-[Design docs](https://jejjohnson.github.io/vardax/design/README/)
+📖 [Documentation](https://jejjohnson.github.io/vardax/) ·
+🧪 [Tutorials](https://jejjohnson.github.io/vardax/notebooks/) ·
+📐 [Maths reference](https://jejjohnson.github.io/vardax/01_problem_setting/) ·
+🧭 [Design docs](https://jejjohnson.github.io/vardax/design/README/)
 
 </div>
 
@@ -27,9 +35,14 @@ set of seams — observation operator, background covariance, forward model,
 minimiser, adjoint — so switching method is a constructor change, not a
 rewrite.
 
+Every method is called on a batch the same way and cycles through the same analysis-step interface:
+
 ```python
-x_star = model(batch)  # every method
-step = model.as_analysis_step()  # every method, cycled identically
+# today (vardax)
+# x* = argmin_x J(x)
+analysis = model(batch)
+# today (vardax)
+step = model.as_analysis_step()
 ```
 
 Gradients are composed, not coded: dynamics differentiate through
@@ -38,7 +51,19 @@ minimisers through [`optimistix`](https://github.com/patrick-kidger/optimistix)
 adjoints, and covariances stay as [`lineax`](https://github.com/patrick-kidger/lineax)
 operators so nothing is ever densified unless you ask.
 
-## The seven methods
+<p align="center"><img src="docs/assets/diagrams/vardax-overview.png" alt="vardax in one picture: you supply the observation operator, covariances, forward model and minimiser; they define one cost J; seven methods minimise it in closed form, iteratively, by learning or by amortization; every method returns an analysis, its uncertainty, and an analysis step for cycling" width="100%"></p>
+
+## 🌟 Highlights
+
+- 🧮 **Seven peer methods**, from closed-form BLUE to amortized posteriors, each an `equinox` module behind one constructor.
+- 🔁 **One cycling interface**: every model becomes a `pipekit_cycle.AnalysisStep` through `.as_analysis_step()`.
+- 🧷 **No hand-written adjoints**: gradients come from `diffrax` and `optimistix` adjoints, plus the one-step rule of Bolte et al. (2023).
+- 🧱 **Operator covariances**: $B$, $R$ and the posterior covariance are `lineax` operators, never dense matrices you did not ask for.
+- 🛰️ **Observation operators** for gappy grids, off-grid points, retrieval averaging kernels and multi-instrument fusion.
+- ✅ **Validation gates** that decide whether a fast method may replace a trusted one.
+- 📓 **Seventeen tutorials** executed at documentation build time.
+
+## 📐 The seven methods
 
 All seven ship today, and all seven satisfy
 [`pipekit_cycle.AnalysisStep`](https://github.com/jejjohnson/pipekit) via
@@ -58,19 +83,14 @@ All seven ship today, and all seven satisfy
 
 Each is a specialisation of one cost:
 
-```math
-x^* = \underset{x,\,\boldsymbol{\eta}}{\arg\min}\;
-\underbrace{\tfrac{1}{2}\|x - x_b\|^2_{B^{-1}}}_{\text{background}} +
-\underbrace{\tfrac{1}{2}\sum_{t=0}^{T} \|y_t - H_t(M_t(x; \boldsymbol{\eta}))\|^2_{R_t^{-1}}}_{\text{observations}}
-\;\Big[+\;\underbrace{\tfrac{1}{2}\sum_{t=1}^{T} \|\eta_t\|^2_{Q_t^{-1}}}_{\text{model error}}\Big].
-```
+$$x^* = \underset{x, \boldsymbol{\eta}}{\arg\min} \underbrace{\frac{1}{2}\|x - x_b\|^2_{B^{-1}}}_{\text{background}} + \underbrace{\frac{1}{2}\sum_{t=0}^{T} \|y_t - H_t(M_t(x; \boldsymbol{\eta}))\|^2_{R_t^{-1}}}_{\text{observations}} \left[ + \underbrace{\frac{1}{2}\sum_{t=1}^{T} \|\eta_t\|^2_{Q_t^{-1}}}_{\text{model error}} \right].$$
 
 Which terms are active, and how the minimisation proceeds (closed form,
 iterative, learned, amortized), is the only thing that differs. The
 [problem setting](https://jejjohnson.github.io/vardax/01_problem_setting/)
 chapter derives it.
 
-## Install
+## 📥 Install
 
 `vardax` is not on PyPI yet. Install from the repository with
 [uv](https://docs.astral.sh/uv/), which resolves the git dependencies
@@ -110,71 +130,127 @@ Add the matching entries for `pipekit-jax`, `pipekit-experiment` or
 Requires Python ≥ 3.12, < 3.14. Extras: `data`, `viz`, `exp`, `jlab`,
 `examples`, `persist`, `train`, `all`.
 
-## Quickstart — 4DVar on Lorenz-63
+## 🌪️ Quickstart — 4DVar on Lorenz-63
 
 A window of noisy, half-missing observations; the true chaotic dynamics as
 the forward model; BFGS on the variational cost with the adjoint supplied by
 `jax.grad` through `diffrax`.
 
+Here $x_b$ is the background, $B = \sigma_b^2 I$ and $R = \sigma_o^2 I$ the background- and observation-error covariances, $M_t$ the Lorenz-63 flow to time $t$ and $m_t$ the observation mask.
+
 ```python
-import jax, jax.numpy as jnp, lineax as lx
+import einx
+import jax
+import jax.numpy as jnp
+import lineax as lx
+
 import vardax as vdx
 
-# Truth, observations (every other step, σ = 0.5), background (σ = 2.0)
-_, states = vdx.simulate_lorenz63(
-    jax.random.PRNGKey(0), dt=0.01, n_steps=2000, n_burn_in=1000
+# Shapes: S = 2,000 simulated steps; T = 21 window times; D = 3 state variables
+
+key_truth, key_obs, key_background = jax.random.split(jax.random.PRNGKey(0), 3)
+
+# today (vardax)
+# dx/dt = f(x), sampled every Δt = 0.01 after a burn-in on the attractor
+_, trajectory = vdx.simulate_lorenz63(  # → (S, D)
+    key_truth, dt=0.01, n_steps=2000, n_burn_in=1000
 )
-x_true = states[500 : 500 + 5 * 21 : 5]  # (21, 3) window at dt = 0.05
-k_obs, k_bg = jax.random.split(jax.random.PRNGKey(1))
-mask = jnp.zeros((21, 3)).at[::2].set(1.0)
-y = x_true + 0.5 * jax.random.normal(k_obs, x_true.shape)
-x_b = x_true[0] + 2.0 * jax.random.normal(k_bg, (3,))
+# x_true(t) for t = 0, 0.05, …, 1.0
+true_window = trajectory[500 : 500 + 5 * 21 : 5]  # (S, D) → (T, D)
+
+# m_t = 1 on every other time, 0 otherwise
+mask = jnp.zeros((21, 3)).at[::2].set(1.0)  # → (T, D)
+# ε_t ~ 𝒩(0, I)
+obs_noise = jax.random.normal(key_obs, (21, 3))  # → (T, D)
+# y_t = x_true(t) + σ_o ε_t
+observations = true_window + 0.5 * obs_noise  # (T, D) → (T, D)
+# η ~ 𝒩(0, I)
+background_noise = jax.random.normal(key_background, (3,))  # → (D,)
+# x_b = x_true(0) + σ_b η
+background = true_window[0] + 2.0 * background_noise  # (D,) → (D,)
 
 
-def pd(variance):  # a PD lineax operator
-    op = lx.DiagonalLinearOperator(jnp.full(3, variance))
-    return lx.TaggedLinearOperator(op, lx.positive_semidefinite_tag)
+# user
+# Σ = σ² I, tagged positive semi-definite for the CG solve
+def diagonal_covariance(variance: float) -> lx.AbstractLinearOperator:
+    diagonal = jnp.full(3, variance)
+    operator = lx.DiagonalLinearOperator(diagonal)
+    return lx.TaggedLinearOperator(operator, lx.positive_semidefinite_tag)
 
 
-# The Lorenz-63 vector field as an ODE prior, exposed as a forward model
-prior = vdx.DynTrajectory(model=vdx.Lorenz63(sigma=10.0, rho=28.0, beta=8.0 / 3.0))
+# today (vardax)
+# dx/dt = (σ(x₂ − x₁), x₁(ρ − x₃) − x₂, x₁x₂ − βx₃)
+lorenz = vdx.Lorenz63(sigma=10.0, rho=28.0, beta=8.0 / 3.0)
+# today (vardax)
+# M_t : x₀ ↦ x(t), integrated with diffrax
+forward = vdx.DynTrajectory(model=lorenz).as_forward_model(dt=0.05)
 
+# today (vardax)
+# x₀ᵃ = argmin ½‖x₀ − x_b‖²_B⁻¹ + ½ Σ_t ‖m_t ⊙ (y_t − M_t(x₀))‖²_R⁻¹
 model = vdx.StrongFourDVar(
-    forward=prior.as_forward_model(dt=0.05),
+    forward=forward,
     obs_op=vdx.MaskedIdentity(),
-    prior_mean=x_b,
-    prior_cov_op=pd(2.0**2),  # B
-    obs_cov_op=pd(0.5**2),  # R
+    prior_mean=background,
+    prior_cov_op=diagonal_covariance(2.0**2),
+    obs_cov_op=diagonal_covariance(0.5**2),
 )
 
-batch = vdx.Batch1D(input=(y * mask)[None], mask=mask[None], target=x_true[None])
-x0_analysis = model(batch)[0]
+# m ⊙ y
+masked_observations = observations * mask  # (T, D) → (T, D)
+# a batch of one window
+batch_input, batch_mask, batch_target = einx.id(  # (T, D) → (1, T, D)
+    "t d, t d, t d -> 1 t d, 1 t d, 1 t d",
+    masked_observations,
+    mask,
+    true_window,
+)
+# today (vardax)
+batch = vdx.Batch1D(input=batch_input, mask=batch_mask, target=batch_target)
+# today (vardax)
+analysis = model(batch)[0]  # (1, T, D) → (D,)
 
-print(jnp.linalg.norm(x_b - x_true[0]))  # background error  1.62
-print(jnp.linalg.norm(x0_analysis - x_true[0]))  # analysis error    0.41
+# ‖x_b − x_true(0)‖
+background_error = jnp.linalg.norm(background - true_window[0])  # → ()
+# ‖x₀ᵃ − x_true(0)‖
+analysis_error = jnp.linalg.norm(analysis - true_window[0])  # → ()
+print(f"background error {background_error:.2f}, analysis error {analysis_error:.2f}")
 ```
 
-Correlated background errors are a one-line change: swap `pd(...)` for a
+This prints `background error 3.84, analysis error 0.81`.
+
+Correlated background errors are a one-line change: swap `diagonal_covariance(...)` for a
 `gaussx` Matérn operator and the conjugate-gradient solve adapts.
 
-## Swap the method, keep the pipeline
+## ♻️ Swap the method, keep the pipeline
 
-Every model exposes `.as_analysis_step()`, so the cycling code never sees
-which method it is running:
+Every model exposes `.as_analysis_step()`, so the cycling code never sees which method it is running: `model` can be any of the seven.
+In the sketch below, $x_c^f$ and $x_c^a$ are the forecast and analysis at cycle $c$, $M$ the forward model over one cycle and $y_c$ that cycle's observations; `load_window`, `n_cycles`, `obs_cov` and `initial_analysis` are yours to supply.
 
 ```python
-import pipekit, pipekit_cycle as pc
+import pipekit
+import pipekit_cycle as pc
 
+# Shapes: C cycles; D = 3 state variables
+
+# today (pipekit)
+# c ↦ y_c, with load_window the user's reader for cycle c
+obs_source = pipekit.Lambda(load_window)
+
+# today* (vardax)
+# x_c^f = M(x_{c−1}^a),  x_c^a = analysis(x_c^f, y_c)
 cycle = vdx.VarDACycle(
-    forward=prior.as_forward_model(dt=0.05),
+    forward=forward,
     obs_op=vdx.MaskedIdentity(),
-    model=model,  # any of the seven
-    obs_source=pipekit.Lambda(load_window),  # called with the cycle index
+    model=model,
+    obs_source=obs_source,
     n_steps=n_cycles,
 )
 
-x_final, state = cycle(x_init, pc.DAState(t=0.0, cycle_count=0, obs_err_cov=R))
-forecasts, analyses = zip(*cycle.history)
+# today (pipekit_cycle)
+initial_state = pc.DAState(t=0.0, cycle_count=0, obs_err_cov=obs_cov)
+final_analysis, final_state = cycle(initial_analysis, initial_state)  # → (D,)
+# [(x_c^f, x_c^a)] for c = 1, …, C
+forecasts, analyses = zip(*cycle.history)  # C pairs of (D,)
 ```
 
 Each cycle forecasts the carrier one step, hands the forecast and that
@@ -186,7 +262,7 @@ pipekit operators orchestrates vardax.
 for real, including the forecast-as-background analysis step that makes each
 cycle's $x_b$ the previous forecast.
 
-## What else is in the box
+## 🔬 What else is in the box
 
 | Area | Symbols | Notes |
 |---|---|---|
@@ -199,7 +275,7 @@ cycle's $x_b$ the previous forecast.
 | Validation gates | `assert_posterior_agreement`, `assert_adjoint_calibrated`, `simulation_based_calibration` | The go/no-go checks that decide whether a fast method may replace a trusted one |
 | Forward adapters | `SoftBoundedForward` | Identity inside a box, smooth saturation outside, so a line-search trial far off the attractor cannot overflow an explicit ODE step and NaN-poison the solve |
 
-## Tutorials
+## 📓 Tutorials
 
 Seventeen executable walkthroughs, all
 [jupytext](https://jupytext.readthedocs.io/) sources under
@@ -221,7 +297,7 @@ committed snapshots.
 | 16 | [Cycled assimilation](docs/notebooks/16_cycled_assimilation_L63.py) | Forecast–analysis loops: spin-up, the error equilibrium and its scalar prediction, tuning $B$ by innovations |
 | 17 | [Amortized posterior](docs/notebooks/17_amortized_posterior_L63.py) | Simulation-based training against a multi-start 4DVar oracle, wall-clock comparison, and an honest reading of the three gates |
 
-## Documentation
+## 📖 Documentation
 
 - **[Maths reference](https://jejjohnson.github.io/vardax/01_problem_setting/)** — 21 chapters: the
   Bayesian foundation (1–3), each analysis method (4–10), cross-cutting
@@ -236,7 +312,7 @@ committed snapshots.
 - **[Design docs](https://jejjohnson.github.io/vardax/design/README/)** — architecture, ownership
   boundaries, the decision log, and the pipekit composition story.
 
-## Ecosystem
+## 🧩 Ecosystem
 
 `vardax` owns the DA algorithms and nothing else. Forward models,
 optimisers, ODE solvers, ensemble methods and structured linear algebra
@@ -256,7 +332,7 @@ are composed in:
 
 See [boundaries](docs/design/boundaries.md) for the full ownership map.
 
-## Repository layout
+## 🌳 Repository layout
 
 ```
 src/vardax/
@@ -280,7 +356,7 @@ docs/                        ← 21 maths chapters, API pages, design docs, 17 e
 tests/                       ← 376 tests across 29 modules
 ```
 
-## Development
+## ⚙️ Development
 
 ```bash
 make install        # uv sync --all-extras + pre-commit
@@ -307,7 +383,7 @@ Dependency groups follow [PEP 735](https://peps.python.org/pep-0735/)
 the versions. Committed `.ipynb` files are rejected by a pre-commit hook:
 edit the jupytext `.py` source instead.
 
-## Citation and references
+## 🎓 Citation and references
 
 - Fablet et al. (2021). [Learning Variational Data Assimilation Models and Solvers](https://doi.org/10.1029/2021MS002572). *JAMES*.
 - Fablet et al. (2023). [Multimodal 4DVarNets for the reconstruction of sea surface dynamics from NADIR and wide-swath altimetry](https://doi.org/10.1109/TGRS.2023.3268006). *IEEE TGRS*.
@@ -316,6 +392,6 @@ edit the jupytext `.py` source instead.
 - Carrassi et al. (2018). Data assimilation in the geosciences: an overview of methods, issues, and perspectives. *WIREs Climate Change*.
 - Full bibliography in [`docs/references.md`](docs/references.md).
 
-## License
+## 📄 License
 
 MIT. See [LICENSE](LICENSE).
