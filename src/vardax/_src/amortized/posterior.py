@@ -54,7 +54,7 @@ class AmortizedPosterior(eqx.Module):
         2. Hand the context to the head: ``__call__`` takes its mode,
            ``sample`` draws from it, ``log_prob`` evaluates the density.
 
-    Args:
+    Attributes:
         encoder: ``eqx.Module`` mapping ``(input, mask)`` to a context
             vector. Vmapped over the batch axis at call time.
         head: ``RegressionHead`` / ``ConditionalFlowHead`` /
