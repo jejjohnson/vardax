@@ -13,6 +13,8 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, Float, PRNGKeyArray
 
+from vardax._src.errors import ConfigurationError, ShapeError
+
 # ---------------------------------------------------------------------------
 # Helper layers
 # ---------------------------------------------------------------------------
@@ -370,7 +372,7 @@ class ConvAEPrior1D(eqx.Module):
         key: PRNGKeyArray,
     ) -> None:
         if kernel_size <= 0 or kernel_size % 2 == 0:
-            raise ValueError(
+            raise ConfigurationError(
                 f"kernel_size must be a positive odd integer, got {kernel_size}."
             )
         self.kernel_size = kernel_size
@@ -395,7 +397,7 @@ class ConvAEPrior1D(eqx.Module):
     def __call__(self, x: Float[Array, "B T N"]) -> Float[Array, "B T N"]:
         t = x.shape[1]
         if t != self.n_time:
-            raise ValueError(
+            raise ShapeError(
                 f"Input time dimension {t} does not match n_time={self.n_time}."
             )
         # eqx Conv1d expects channels-first: (in_channels=T, length=N)

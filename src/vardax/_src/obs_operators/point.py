@@ -37,6 +37,13 @@ import lineax as lx
 import numpy as np
 
 from vardax._src._types import PointObsBatch
+from vardax._src.errors import (
+    GridError,
+    InputTypeError,
+    MissingInputError,
+    ObservationError,
+    ShapeError,
+)
 
 
 def _safe(batch: PointObsBatch) -> PointObsBatch:
@@ -162,20 +169,20 @@ class GridPointObs(eqx.Module):
         Array([ 5. , 22.5], dtype=float32)
     """
 
-    grid_axes: tuple[Float[Array, " K"], ...]
+    grid_axes: tuple[Float[Array, " _"], ...]
 
-    def __init__(self, grid_axes: tuple[Float[Array, " K"], ...]) -> None:
+    def __init__(self, grid_axes: tuple[Float[Array, " _"], ...]) -> None:
         axes = tuple(jnp.asarray(a) for a in grid_axes)
         if len(axes) not in (1, 2):
-            raise ValueError(f"grid_axes must hold 1 or 2 axes; got {len(axes)}.")
+            raise GridError(f"grid_axes must hold 1 or 2 axes; got {len(axes)}.")
         for k, axis in enumerate(axes):
             if axis.ndim != 1 or axis.shape[0] < 2:
-                raise ValueError(
+                raise GridError(
                     f"grid_axes[{k}] must be 1-D with at least 2 points; "
                     f"got shape {axis.shape}."
                 )
             if not bool(jnp.all(jnp.diff(axis) > 0)):
-                raise ValueError(f"grid_axes[{k}] must be strictly increasing.")
+                raise GridError(f"grid_axes[{k}] must be strictly increasing.")
         self.grid_axes = axes
 
     def __call__(
@@ -246,7 +253,7 @@ def map_point_batch(fn: Callable, batch: PointObsBatch):
     if batch.values.ndim == 1:
         return fn(batch)
     if batch.values.ndim != 2:
-        raise ValueError(
+        raise ShapeError(
             "PointObsBatch.values must be (N_obs,) or (B, N_obs); "
             f"got shape {batch.values.shape}."
         )
@@ -257,13 +264,15 @@ def window_steps(batch: PointObsBatch) -> int:
     """Rollout steps ``n_times - 1`` of a point batch (static)."""
     if batch.n_times is None:
         if batch.time_index is not None:
-            raise ValueError(
+            raise MissingInputError(
                 "PointObsBatch.time_index needs n_times (the number of "
                 "states in the window) for a 4D-Var model."
             )
         return 0
     if batch.n_times < 1:
-        raise ValueError(f"PointObsBatch.n_times must be >= 1, got {batch.n_times}.")
+        raise ObservationError(
+            f"PointObsBatch.n_times must be >= 1, got {batch.n_times}."
+        )
     if batch.time_index is not None:
         # Validate eagerly when the indices are concrete; traced indices are
         # clamped to [0, n_times - 1] by GridPointObs.
@@ -277,7 +286,7 @@ def window_steps(batch: PointObsBatch) -> int:
             return batch.n_times - 1
         bad = valid & ((t_idx < 0) | (t_idx >= batch.n_times))
         if bad.any():
-            raise ValueError(
+            raise ObservationError(
                 f"PointObsBatch.time_index has valid entries outside "
                 f"[0, n_times - 1] = [0, {batch.n_times - 1}]: "
                 f"{np.unique(t_idx[bad]).tolist()}."
@@ -289,11 +298,23 @@ def check_point_obs_cov(obs_cov_op: object) -> None:
     """A point batch carries R as its sigma: refuse a non-trivial ``obs_cov_op``."""
     if obs_cov_op is None or isinstance(obs_cov_op, lx.IdentityLinearOperator):
         return
-    raise ValueError(
+    raise ObservationError(
         "A PointObsBatch carries its observation errors in sigma, so the "
         "model's obs_cov_op would be ignored: build the model with "
         f"obs_cov_op=None (or an identity), not {type(obs_cov_op).__name__}."
     )
+
+
+def require_obs_cov(
+    obs_cov_op: lx.AbstractLinearOperator | None,
+) -> lx.AbstractLinearOperator:
+    """A gridded batch needs R: refuse the ``None`` that only point batches allow."""
+    if obs_cov_op is None:
+        raise MissingInputError(
+            "obs_cov_op=None is only valid for a PointObsBatch, which carries "
+            "its observation errors in sigma; a gridded Batch1D needs R."
+        )
+    return obs_cov_op
 
 
 def grid_point_obs_cost(
@@ -306,7 +327,7 @@ def grid_point_obs_cost(
 def require_grid_point_obs(obs_op: object) -> GridPointObs:
     """Return ``obs_op`` if it is a `GridPointObs`, else raise ``TypeError``."""
     if not isinstance(obs_op, GridPointObs):
-        raise TypeError(
+        raise InputTypeError(
             "A PointObsBatch needs a point observation operator: build the "
             f"model with obs_op=GridPointObs(...), not {type(obs_op).__name__}."
         )

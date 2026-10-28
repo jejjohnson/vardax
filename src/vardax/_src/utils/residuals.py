@@ -19,6 +19,8 @@ from geonnax import diffops
 import jax.numpy as jnp
 from jaxtyping import Array, Float
 
+from vardax._src.errors import ConfigurationError, ShapeError
+
 Field = Callable[[Float[Array, " D"]], Float[Array, " K"]]
 Residual = Callable[[Field, Float[Array, " D"]], Float[Array, " R"]]
 
@@ -80,9 +82,11 @@ def advection_diffusion_2d(
     """
     c = jnp.asarray(velocity)
     if c.shape != (2,):
-        raise ValueError(f"velocity must have two components; got shape {c.shape}.")
+        raise ShapeError(f"velocity must have two components; got shape {c.shape}.")
     if diffusivity < 0:
-        raise ValueError(f"diffusivity must be non-negative; got {diffusivity}.")
+        raise ConfigurationError(
+            f"diffusivity must be non-negative; got {diffusivity}."
+        )
 
     def residual(field: Field, s: Float[Array, " 3"]) -> Float[Array, " 1"]:
         def u(z: Float[Array, " 3"]) -> Float[Array, ""]:
@@ -163,7 +167,7 @@ def navier_stokes_vorticity_2d(
         ((1,), True)
     """
     if viscosity < 0:
-        raise ValueError(f"viscosity must be non-negative; got {viscosity}.")
+        raise ConfigurationError(f"viscosity must be non-negative; got {viscosity}.")
 
     def residual(field: Field, s: Float[Array, " 3"]) -> Float[Array, " 1"]:
         def psi(z: Float[Array, " 3"]) -> Float[Array, ""]:

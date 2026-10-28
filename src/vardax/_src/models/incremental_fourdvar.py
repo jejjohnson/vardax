@@ -51,6 +51,7 @@ from vardax._src.obs_operators.point import (
     check_point_obs_cov,
     map_point_batch,
     require_grid_point_obs,
+    require_obs_cov,
     whitened_residual,
     window_steps,
 )
@@ -146,9 +147,9 @@ class IncrementalFourDVar(eqx.Module):
 
     forward: Any
     obs_op: Any
-    prior_mean: Float[Array, N]  # ty:ignore[unresolved-reference]
+    prior_mean: Float[Array, " N"]
     prior_cov_op: lx.AbstractLinearOperator
-    obs_cov_op: lx.AbstractLinearOperator
+    obs_cov_op: lx.AbstractLinearOperator | None
     config: IncrementalConfig
     prior_sqrt_op: lx.AbstractLinearOperator | None = None
     forward_adjoint: Any = eqx.field(static=True, default=None)
@@ -158,9 +159,9 @@ class IncrementalFourDVar(eqx.Module):
         self,
         forward: Any,
         obs_op: Any,
-        prior_mean: Float[Array, N],  # ty:ignore[unresolved-reference]
+        prior_mean: Float[Array, " N"],
         prior_cov_op: lx.AbstractLinearOperator,
-        obs_cov_op: lx.AbstractLinearOperator,
+        obs_cov_op: lx.AbstractLinearOperator | None,
         config: IncrementalConfig | None = None,
         forward_adjoint: Any = None,
         checkpoint: bool | int = False,
@@ -181,13 +182,13 @@ class IncrementalFourDVar(eqx.Module):
 
     def _rollout(
         self,
-        x_0: Float[Array, N],  # ty:ignore[unresolved-reference]
+        x_0: Float[Array, " N"],
         n_steps: int,
     ) -> Float[Array, "T_plus_1 N"]:
         forward = resolve_forward(self.forward, self.forward_adjoint)
         return rollout(forward, x_0, n_steps, checkpoint=self.checkpoint)
 
-    def __call__(self, batch: Batch1D | PointObsBatch) -> Float[Array, "B N"]:
+    def __call__(self, batch: Batch1D | PointObsBatch) -> Float[Array, "*batch N"]:
         """Incremental-4DVar analysis: GN outer + CG inner.
 
         A [`PointObsBatch`][vardax.PointObsBatch] needs
@@ -202,7 +203,7 @@ class IncrementalFourDVar(eqx.Module):
             return map_point_batch(lambda b: self._analyse_points(b, n_steps), batch)
 
         tol = self.config.covariance_tol
-        obs_cov = _as_covariance(self.obs_cov_op)
+        obs_cov = _as_covariance(require_obs_cov(self.obs_cov_op))
 
         def apply_obs_precision(
             residuals: Float[Array, "T_plus_1 N"],

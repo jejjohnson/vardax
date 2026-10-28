@@ -24,6 +24,8 @@ from collections.abc import Callable
 from jaxtyping import Array, PyTree
 import optimistix as optx
 
+from vardax._src.errors import ConfigurationError
+
 
 class KStepAdjoint(optx.AbstractAdjoint):
     """K-step differentiation: warmup under ``stop_gradient``, then ``k`` live steps.
@@ -58,7 +60,7 @@ class KStepAdjoint(optx.AbstractAdjoint):
 
     def __check_init__(self) -> None:
         if self.k < 1:
-            raise ValueError(f"KStepAdjoint needs k >= 1; got k={self.k}.")
+            raise ConfigurationError(f"KStepAdjoint needs k >= 1; got k={self.k}.")
 
     def apply(
         self,

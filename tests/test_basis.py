@@ -151,6 +151,7 @@ class TestRBF:
         with pytest.raises(ValueError, match="widths"):
             vdx.rbf_basis((GRID_Y, GRID_X), np.array([[0.5, 1.0]]), widths=0.0)
 
+    @pytest.mark.unchecked_types
     def test_rejects_unknown_kernel(self):
         with pytest.raises(ValueError, match="kernel"):
             vdx.rbf_basis(
@@ -263,6 +264,7 @@ class TestEOF:
 
 
 class TestLinearBasis:
+    @pytest.mark.unchecked_types
     def test_rejects_non_2d_phi(self):
         with pytest.raises(ValueError, match="phi must be 2-D"):
             linear_basis(jnp.ones((4,)))

@@ -18,19 +18,19 @@ import math
 
 import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, Float
+from jaxtyping import Array, ArrayLike, Float
 import numpy as _np
 
+from vardax._src.errors import ConfigurationError, ShapeError
 
-def _as_variance(variance: float | Float[Array, " M"], nbasis: int) -> _np.ndarray:
+
+def _as_variance(variance: float | Float[ArrayLike, " M"], nbasis: int) -> _np.ndarray:
     """Broadcast ``variance`` to ``(nbasis,)`` and require strict positivity."""
-    var_arr = _np.broadcast_to(_np.asarray(variance, dtype=float), (nbasis,)).astype(
-        _np.float32
-    )
+    var_arr = _np.broadcast_to(_np.asarray(variance, dtype=float), (nbasis,))
     if not _np.all(_np.isfinite(var_arr)):
-        raise ValueError("variance must be finite.")
+        raise ConfigurationError("variance must be finite.")
     if _np.any(var_arr <= 0):
-        raise ValueError(
+        raise ConfigurationError(
             f"variance must be strictly positive; got min={float(var_arr.min())}."
         )
     return var_arr
@@ -73,9 +73,9 @@ class LinearBasis(eqx.Module):
 
 
 def linear_basis(
-    phi: Float[Array, "N M"],
+    phi: Float[ArrayLike, "N M"],
     *,
-    variance: float | Float[Array, " M"] = 1.0,
+    variance: float | Float[ArrayLike, " M"] = 1.0,
     output_shape: tuple[int, ...] | None = None,
 ) -> LinearBasis:
     r"""Build a `LinearBasis` from an arbitrary precomputed design matrix.
@@ -95,15 +95,18 @@ def linear_basis(
     """
     phi_arr = jnp.asarray(phi)
     if phi_arr.ndim != 2:
-        raise ValueError(f"phi must be 2-D (N, M); got shape {phi_arr.shape}.")
+        raise ShapeError(f"phi must be 2-D (N, M); got shape {phi_arr.shape}.")
     n, m = int(phi_arr.shape[0]), int(phi_arr.shape[1])
     shape = (n,) if output_shape is None else tuple(int(s) for s in output_shape)
     if math.prod(shape) != n:
-        raise ValueError(
+        raise ShapeError(
             f"prod(output_shape)={math.prod(shape)} does not match phi rows N={n}."
         )
     return LinearBasis(
         phi=phi_arr,
-        variance=jnp.asarray(_as_variance(variance, m)),
+        # the prior variance follows Φ's dtype, so x64 callers keep float64
+        variance=jnp.asarray(
+            _as_variance(variance, m), dtype=jnp.result_type(phi_arr, float)
+        ),
         output_shape=shape,
     )

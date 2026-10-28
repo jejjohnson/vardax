@@ -10,6 +10,8 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, Float, PRNGKeyArray
 
+from vardax._src.errors import ConfigurationError, MissingInputError, ShapeError
+
 from ._types import Batch1D
 
 
@@ -240,7 +242,7 @@ def background_cost(
 
 def strong_variational_cost(
     x0: Float[Array, ...],
-    ts: Float[Array, T],  # type: ignore[unresolved-reference]  # ty:ignore[unresolved-reference]
+    ts: Float[Array, " T"],
     batch: Batch1D,
     forward_fn: Callable[..., Any],
     *,
@@ -385,14 +387,16 @@ class ResidualPenalty(eqx.Module):
 
     def __check_init__(self) -> None:
         if self.collocation is None and self.sampler is None:
-            raise ValueError("ResidualPenalty needs collocation points or a sampler.")
+            raise MissingInputError(
+                "ResidualPenalty needs collocation points or a sampler."
+            )
         if self.collocation is not None and jnp.ndim(self.collocation) != 2:
-            raise ValueError(
+            raise ShapeError(
                 "collocation must have shape (N_c, D); got shape "
                 f"{jnp.shape(self.collocation)}."
             )
         if jnp.ndim(self.weight) != 0:
-            raise ValueError(
+            raise ShapeError(
                 f"weight must be a scalar; got shape {jnp.shape(self.weight)}."
             )
         try:
@@ -400,7 +404,7 @@ class ResidualPenalty(eqx.Module):
         except jax.errors.ConcretizationTypeError:
             return  # built under a transform: the sign is not known yet
         if value < 0:
-            raise ValueError(f"weight must be non-negative; got {value}.")
+            raise ConfigurationError(f"weight must be non-negative; got {value}.")
 
     def __call__(
         self,
@@ -424,17 +428,21 @@ class ResidualPenalty(eqx.Module):
         """
         if self.sampler is not None:
             if key is None:
-                raise ValueError("ResidualPenalty with a sampler needs a key.")
+                raise MissingInputError("ResidualPenalty with a sampler needs a key.")
             points = self.sampler(key)
         else:
             points = self.collocation
         assert points is not None  # guaranteed by __check_init__
         if points.ndim != 2:
-            raise ValueError(
+            raise ShapeError(
                 f"collocation points must have shape (N_c, D); got {points.shape}."
             )
 
+        # __check_init__ skips the sign check when the weight is traced
+        weight = eqx.error_if(
+            self.weight, self.weight < 0, "weight must be non-negative"
+        )
         # N[f](c_j) for every point: (N_c, R)
         r = jax.vmap(lambda c: jnp.atleast_1d(self.residual_fn(field, c)))(points)
         # J = λ/(2 N_c) Σⱼ ‖N[f](c_j)‖²: ()
-        return self.weight / (2 * points.shape[0]) * jnp.sum(r**2)
+        return weight / (2 * points.shape[0]) * jnp.sum(r**2)

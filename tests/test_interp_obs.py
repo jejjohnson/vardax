@@ -136,12 +136,14 @@ def test_rejects_higher_order():
         )
 
 
+@pytest.mark.unchecked_types
 def test_rejects_bad_obs_shape(grid):
     y, x = grid
     with pytest.raises(ValueError, match=r"\(n_obs, 2\)"):
         interp_obs_from_coords((y, x), np.zeros((3, 4)))
 
 
+@pytest.mark.unchecked_types
 def test_rejects_bad_grid_arity():
     with pytest.raises(ValueError, match="grid_coords"):
         interp_obs_from_coords((np.arange(5.0),), np.zeros((1, 2)))

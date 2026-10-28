@@ -36,6 +36,8 @@ from typing import TYPE_CHECKING, Any
 
 import jax.numpy as jnp
 
+from vardax._src.errors import MissingInputError
+
 if TYPE_CHECKING:
     from jaxtyping import Array, Float
 
@@ -67,7 +69,7 @@ class VardaxReconLoss(Operator):
     ) -> tuple[Float[Array, ""], dict[str, Float[Array, ""]]]:
         target = getattr(batch, "target", None)
         if target is None:
-            raise ValueError(
+            raise MissingInputError(
                 "VardaxReconLoss expects a Batch* with a non-None `target`; "
                 "got batch with target=None. For operational (unlabelled) "
                 "data, evaluate the model directly without a loss adapter."

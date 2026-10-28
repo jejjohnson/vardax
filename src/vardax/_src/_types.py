@@ -22,9 +22,11 @@ class Batch1D(eqx.Module):
             in operational use where only observations are available.
     """
 
-    input: Float[Array, "B T N"]
-    mask: Float[Array, "B T N"]
-    target: Float[Array, "B T N"] | None = None
+    # 4DVarNet batches are (B, T, N); OI and 3D-Var put (B, M) observations
+    # through the same type, so only the batch axis is fixed
+    input: Float[Array, " B *sample"]
+    mask: Float[Array, " B *sample"]
+    target: Float[Array, " B *sample"] | None = None
 
 
 class Batch2D(eqx.Module):

@@ -33,6 +33,7 @@ from jaxtyping import Array, Float
 import lineax as lx
 
 from vardax._src._types import Batch1D, PointObsBatch
+from vardax._src.errors import MissingInputError, ShapeError, UnsupportedInputError
 from vardax._src.models._rollout import accepts_mask, observed_trajectory
 
 
@@ -82,19 +83,19 @@ def window_mask(batch: Any) -> Float[Array, "T_plus_1 N"]:
             more than one sample.
     """
     if isinstance(batch, PointObsBatch):
-        raise ValueError(
+        raise UnsupportedInputError(
             "The posterior adapters do not support PointObsBatch windows yet; "
             "pass a gridded Batch1D."
         )
     if not isinstance(batch, Batch1D):
-        raise ValueError(
+        raise UnsupportedInputError(
             "A 4DVar posterior needs the window's Batch1D (for its length and "
             f"mask); got {type(batch).__name__}."
         )
     mask = batch.mask
     if mask.ndim == 3:
         if mask.shape[0] != 1:
-            raise ValueError(
+            raise ShapeError(
                 f"The batch holds {mask.shape[0]} windows but the analysis is "
                 "one state; pass that sample's batch, e.g. "
                 "jax.tree.map(lambda a: a[i:i + 1], batch)."
@@ -111,7 +112,7 @@ def _model_covariance(
         return given
     from_model = getattr(model, name, None)
     if from_model is None:
-        raise ValueError(
+        raise MissingInputError(
             f"No {name} given to the adapter and {type(model).__name__} has "
             f"none; pass {name}= to the adapter."
         )
@@ -123,7 +124,7 @@ def _check_state_space_control(model: Any) -> None:
     if getattr(model, "basis", None) is not None or (
         getattr(model, "parameterization", None) is not None
     ):
-        raise ValueError(
+        raise UnsupportedInputError(
             "The posterior adapters build the state-space posterior with B; "
             f"this {type(model).__name__} has a basis= or parameterization= "
             "control, whose prior is not B. Use EnsembleCovariance, or the "
@@ -154,7 +155,7 @@ def _linear_control(model: Any) -> Any:
         return getattr(model, "basis", None)
     if isinstance(parameterization, LinearParameterization):
         return parameterization.basis
-    raise ValueError(
+    raise UnsupportedInputError(
         "The posterior adapters support a state control or a "
         f"LinearParameterization; this {type(model).__name__} has a "
         f"{type(parameterization).__name__}, whose decode is not affine. Use "
@@ -185,7 +186,7 @@ def _masked_tangent(
         # this sample's mask (the single-time adapters always accepted it)
         if isinstance(batch.mask, jax.core.Tracer) or bool(jnp.all(batch.mask == 1)):
             return tangent
-        raise ValueError(
+        raise ShapeError(
             f"The batch holds {batch.mask.shape[0]} windows with missing "
             "observations but the analysis is one state; pass that sample's "
             "batch, e.g. jax.tree.map(lambda a: a[i:i + 1], batch)."
@@ -193,7 +194,7 @@ def _masked_tangent(
     mask = window_mask(batch)
     out = tangent.out_structure()
     if mask.shape != out.shape:
-        raise ValueError(
+        raise ShapeError(
             f"The batch mask has shape {mask.shape} but the observation "
             f"operator returns {out.shape}."
         )
@@ -440,7 +441,7 @@ def _weak_covariance(
 ) -> tuple[Float[Array, " N"], lx.AbstractLinearOperator, str]:
     """x₀ block of the inverse weak-constraint Gauss–Newton precision."""
     if not isinstance(analysis, tuple) or len(analysis) != 2:
-        raise ValueError(
+        raise UnsupportedInputError(
             "WeakFourDVar's posterior needs analysis=(x0, eta), the pair the "
             "model returns for one window."
         )
@@ -519,13 +520,13 @@ def model_posterior(model: Any, batch: Any, adapter: Any = None) -> Any:
     from vardax._src.posterior.laplace import LaplaceCovariance
 
     if isinstance(batch, PointObsBatch):
-        raise ValueError(
+        raise UnsupportedInputError(
             "posterior() does not support PointObsBatch windows yet; pass a "
             "gridded Batch1D."
         )
     n_windows = batch.input.shape[0]
     if n_windows != 1:
-        raise ValueError(
+        raise ShapeError(
             f"posterior() takes one window; the batch holds {n_windows}. Slice "
             "it: jax.tree.map(lambda a: a[i:i + 1], batch)."
         )

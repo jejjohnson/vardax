@@ -35,6 +35,8 @@ import jax.numpy as jnp
 import jax.tree_util as jtu
 from jaxtyping import Array, Float, PRNGKeyArray, PyTree
 
+from vardax._src.errors import ConfigurationError, ShapeError
+
 
 class LinearParameterization(eqx.Module):
     r"""Adapter from a [`ReducedBasis`][vardax.ReducedBasis] to a parameterization.
@@ -138,9 +140,9 @@ class NeuralFieldParameterization(eqx.Module):
     ) -> None:
         coords = jnp.asarray(coords)
         if coords.ndim != 2:
-            raise ValueError(f"coords must be 2-D (N, D); got shape {coords.shape}.")
+            raise ShapeError(f"coords must be 2-D (N, D); got shape {coords.shape}.")
         if weight_decay < 0:
-            raise ValueError(f"weight_decay must be >= 0, got {weight_decay}.")
+            raise ConfigurationError(f"weight_decay must be >= 0, got {weight_decay}.")
         self.field = field
         self.coords = coords
         self.weight_decay = weight_decay

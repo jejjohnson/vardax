@@ -26,22 +26,30 @@ from typing import Literal
 
 import geonnax.basis as _gnx
 import jax.numpy as jnp
-from jaxtyping import Array, Float
+from jaxtyping import Array, ArrayLike, Float
 import numpy as _np
+
+from vardax._src.errors import (
+    ConfigurationError,
+    DataError,
+    GridError,
+    ShapeError,
+    UnsupportedInputError,
+)
 
 from .linear import LinearBasis, linear_basis
 
 
 def _grid_points(
-    grid_coords: Sequence[Float[Array, " _"]],
+    grid_coords: Sequence[Float[ArrayLike, " _"]],
 ) -> tuple[_np.ndarray, tuple[int, ...]]:
     """Turn per-axis coordinate arrays into ``(N, d)`` points + grid shape."""
     if len(grid_coords) < 1:
-        raise ValueError("grid_coords must contain at least one axis array.")
+        raise GridError("grid_coords must contain at least one axis array.")
     axes = [_np.asarray(a, dtype=float) for a in grid_coords]
     for i, ax in enumerate(axes):
         if ax.ndim != 1 or ax.size < 1:
-            raise ValueError(
+            raise GridError(
                 f"grid_coords[{i}] must be a non-empty 1-D axis array; "
                 f"got shape {ax.shape}."
             )
@@ -51,12 +59,12 @@ def _grid_points(
 
 
 def rbf_basis(
-    grid_coords: Sequence[Float[Array, " _"]],
-    centers: Float[Array, "M d"],
+    grid_coords: Sequence[Float[ArrayLike, " _"]],
+    centers: Float[ArrayLike, "M d"],
     *,
-    widths: float | Float[Array, " M"],
+    widths: float | Float[ArrayLike, " M"],
     kernel: Literal["gaussian", "wendland_c2", "wendland_c4"] = "gaussian",
-    variance: float | Float[Array, " M"] = 1.0,
+    variance: float | Float[ArrayLike, " M"] = 1.0,
 ) -> LinearBasis:
     r"""Placeable radial-basis reduced basis (Gaussian or Wendland kernels).
 
@@ -83,14 +91,14 @@ def rbf_basis(
     ndim = pts.shape[1]
     cen = _np.asarray(centers, dtype=float)
     if cen.ndim != 2 or cen.shape[1] != ndim:
-        raise ValueError(
+        raise ShapeError(
             f"centers must be (M, {ndim}) to match {ndim}-D grid_coords; "
             f"got {cen.shape}."
         )
     m = cen.shape[0]
     width_arr = _np.broadcast_to(_np.asarray(widths, dtype=float), (m,))
     if _np.any(width_arr <= 0):
-        raise ValueError(
+        raise ConfigurationError(
             f"widths must be strictly positive; got min={float(width_arr.min())}."
         )
     phi = _gnx.rbf_basis(
@@ -103,11 +111,11 @@ def rbf_basis(
 
 
 def fourier_basis(
-    grid_coords: Sequence[Float[Array, " _"]],
+    grid_coords: Sequence[Float[ArrayLike, " _"]],
     num_modes: int | tuple[int, ...],
     *,
     boundary_scale: float = 1.25,
-    variance: float | Float[Array, " M"] = 1.0,
+    variance: float | Float[ArrayLike, " M"] = 1.0,
     spectral_density: Callable[[Float[Array, " M"]], Float[Array, " M"]] | None = None,
 ) -> LinearBasis:
     r"""Laplacian-eigenfunction (Dirichlet/HSGP) reduced basis on a box.
@@ -137,12 +145,12 @@ def fourier_basis(
         `LinearBasis` with ``output_shape`` the grid shape.
     """
     if boundary_scale < 1.0:
-        raise ValueError(f"boundary_scale must be >= 1, got {boundary_scale}.")
+        raise ConfigurationError(f"boundary_scale must be >= 1, got {boundary_scale}.")
     pts, grid_shape = _grid_points(grid_coords)
     lo, hi = pts.min(axis=0), pts.max(axis=0)
     half_span = (hi - lo) / 2.0
     if _np.any(half_span <= 0):
-        raise ValueError(
+        raise GridError(
             "each grid_coords axis must span a non-degenerate interval "
             f"(got half-spans {tuple(half_span.tolist())})."
         )
@@ -168,7 +176,7 @@ def wavelet_basis(
     *,
     wavelet: str = "haar",
     levels: int | None = None,
-    variance: float | Float[Array, " M"] = 1.0,
+    variance: float | Float[ArrayLike, " M"] = 1.0,
 ) -> LinearBasis:
     r"""Orthonormal wavelet (DWT) reduced basis on a periodic grid.
 
@@ -196,7 +204,7 @@ def wavelet_basis(
             int(shape[0]), int(shape[1]), wavelet=wavelet, levels=levels
         )
     else:
-        raise ValueError(
+        raise UnsupportedInputError(
             f"wavelet_basis supports 1-D or 2-D grids; got {len(shape)}-D "
             f"grid_shape {shape}."
         )
@@ -204,11 +212,11 @@ def wavelet_basis(
 
 
 def eof_basis(
-    data: Float[Array, "T N"],
+    data: Float[ArrayLike, "T N"],
     n_modes: int,
     *,
     center: bool = True,
-    variance: float | Float[Array, " M"] | str = "explained",
+    variance: float | Float[ArrayLike, " M"] | str = "explained",
     output_shape: tuple[int, ...] | None = None,
 ) -> LinearBasis:
     r"""Data-driven EOF (PCA) reduced basis from a sample matrix.
@@ -236,13 +244,13 @@ def eof_basis(
     phi, svals = _gnx.eof_basis(data_arr, n_modes, center=center)
     if isinstance(variance, str):
         if variance != "explained":
-            raise ValueError(
+            raise ConfigurationError(
                 f'variance must be "explained", a scalar, or an array; '
                 f"got {variance!r}."
             )
         n_samples = int(data_arr.shape[0])
         if n_samples < 2:
-            raise ValueError(
+            raise DataError(
                 'variance="explained" needs at least 2 samples (T >= 2); '
                 f"got T={n_samples}."
             )

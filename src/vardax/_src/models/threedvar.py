@@ -31,6 +31,7 @@ import lineax as lx
 import optimistix as optx
 
 from vardax._src._types import Batch1D, PointObsBatch
+from vardax._src.errors import InputTypeError
 from vardax._src.minimisers import MinimiseResult, minimise, minimise_with_result
 from vardax._src.models._analysis_step import analyse_forecast
 from vardax._src.obs_operators.point import (
@@ -39,6 +40,7 @@ from vardax._src.obs_operators.point import (
     grid_point_obs_cost,
     map_point_batch,
     point_obs_cost,
+    require_obs_cov,
 )
 from vardax._src.parameterization import NeuralFieldParameterization
 from vardax._src.protocols import Minimiser, StateParameterization
@@ -100,9 +102,9 @@ class ThreeDVar(eqx.Module):
     """
 
     obs_op: Any
-    prior_mean: Float[Array, "T N"]
+    prior_mean: Float[Array, "*state"]
     prior_cov_op: lx.AbstractLinearOperator
-    obs_cov_op: lx.AbstractLinearOperator
+    obs_cov_op: lx.AbstractLinearOperator | None
     minimiser: optx.AbstractMinimiser | Minimiser = eqx.field(static=True)
     minimiser_adjoint: optx.AbstractAdjoint = eqx.field(static=True)
     cov_solver: lx.AbstractLinearSolver = eqx.field(static=True)
@@ -112,9 +114,9 @@ class ThreeDVar(eqx.Module):
     def __init__(
         self,
         obs_op: Any,
-        prior_mean: Float[Array, "T N"],
+        prior_mean: Float[Array, "*state"],
         prior_cov_op: lx.AbstractLinearOperator,
-        obs_cov_op: lx.AbstractLinearOperator,
+        obs_cov_op: lx.AbstractLinearOperator | None,
         minimiser: optx.AbstractMinimiser | Minimiser | None = None,
         minimiser_adjoint: optx.AbstractAdjoint | None = None,
         max_steps: int = 200,
@@ -131,7 +133,7 @@ class ThreeDVar(eqx.Module):
         self.cov_solver = cov_solver or lx.CG(atol=1e-6, rtol=1e-6)
         self.parameterization = parameterization
 
-    def __call__(self, batch: Batch1D | PointObsBatch) -> Float[Array, "B T N"]:
+    def __call__(self, batch: Batch1D | PointObsBatch) -> Float[Array, " batch *state"]:
         r"""3DVar analysis for each sample in the batch.
 
         A [`PointObsBatch`][vardax.PointObsBatch] needs a point operator as
@@ -149,16 +151,20 @@ class ThreeDVar(eqx.Module):
                 lambda b: self._analyse_points(self.prior_mean, b), batch
             )
 
+        obs_cov_op = require_obs_cov(self.obs_cov_op)
+
         def _one(
-            input_i: Float[Array, "T N"], mask_i: Float[Array, "T N"]
-        ) -> Float[Array, "T N"]:
+            input_i: Float[Array, "*obs"], mask_i: Float[Array, "*obs"]
+        ) -> Float[Array, "*state"]:
             return self._analyse(
-                self.prior_mean, input_i, mask_i, self.obs_op, self.obs_cov_op
+                self.prior_mean, input_i, mask_i, self.obs_op, obs_cov_op
             )
 
         return jax.vmap(_one)(batch.input, batch.mask)
 
-    def analyse(self, batch: Batch1D) -> tuple[Float[Array, "B T N"], MinimiseResult]:
+    def analyse(
+        self, batch: Batch1D | PointObsBatch
+    ) -> tuple[Float[Array, " batch *state"], MinimiseResult]:
         r"""The analysis, as ``__call__``, with the minimiser's diagnostics.
 
         Args:
@@ -176,19 +182,20 @@ class ThreeDVar(eqx.Module):
             TypeError: For a ``PointObsBatch``.
         """
         if not isinstance(batch, Batch1D):
-            raise TypeError(
+            raise InputTypeError(
                 f"ThreeDVar.analyse takes a Batch1D; got {type(batch).__name__}."
             )
+        obs_cov_op = require_obs_cov(self.obs_cov_op)
 
         def _one(
-            input_i: Float[Array, "T N"], mask_i: Float[Array, "T N"]
-        ) -> tuple[Float[Array, "T N"], MinimiseResult]:
+            input_i: Float[Array, "*obs"], mask_i: Float[Array, "*obs"]
+        ) -> tuple[Float[Array, "*state"], MinimiseResult]:
             return self._analyse(
                 self.prior_mean,
                 input_i,
                 mask_i,
                 self.obs_op,
-                self.obs_cov_op,
+                obs_cov_op,
                 with_result=True,
             )
 
@@ -196,9 +203,9 @@ class ThreeDVar(eqx.Module):
 
     def _analyse(
         self,
-        x_b: Float[Array, "T N"],
-        input_i: Float[Array, "T N"],
-        mask_i: Float[Array, "T N"],
+        x_b: Float[Array, "*state"],
+        input_i: Float[Array, "*obs"],
+        mask_i: Float[Array, "*obs"],
         obs_op: Any,
         obs_cov_op: lx.AbstractLinearOperator,
         *,
@@ -206,7 +213,7 @@ class ThreeDVar(eqx.Module):
     ) -> Any:
         """Minimise the 3D-Var cost of one sample around the background ``x_b``."""
 
-        def obs_cost(x: Float[Array, "T N"]) -> Float[Array, ""]:
+        def obs_cost(x: Float[Array, "*state"]) -> Float[Array, ""]:
             # Observation term — apply R^{-1} via lineax solve.
             # Mask predictions AND observations symmetrically: for
             # obs_ops that don't take a `mask` kwarg (e.g.
@@ -224,13 +231,13 @@ class ThreeDVar(eqx.Module):
         return self._solve(x_b, obs_cost, with_result=with_result)
 
     def _analyse_points(
-        self, x_b: Float[Array, "T N"], batch: PointObsBatch
-    ) -> Float[Array, "T N"]:
+        self, x_b: Float[Array, "*state"], batch: PointObsBatch
+    ) -> Float[Array, "*state"]:
         """Minimise the 3D-Var cost of one point-observation sample."""
         if isinstance(self.obs_op, FieldPointObs):
             param = self.parameterization
             if not isinstance(param, NeuralFieldParameterization):
-                raise TypeError(
+                raise InputTypeError(
                     "FieldPointObs evaluates a field: it needs "
                     "parameterization=NeuralFieldParameterization(...)."
                 )
@@ -241,14 +248,14 @@ class ThreeDVar(eqx.Module):
 
             return self._solve(x_b, None, control_obs_cost=control_obs_cost)
 
-        def obs_cost(x: Float[Array, "T N"]) -> Float[Array, ""]:
+        def obs_cost(x: Float[Array, "*state"]) -> Float[Array, ""]:
             return grid_point_obs_cost(self.obs_op, x, batch)
 
         return self._solve(x_b, obs_cost)
 
     def _solve(
         self,
-        x_b: Float[Array, "T N"],
+        x_b: Float[Array, "*state"],
         obs_cost: Callable[[Array], Array] | None,
         *,
         control_obs_cost: Callable[[Any], Array] | None = None,
@@ -263,7 +270,7 @@ class ThreeDVar(eqx.Module):
         param = self.parameterization
         if param is not None:
             # J(θ) = pen(θ) + J_o(ψ(θ)): the penalty replaces the B term.
-            def decode(theta: Any) -> Float[Array, "T N"]:
+            def decode(theta: Any) -> Float[Array, "*state"]:
                 return param.decode(theta).reshape(x_b.shape)
 
             def param_cost(theta: Any, _args: Any) -> Float[Array, ""]:
@@ -283,7 +290,7 @@ class ThreeDVar(eqx.Module):
                 return decode(out.value), out
             return decode(out)
 
-        def cost(x: Float[Array, "T N"], _args: Any) -> Float[Array, ""]:
+        def cost(x: Float[Array, "*state"], _args: Any) -> Float[Array, ""]:
             # Background term — apply B^{-1} via lineax solve.
             dx = x - x_b
             B_inv_dx = lx.linear_solve(

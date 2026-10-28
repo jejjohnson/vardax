@@ -28,8 +28,9 @@ from typing import Any
 import gaussx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, Float, PRNGKeyArray
+from jaxtyping import Array, Float, Int, PRNGKeyArray
 
+from vardax._src.errors import MissingInputError, ShapeError
 from vardax._src.posterior.container import Posterior
 
 
@@ -65,12 +66,12 @@ def assert_posterior_agreement(
         AssertionError: If any component exceeds the tolerance.
     """
     if p_oracle.cov is None:
-        raise ValueError(
+        raise MissingInputError(
             "assert_posterior_agreement requires p_oracle.cov to be set "
             "(used to extract the marginal standard deviations)."
         )
     if p_fast.mean.shape != p_oracle.mean.shape:
-        raise ValueError(
+        raise ShapeError(
             "p_fast.mean and p_oracle.mean must have the same shape; got "
             f"{p_fast.mean.shape} vs {p_oracle.mean.shape}."
         )
@@ -143,7 +144,7 @@ def simulation_based_calibration(
     key: PRNGKeyArray,
     n_runs: int = 200,
     n_samples: int = 200,
-) -> Float[Array, " n_runs"]:
+) -> Int[Array, " n_runs"]:
     r"""Per Talts et al. 2018: rank histogram of true draws within
     posterior samples.
 

@@ -111,6 +111,7 @@ class TestRolloutHelper:
         out = rollout(L96RK4(), jnp.ones(3), 0, checkpoint=True)
         assert out.shape == (1, 3)
 
+    @pytest.mark.unchecked_types
     @pytest.mark.parametrize("bad", [0, -2, 1.5, "yes"])
     def test_rejects_bad_checkpoint(self, bad):
         with pytest.raises(ValueError, match="checkpoint"):

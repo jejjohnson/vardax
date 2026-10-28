@@ -31,7 +31,7 @@ gradients through the minimum.
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any
+from typing import Any, no_type_check
 
 import equinox as eqx
 import jax
@@ -40,6 +40,8 @@ import jax.tree_util as jtu
 from jaxtyping import Array, Bool, Float, Int, PyTree
 import optax
 import optimistix as optx
+
+from vardax._src.errors import ConfigurationError, ShapeError
 
 
 class MinimiseResult(eqx.Module):
@@ -89,7 +91,7 @@ def _close_over(
         and f_struct.shape == ()
         and jnp.issubdtype(f_struct.dtype, jnp.floating)
     ):
-        raise ValueError("cost_fn must return a single floating-point scalar.")
+        raise ShapeError("cost_fn must return a single floating-point scalar.")
     return fn
 
 
@@ -132,7 +134,7 @@ class OptimistixMinimiser(eqx.Module):
         throw: bool = False,
     ) -> None:
         if max_steps < 1:
-            raise ValueError(f"max_steps must be >= 1, got {max_steps}.")
+            raise ConfigurationError(f"max_steps must be >= 1, got {max_steps}.")
         self.solver = solver or optx.BFGS(rtol=1e-6, atol=1e-6)
         self.max_steps = max_steps
         self.throw = throw
@@ -309,7 +311,7 @@ class OptaxMinimiser(eqx.Module):
             ("step_patience", step_patience),
         ):
             if steps < 1:
-                raise ValueError(f"{name} must be >= 1, got {steps}.")
+                raise ConfigurationError(f"{name} must be >= 1, got {steps}.")
         for name, value in (
             ("gtol", gtol),
             ("rtol", rtol),
@@ -319,13 +321,13 @@ class OptaxMinimiser(eqx.Module):
             ("polish_atol", polish_atol),
         ):
             if value < 0:
-                raise ValueError(f"{name} must be >= 0, got {value}.")
+                raise ConfigurationError(f"{name} must be >= 0, got {value}.")
         for name, value in (
             ("patience", patience),
             ("polish_patience", polish_patience),
         ):
             if value is not None and value < 1:
-                raise ValueError(f"{name} must be >= 1 or None, got {value}.")
+                raise ConfigurationError(f"{name} must be >= 1 or None, got {value}.")
         self.optimizer = optimizer if optimizer is not None else optax.adam(1e-3)
         self.max_steps = max_steps
         self.gtol = gtol
@@ -498,6 +500,9 @@ def _optax_loop(fn, batch, x0, optimizer, max_steps, tols, patience, while_loop)
     return select(take_last, x_last, best_x), step, converged
 
 
+# optimistix's implicit adjoint requires global functions with no closure;
+# no_type_check keeps the jaxtyping test hook from wrapping this one
+@no_type_check
 def _optax_primal(inputs):
     fn, minimiser, x0, batch, while_loop = inputs
     x, steps, converged = _optax_loop(
@@ -530,6 +535,8 @@ def _optax_primal(inputs):
     return x, (steps, converged)
 
 
+# global and unwrapped for the implicit adjoint, as _optax_primal
+@no_type_check
 def _optax_rewrite(root, _residual, inputs):
     """Stationarity condition $\\nabla J(\\theta^\\star) = 0$ for the IFT."""
     fn, _, _, batch, *_ = inputs

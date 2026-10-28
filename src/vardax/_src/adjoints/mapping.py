@@ -16,6 +16,8 @@ from typing import Any
 
 import optimistix as optx
 
+from vardax._src.errors import UnsupportedInputError
+
 from .k_step import KStepAdjoint
 
 
@@ -72,10 +74,10 @@ def to_optimistix_adjoint(spec: Any) -> optx.AbstractAdjoint:
     if name == "TruncatedAdjoint":
         return KStepAdjoint(k=getattr(spec, "k", 1))
     if name in ("DirectAdjoint", "BacksolveAdjoint"):
-        raise ValueError(
+        raise UnsupportedInputError(
             f"{name} does not apply at the inner-solve layer: DirectAdjoint is "
             "the plain unrolled default (use optx.RecursiveCheckpointAdjoint() "
             "or omit solver_adjoint), and BacksolveAdjoint only exists at the "
             "dynamics layer (see pipekit_jax.DiffraxForwardModel)."
         )
-    raise ValueError(f"Unrecognised adjoint spec: {spec!r}")
+    raise UnsupportedInputError(f"Unrecognised adjoint spec: {spec!r}")

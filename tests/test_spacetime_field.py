@@ -408,6 +408,7 @@ def test_weight_decay_is_a_differentiable_leaf():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.unchecked_types
 def test_validation():
     field = _feature_field()
     with pytest.raises(ValueError, match="weight_decay"):

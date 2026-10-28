@@ -39,6 +39,7 @@ from vardax._src.obs_operators.point import (
     check_point_obs_cov,
     grid_point_obs_cost,
     map_point_batch,
+    require_obs_cov,
     window_steps,
 )
 from vardax._src.protocols import Minimiser, StateParameterization
@@ -109,9 +110,9 @@ class WeakFourDVar(eqx.Module):
 
     forward: Any
     obs_op: Any
-    prior_mean: Float[Array, N]  # ty:ignore[unresolved-reference]
+    prior_mean: Float[Array, " N"]
     prior_cov_op: lx.AbstractLinearOperator
-    obs_cov_op: lx.AbstractLinearOperator
+    obs_cov_op: lx.AbstractLinearOperator | None
     model_err_cov_op: lx.AbstractLinearOperator
     minimiser: optx.AbstractMinimiser | Minimiser = eqx.field(static=True)
     minimiser_adjoint: optx.AbstractAdjoint = eqx.field(static=True)
@@ -125,9 +126,9 @@ class WeakFourDVar(eqx.Module):
         self,
         forward: Any,
         obs_op: Any,
-        prior_mean: Float[Array, N],  # ty:ignore[unresolved-reference]
+        prior_mean: Float[Array, " N"],
         prior_cov_op: lx.AbstractLinearOperator,
-        obs_cov_op: lx.AbstractLinearOperator,
+        obs_cov_op: lx.AbstractLinearOperator | None,
         model_err_cov_op: lx.AbstractLinearOperator,
         minimiser: optx.AbstractMinimiser | Minimiser | None = None,
         minimiser_adjoint: optx.AbstractAdjoint | None = None,
@@ -156,7 +157,7 @@ class WeakFourDVar(eqx.Module):
 
     def _rollout_with_error(
         self,
-        x_0: Float[Array, N],  # ty:ignore[unresolved-reference]
+        x_0: Float[Array, " N"],
         etas: Float[Array, "T N"],
     ) -> Float[Array, "T_plus_1 N"]:
         r"""Roll out with per-step model error.
@@ -170,7 +171,7 @@ class WeakFourDVar(eqx.Module):
     def __call__(
         self,
         batch: Batch1D | PointObsBatch,
-    ) -> tuple[Float[Array, "B N"], Float[Array, "B T N"]]:
+    ) -> tuple[Float[Array, "*batch N"], Float[Array, "*batch T N"]]:
         """Weak-4DVar analysis.
 
         Returns ``(x_0_star, eta_star)`` — the analysis initial state
@@ -199,6 +200,7 @@ class WeakFourDVar(eqx.Module):
 
             return map_point_batch(_one_points, batch)
 
+        obs_cov_op = require_obs_cov(self.obs_cov_op)
         # T_plus_1 timesteps in the batch ⇒ T model-error steps.
         T_plus_1 = batch.input.shape[1]
         T = T_plus_1 - 1
@@ -218,7 +220,7 @@ class WeakFourDVar(eqx.Module):
                     )
                     residual = m_t * (y_t - y_pred)
                     R_inv_r = lx.linear_solve(
-                        self.obs_cov_op,
+                        obs_cov_op,
                         residual,
                         solver=self.cov_solver,
                     ).value

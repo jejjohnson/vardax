@@ -77,7 +77,7 @@ class OptimalInterpolation(eqx.Module):
     """
 
     obs_op: Any  # ObservationOperator (linear)
-    prior_mean: Float[Array, "T N"]
+    prior_mean: Float[Array, "*state"]
     prior_cov_op: lx.AbstractLinearOperator
     obs_cov_op: lx.AbstractLinearOperator
     cg_atol: float = eqx.field(static=True, default=1e-6)
@@ -85,12 +85,12 @@ class OptimalInterpolation(eqx.Module):
     cg_max_steps: int = eqx.field(static=True, default=200)
     solver: lx.AbstractLinearSolver | None = eqx.field(static=True, default=None)
 
-    def __call__(self, batch: Batch1D) -> Float[Array, "B T N"]:
+    def __call__(self, batch: Batch1D) -> Float[Array, " batch *state"]:
         """BLUE analysis for each sample in the batch."""
 
         def _one(
-            input_i: Float[Array, "T N"], mask_i: Float[Array, "T N"]
-        ) -> Float[Array, "T N"]:
+            input_i: Float[Array, "*obs"], mask_i: Float[Array, "*obs"]
+        ) -> Float[Array, "*state"]:
             return self._analyse(
                 self.prior_mean, input_i, mask_i, self.obs_op, self.obs_cov_op
             )
@@ -99,12 +99,12 @@ class OptimalInterpolation(eqx.Module):
 
     def _analyse(
         self,
-        x_b: Float[Array, "T N"],
-        input_i: Float[Array, "T N"],
-        mask_i: Float[Array, "T N"],
+        x_b: Float[Array, "*state"],
+        input_i: Float[Array, "*obs"],
+        mask_i: Float[Array, "*obs"],
         obs_op: Any,
         obs_cov_op: lx.AbstractLinearOperator,
-    ) -> Float[Array, "T N"]:
+    ) -> Float[Array, "*state"]:
         """BLUE analysis of one sample around the background ``x_b``."""
 
         # The effective observation operator is mask ⊙ H(·) — apply the
@@ -113,7 +113,7 @@ class OptimalInterpolation(eqx.Module):
         # mask in `linearize`, missing entries are treated as
         # zero-innovation observations and bias the analysis whenever
         # B couples observed and missing components.
-        def masked_obs(x: Float[Array, "T N"]) -> Float[Array, "T N"]:
+        def masked_obs(x: Float[Array, "*state"]) -> Float[Array, "*obs"]:
             raw = obs_op(x, mask=mask_i) if _accepts_mask(obs_op) else obs_op(x)
             return mask_i * raw
 
