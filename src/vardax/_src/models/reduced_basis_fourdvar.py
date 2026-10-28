@@ -47,6 +47,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
+import einx
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -66,6 +67,7 @@ from vardax._src.obs_operators.point import (
     window_steps,
 )
 from vardax._src.protocols import Minimiser, StateParameterization
+from vardax._src.utils.shapes import as_shape
 
 
 class ReducedBasisFourDVar(eqx.Module):
@@ -284,16 +286,16 @@ class ReducedBasisFourDVar(eqx.Module):
             # LinearParameterization(basis, prior_mean) mathematically.
             def cost(X: Float[Array, " M"], _args: Any) -> Float[Array, ""]:
                 j_bg = 0.5 * jnp.sum(X * self.basis.prior_inv(X))
-                x_0 = self.prior_mean + self.basis.operg(0.0, X).reshape(
-                    self.prior_mean.shape
-                )
+                increment = self.basis.operg(0.0, X)
+                # x₀ = x_b + Φ X
+                x_0 = self.prior_mean + as_shape(increment, self.prior_mean.shape)
                 return j_bg + _obs_cost(self._rollout(x_0, n_steps=T))
 
             y0 = jnp.zeros((self.basis.nbasis,), dtype=self.prior_mean.dtype)
         elif param is not None:
 
             def cost(theta: Any, _args: Any) -> Float[Array, ""]:
-                x_0 = param.decode(theta).reshape(self.prior_mean.shape)
+                x_0 = as_shape(param.decode(theta), self.prior_mean.shape)
                 return param.penalty(theta) + _obs_cost(self._rollout(x_0, n_steps=T))
 
             y0 = param.init_control()
@@ -319,11 +321,11 @@ class ReducedBasisFourDVar(eqx.Module):
             max_steps=self.max_steps,
         )
         if self.basis is not None:
-            return self.prior_mean + self.basis.operg(0.0, x_star).reshape(
-                self.prior_mean.shape
-            )
+            increment = self.basis.operg(0.0, x_star)
+            # x₀* = x_b + Φ X*
+            return self.prior_mean + as_shape(increment, self.prior_mean.shape)
         if param is not None:
-            return param.decode(x_star).reshape(self.prior_mean.shape)
+            return as_shape(param.decode(x_star), self.prior_mean.shape)
         return x_star
 
     def posterior(self, batch: Batch1D, adapter: Any = None) -> Any:
@@ -391,11 +393,14 @@ class _ReducedBasisFourDVarAnalysisStep(eqx.Module):
             obs_stack = jnp.stack([jnp.asarray(o) for o in obs])
             window = len(obs)
         else:
-            obs_stack = jnp.asarray(obs)[None]
+            obs_stack = einx.id("s... -> 1 s...", jnp.asarray(obs))
             window = 1
         mask = jnp.where(jnp.isfinite(obs_stack), 1.0, 0.0)
         obs_clean = jnp.nan_to_num(obs_stack)
-        batch = Batch1D(input=obs_clean[None], mask=mask[None], target=None)
+        # one sample: add the batch axis
+        obs_batch = einx.id("s... -> 1 s...", obs_clean)
+        mask_batch = einx.id("s... -> 1 s...", mask)
+        batch = Batch1D(input=obs_batch, mask=mask_batch, target=None)
 
         bg = (
             jnp.asarray(forecast[0])

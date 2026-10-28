@@ -327,7 +327,9 @@ class DynIncrements(DynamicalPrior):
         ts_pairs = time_patches(ts)
         fn = ft.partial(self, params=params)
         x_pred = jax.vmap(fn, in_axes=(0, 0))(x[:-1], ts_pairs)
-        return jnp.concatenate([x[:1], x_pred], axis=0)
+        # x̂ = [x₀; φ(x₀), …, φ(x_{T−1})]
+        # jnp, not einx: a one-state trajectory has no predictions to size
+        return jnp.concatenate([x[:1], x_pred])
 
 
 class DynTrajectory(DynamicalPrior):

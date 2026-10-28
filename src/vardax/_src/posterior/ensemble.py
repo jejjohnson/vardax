@@ -20,9 +20,9 @@ from __future__ import annotations
 
 from typing import Any
 
+import einx
 import equinox as eqx
 import gaussx
-import jax.numpy as jnp
 from jaxtyping import Array, Float
 
 from .container import Posterior
@@ -67,14 +67,15 @@ class EnsembleCovariance(eqx.Module):
             # advisory rather than enforced.
             pass
 
-        mean = jnp.mean(analyses, axis=0)
+        # x̄ = (1/m) Σᵢ xᵢ
+        mean = einx.mean("[m] ...", analyses)
         # Flatten everything but the leading ensemble dim; the
         # Bessel-corrected sample covariance comes from gaussx as a
         # rank-(m-1) LowRankUpdate operator (never dense), scaled by
         # the multiplicative inflation factor.
-        cov_op = self.inflation * gaussx.ensemble_covariance(
-            analyses.reshape(m, -1), bessel=True
-        )
+        flat_analyses = einx.id("m s... -> m (s...)", analyses)
+        # Σ = λ (1/(m−1)) Σᵢ (xᵢ − x̄)(xᵢ − x̄)ᵀ
+        cov_op = self.inflation * gaussx.ensemble_covariance(flat_analyses, bessel=True)
 
         return Posterior(
             mean=mean,

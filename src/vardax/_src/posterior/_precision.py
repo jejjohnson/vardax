@@ -35,6 +35,7 @@ import lineax as lx
 from vardax._src._types import Batch1D, PointObsBatch
 from vardax._src.errors import MissingInputError, ShapeError, UnsupportedInputError
 from vardax._src.models._rollout import accepts_mask, observed_trajectory
+from vardax._src.utils.shapes import as_shape
 
 
 def inverse_operator(
@@ -223,8 +224,8 @@ def _basis_operator(
     """Φ: θ ↦ the state increment Φ(0) θ, shaped like ``analysis``."""
     coefficients = jax.ShapeDtypeStruct((basis.nbasis,), analysis.dtype)
     return lx.FunctionLinearOperator(
-        lambda theta: (
-            basis.operg(0.0, theta).reshape(analysis.shape).astype(analysis.dtype)
+        lambda theta: as_shape(basis.operg(0.0, theta), analysis.shape).astype(
+            analysis.dtype
         ),
         coefficients,
     )

@@ -133,7 +133,9 @@ class _FlattenedMultiInstrument(eqx.Module):
 
     def __call__(self, x: Float[Array, ...]) -> Float[Array, ...]:
         per_inst = self.fusion(x)
-        return jnp.concatenate([per_inst[k].ravel() for k in sorted(per_inst)], axis=0)
+        # ravel, not einx: an instrument may have no observations
+        flat_per_inst = [jnp.ravel(per_inst[k]) for k in sorted(per_inst)]
+        return jnp.concatenate(flat_per_inst)
 
     def linearize(self, x: Float[Array, ...]) -> lx.AbstractLinearOperator:
         # Stack the per-instrument Jacobians as a block via JacobianLinearOperator

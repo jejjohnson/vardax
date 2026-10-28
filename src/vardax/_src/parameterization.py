@@ -29,6 +29,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
+import einx
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -36,6 +37,7 @@ import jax.tree_util as jtu
 from jaxtyping import Array, Float, PRNGKeyArray, PyTree
 
 from vardax._src.errors import ConfigurationError, ShapeError
+from vardax._src.utils.shapes import as_shape
 
 
 class LinearParameterization(eqx.Module):
@@ -69,7 +71,8 @@ class LinearParameterization(eqx.Module):
     def decode(self, theta: Float[Array, " M"], t: float | None = None) -> Array:
         """Return the state $x_b + \\Phi(t) X$, shaped like ``x_b``."""
         increment = self.basis.operg(0.0 if t is None else t, theta)
-        return self.x_b + increment.reshape(self.x_b.shape)
+        # x = x_b + Φ(t) X
+        return self.x_b + as_shape(increment, self.x_b.shape)
 
     def penalty(self, theta: Float[Array, " M"]) -> Float[Array, ""]:
         """Return $\\tfrac12 X^\\top Q^{-1} X$."""
@@ -158,8 +161,8 @@ class NeuralFieldParameterization(eqx.Module):
         field = self.as_field(theta)
         coords = self.coords
         if t is not None:
-            time = jnp.full((coords.shape[0], 1), t, dtype=coords.dtype)
-            coords = jnp.concatenate([coords, time], axis=-1)
+            time = jnp.full((coords.shape[0],), t, dtype=coords.dtype)
+            coords = einx.id("n d, n -> n (d + 1)", coords, time)
         values = jax.vmap(field)(coords)
         if values.ndim == 2 and values.shape[1] == 1:
             return values[:, 0]

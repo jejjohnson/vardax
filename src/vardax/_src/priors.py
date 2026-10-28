@@ -8,6 +8,7 @@ data with optional time and channel axes.
 
 from __future__ import annotations
 
+import einx
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -90,22 +91,20 @@ class BilinAEPrior1D(eqx.Module):
         self._decode_dense = eqx.nn.Linear(latent_dim, n_time * state_dim, key=key_dec)
 
     def __call__(self, x: Float[Array, "B T N"]) -> Float[Array, "B T N"]:
-        b, t, n = x.shape
-        x_flat = x.reshape(b, t * n)
+        x_flat = einx.id("b t n -> b (t n)", x)
         z = self._bilin(x_flat)
         out = jax.vmap(self._decode_dense)(z)
-        return out.reshape(b, t, n)
+        return einx.id("b (t n) -> b t n", out, t=x.shape[1])
 
     def encode(self, x: Float[Array, "B T N"]) -> Float[Array, "B Z"]:
         """Encode input to latent space."""
-        b, t, n = x.shape
-        x_flat = x.reshape(b, t * n)
+        x_flat = einx.id("b t n -> b (t n)", x)
         return self._bilin(x_flat)
 
     def decode(self, z: Float[Array, "B Z"]) -> Float[Array, "B T N"]:
         """Decode latent code to state space."""
         out = jax.vmap(self._decode_dense)(z)
-        return out.reshape(-1, self.n_time, self.state_dim)
+        return einx.id("b (t n) -> b t n", out, t=self.n_time, n=self.state_dim)
 
 
 class MLPAEPrior1D(eqx.Module):
@@ -142,13 +141,12 @@ class MLPAEPrior1D(eqx.Module):
         self.dec2 = eqx.nn.Linear(hidden_dim, in_features, key=k4)
 
     def __call__(self, x: Float[Array, "B T N"]) -> Float[Array, "B T N"]:
-        b, t, n = x.shape
-        x_flat = x.reshape(b, t * n)
+        x_flat = einx.id("b t n -> b (t n)", x)
         z = jax.nn.relu(jax.vmap(self.enc1)(x_flat))
         z = jax.vmap(self.enc2)(z)
         h = jax.nn.relu(jax.vmap(self.dec1)(z))
         out = jax.vmap(self.dec2)(h)
-        return out.reshape(b, t, n)
+        return einx.id("b (t n) -> b t n", out, t=x.shape[1])
 
 
 class BilinAEPrior2D(eqx.Module):
@@ -185,11 +183,11 @@ class BilinAEPrior2D(eqx.Module):
         self._decode_dense = eqx.nn.Linear(latent_dim, in_features, key=k_dec)
 
     def __call__(self, x: Float[Array, "B T H W"]) -> Float[Array, "B T H W"]:
-        b, t, h, w = x.shape
-        x_flat = x.reshape(b, t * h * w)
+        _, t, h, w = x.shape
+        x_flat = einx.id("b t h w -> b (t h w)", x)
         z = self._bilin(x_flat)
         out = jax.vmap(self._decode_dense)(z)
-        return out.reshape(b, t, h, w)
+        return einx.id("b (t h w) -> b t h w", out, t=t, h=h, w=w)
 
 
 class BilinAEPrior2DMultivar(eqx.Module):
@@ -230,11 +228,11 @@ class BilinAEPrior2DMultivar(eqx.Module):
         self._decode_dense = eqx.nn.Linear(latent_dim, in_features, key=k_dec)
 
     def __call__(self, x: Float[Array, "B T C H W"]) -> Float[Array, "B T C H W"]:
-        b, t, c, h, w = x.shape
-        x_flat = x.reshape(b, t * c * h * w)
+        _, t, c, h, w = x.shape
+        x_flat = einx.id("b t c h w -> b (t c h w)", x)
         z = self._bilin(x_flat)
         out = jax.vmap(self._decode_dense)(z)
-        return out.reshape(b, t, c, h, w)
+        return einx.id("b (t c h w) -> b t c h w", out, t=t, c=c, h=h, w=w)
 
 
 # ---------------------------------------------------------------------------
@@ -405,15 +403,12 @@ class ConvAEPrior1D(eqx.Module):
         pad = self.kernel_size // 2
 
         def _forward(xi: Float[Array, "T N"]) -> Float[Array, "T N"]:
-            # Circular padding along spatial axis (axis=1)
-            if pad > 0:
-                h = jnp.concatenate([xi[:, -pad:], xi, xi[:, :pad]], axis=1)
-            else:
-                h = xi
+            # circular padding on the spatial axis only: the grid is periodic
+            periodic_pad = ((0, 0), (pad, pad))
+            h = jnp.pad(xi, periodic_pad, mode="wrap")
             h = self._enc_conv(h)
             h = jax.nn.relu(h)
-            if pad > 0:
-                h = jnp.concatenate([h[:, -pad:], h, h[:, :pad]], axis=1)
+            h = jnp.pad(h, periodic_pad, mode="wrap")
             return self._dec_conv(h)
 
         return jax.vmap(_forward)(x)

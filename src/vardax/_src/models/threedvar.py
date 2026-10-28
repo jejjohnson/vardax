@@ -44,6 +44,7 @@ from vardax._src.obs_operators.point import (
 )
 from vardax._src.parameterization import NeuralFieldParameterization
 from vardax._src.protocols import Minimiser, StateParameterization
+from vardax._src.utils.shapes import as_shape
 
 
 class ThreeDVar(eqx.Module):
@@ -271,7 +272,7 @@ class ThreeDVar(eqx.Module):
         if param is not None:
             # J(θ) = pen(θ) + J_o(ψ(θ)): the penalty replaces the B term.
             def decode(theta: Any) -> Float[Array, "*state"]:
-                return param.decode(theta).reshape(x_b.shape)
+                return as_shape(param.decode(theta), x_b.shape)
 
             def param_cost(theta: Any, _args: Any) -> Float[Array, ""]:
                 if control_obs_cost is not None:

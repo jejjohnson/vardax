@@ -46,6 +46,7 @@ from vardax._src.obs_operators.point import (
     window_steps,
 )
 from vardax._src.protocols import Minimiser, StateParameterization
+from vardax._src.utils.shapes import as_shape
 
 
 class StrongFourDVar(eqx.Module):
@@ -229,7 +230,7 @@ class StrongFourDVar(eqx.Module):
         if param is not None:
             # x_0 = ψ(θ); J(θ) = pen(θ) + J_o(M(ψ(θ))).
             def decode(theta: Any) -> Float[Array, " N"]:
-                return param.decode(theta).reshape(self.prior_mean.shape)
+                return as_shape(param.decode(theta), self.prior_mean.shape)
 
             def param_cost(theta: Any, _args: Any) -> Float[Array, ""]:
                 return param.penalty(theta) + obs_cost(decode(theta))

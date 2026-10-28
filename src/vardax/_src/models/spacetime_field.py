@@ -30,6 +30,7 @@ from __future__ import annotations
 
 from typing import Any
 
+import einx
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -49,6 +50,7 @@ from vardax._src.errors import (
 from vardax._src.minimisers import OptaxMinimiser, OptimistixMinimiser
 from vardax._src.obs_operators.point import FieldPointObs, point_obs_cost
 from vardax._src.parameterization import NeuralFieldParameterization
+from vardax._src.utils.shapes import as_shape
 
 
 def _evaluate(field: Any, coords: Float[Array, "N P"]) -> Array:
@@ -108,8 +110,9 @@ class SpaceTimeFieldResult(eqx.Module):
         if not jnp.issubdtype(grid.dtype, jnp.inexact):
             # An integer grid would truncate t0 in the time column.
             grid = grid.astype(jnp.result_type(float))
-        time = jnp.full((grid.shape[0], 1), self.t0, dtype=grid.dtype)
-        return _evaluate(self.field, jnp.concatenate([time, grid], axis=-1))
+        time = jnp.full((grid.shape[0],), self.t0, dtype=grid.dtype)
+        points = einx.id("n, n d -> n (1 + d)", time, grid)
+        return _evaluate(self.field, points)
 
 
 class SpaceTimeFieldVar(eqx.Module):
@@ -536,7 +539,7 @@ class _SpaceTimeFieldAnalysisStep(eqx.Module):
                 f"forecast has shape {forecast.shape}, but the analysis on the "
                 f"grid has {xa.size} values."
             )
-        return xa.reshape(forecast.shape).astype(forecast.dtype)
+        return as_shape(xa, forecast.shape).astype(forecast.dtype)
 
     def _check_window(self, obs: PointObsBatch) -> None:
         """Valid observation times must lie in the collocation window."""

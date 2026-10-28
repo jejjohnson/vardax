@@ -11,6 +11,7 @@ batch axis.
 
 from __future__ import annotations
 
+import einx
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -99,9 +100,10 @@ class ConvLSTMGradMod1D(eqx.Module):
             h_i: Float[Array, "H N"],
             c_i: Float[Array, "H N"],
         ) -> tuple[Float[Array, "T N"], Float[Array, "H N"], Float[Array, "H N"]]:
-            x = jnp.concatenate([grad_i, state_i], axis=0)  # (2T, N)
+            # the input channels are the gradient stacked over the state
+            x = einx.id("a n, b n -> (a + b) n", grad_i, state_i)
             gates = self._gates_input_conv(x) + self._gates_hidden_conv(h_i)
-            i, f, g, o = jnp.split(gates, 4, axis=0)
+            i, f, g, o = einx.id("(gate h) n -> gate h n", gates, gate=4)
             i = jax.nn.sigmoid(i)
             f = jax.nn.sigmoid(f)
             g = jnp.tanh(g)
@@ -193,9 +195,10 @@ class ConvLSTMGradMod2D(eqx.Module):
             Float[Array, "H_dim H W"],
             Float[Array, "H_dim H W"],
         ]:
-            x = jnp.concatenate([grad_i, state_i], axis=0)  # (2T, H, W)
+            # the input channels are the gradient stacked over the state
+            x = einx.id("a h w, b h w -> (a + b) h w", grad_i, state_i)
             gates = self._gates_input_conv(x) + self._gates_hidden_conv(h_i)
-            i, f, g, o = jnp.split(gates, 4, axis=0)
+            i, f, g, o = einx.id("(gate c) h w -> gate c h w", gates, gate=4)
             i = jax.nn.sigmoid(i)
             f = jax.nn.sigmoid(f)
             g = jnp.tanh(g)
