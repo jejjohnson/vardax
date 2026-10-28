@@ -72,5 +72,6 @@ class MLPObsEncoder(eqx.Module):
         input: Float[Array, ...],
         mask: Float[Array, ...],
     ) -> Float[Array, " context_dim"]:
-        x = einx.id("a, b -> (a + b)", flatten(input), flatten(mask))
-        return self.mlp(x)
+        # features = [vec(y); vec(m)]
+        features = einx.id("a, b -> (a + b)", flatten(input), flatten(mask))
+        return self.mlp(features)

@@ -182,11 +182,11 @@ class IncrementalFourDVar(eqx.Module):
 
     def _rollout(
         self,
-        x_0: Float[Array, " N"],
+        initial_state: Float[Array, " N"],
         n_steps: int,
     ) -> Float[Array, "T_plus_1 N"]:
         forward = resolve_forward(self.forward, self.forward_adjoint)
-        return rollout(forward, x_0, n_steps, checkpoint=self.checkpoint)
+        return rollout(forward, initial_state, n_steps, checkpoint=self.checkpoint)
 
     def __call__(self, batch: Batch1D | PointObsBatch) -> Float[Array, "*batch N"]:
         """Incremental-4DVar analysis: GN outer + CG inner.
@@ -200,7 +200,9 @@ class IncrementalFourDVar(eqx.Module):
         if isinstance(batch, PointObsBatch):
             check_point_obs_cov(self.obs_cov_op)
             n_steps = window_steps(batch)
-            return map_point_batch(lambda b: self._analyse_points(b, n_steps), batch)
+            return map_point_batch(
+                lambda window: self._analyse_points(window, n_steps), batch
+            )
 
         tol = self.config.covariance_tol
         obs_cov = _as_covariance(require_obs_cov(self.obs_cov_op))
@@ -209,18 +211,19 @@ class IncrementalFourDVar(eqx.Module):
             residuals: Float[Array, "T_plus_1 N"],
         ) -> Float[Array, "T_plus_1 N"]:
             # R⁻¹ rₜ at each time
-            def solve_one(residual_t: Float[Array, " N"]) -> Float[Array, " N"]:
+            def solve_one(step_residual: Float[Array, " N"]) -> Float[Array, " N"]:
                 solver = lx.CG(atol=tol, rtol=tol)
-                return lx.linear_solve(obs_cov, residual_t, solver=solver).value
+                return lx.linear_solve(obs_cov, step_residual, solver=solver).value
 
             return jax.vmap(solve_one)(residuals)
 
         def analyse_one(
-            input_i: Float[Array, "T_plus_1 N"], mask_i: Float[Array, "T_plus_1 N"]
+            window_obs: Float[Array, "T_plus_1 N"],
+            window_mask: Float[Array, "T_plus_1 N"],
         ) -> Float[Array, " N"]:
             # G(x₀) = [mₜ ⊙ Hₜ(Mₜ(x₀))]ₜ, shared with the posterior adapters
-            observed = observed_trajectory(self, mask_i)
-            masked_observations = mask_i * input_i
+            observed = observed_trajectory(self, window_mask)
+            masked_observations = window_mask * window_obs
 
             def residual(
                 initial_state: Float[Array, " N"],
@@ -232,7 +235,7 @@ class IncrementalFourDVar(eqx.Module):
 
         return jax.vmap(analyse_one)(batch.input, batch.mask)
 
-    def _analyse_points(self, batch: PointObsBatch, T: int) -> Float[Array, " N"]:
+    def _analyse_points(self, batch: PointObsBatch, n_steps: int) -> Float[Array, " N"]:
         r"""GN outer + CG inner on a point batch.
 
         With the whitened, padding-masked residual
@@ -245,7 +248,7 @@ class IncrementalFourDVar(eqx.Module):
         obs_op = require_grid_point_obs(self.obs_op)
 
         def residual(initial_state: Float[Array, " N"]) -> Float[Array, " n_obs"]:
-            predictions = obs_op(self._rollout(initial_state, n_steps=T), batch)
+            predictions = obs_op(self._rollout(initial_state, n_steps=n_steps), batch)
             return whitened_residual(predictions, batch)
 
         def identity(residuals: Float[Array, " n_obs"]) -> Float[Array, " n_obs"]:

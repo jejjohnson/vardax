@@ -360,10 +360,10 @@ class SpaceTimeFieldVar(eqx.Module):
         if n_members < 1:
             raise ConfigurationError(f"n_members must be >= 1, got {n_members}.")
 
-        def member(k: PRNGKeyArray) -> SpaceTimeFieldResult:
-            k_init, k_colloc = jax.random.split(k)
-            model = eqx.tree_at(lambda m: m.field, self, field_init(k_init))
-            return model(obs, key=k_colloc)
+        def member(member_key: PRNGKeyArray) -> SpaceTimeFieldResult:
+            init_key, collocation_key = jax.random.split(member_key)
+            model = eqx.tree_at(lambda tree: tree.field, self, field_init(init_key))
+            return model(obs, key=collocation_key)
 
         return eqx.filter_vmap(member)(jax.random.split(key, n_members))
 
@@ -417,10 +417,10 @@ class SpaceTimeFieldVar(eqx.Module):
                     "every cycle then reuses."
                 )
         model = eqx.tree_at(
-            lambda m: m.residual,
+            lambda tree: tree.residual,
             self,
             self._fixed_residual(key),
-            is_leaf=lambda x: x is None,
+            is_leaf=lambda leaf: leaf is None,
         )
         window = _collocation_window(model.residual)
         if window is not None and not window[0] <= self.t0 <= window[1]:
@@ -440,9 +440,9 @@ def _collocation_window(residual: ResidualPenalty | None) -> tuple[float, float]
         times = np.asarray(residual.collocation[:, 0])
     except (jax.errors.TracerArrayConversionError, jax.errors.ConcretizationTypeError):
         return None
-    lo, hi = float(times.min()), float(times.max())
-    pad = 0.1 * (hi - lo)
-    return lo - pad, hi + pad
+    time_min, time_max = float(times.min()), float(times.max())
+    padding = 0.1 * (time_max - time_min)
+    return time_min - padding, time_max + padding
 
 
 def _cost(
@@ -455,14 +455,16 @@ def _cost(
     ],
 ) -> Float[Array, ""]:
     """$J(\theta)$; every input is a pytree argument (no closure)."""
-    param, obs, residual, alpha = args
+    param, obs, residual, weight_decay = args
     field = param.as_field(theta)
-    # ½ Σₖ mₖ (yₖ - f_θ(tₖ, sₖ))² / σₖ² + alpha ½‖θ‖²: ()
-    j = point_obs_cost(FieldPointObs()(field, obs), obs) + alpha * param.penalty(theta)
+    # ½ Σₖ mₖ (yₖ - f_θ(tₖ, sₖ))² / σₖ² + α ½‖θ‖²: ()
+    cost = point_obs_cost(FieldPointObs()(field, obs), obs) + (
+        weight_decay * param.penalty(theta)
+    )
     if residual is not None:
         # λ/(2 N_c) Σⱼ ‖N[f_θ](cⱼ)‖²: ()
-        j = j + residual(field)
-    return j
+        cost = cost + residual(field)
+    return cost
 
 
 @eqx.filter_jit
@@ -476,15 +478,15 @@ def _fit(
     weight_decay = eqx.error_if(
         model.weight_decay, model.weight_decay < 0, "weight_decay must be >= 0"
     )
-    out = model.minimiser.run(
+    result = model.minimiser.run(
         _cost, param.init_control(), (param, obs, residual, weight_decay)
     )
     return SpaceTimeFieldResult(
-        field=param.as_field(out.value),
+        field=param.as_field(result.value),
         t0=model.t0,
-        cost=out.cost,
-        grad_norm=out.grad_norm,
-        num_steps=out.num_steps,
+        cost=result.cost,
+        grad_norm=result.grad_norm,
+        num_steps=result.num_steps,
     )
 
 
@@ -530,16 +532,16 @@ class _SpaceTimeFieldAnalysisStep(eqx.Module):
         self._check_window(obs)
         if self.grid is None:
             return self.model(obs)
-        xa = _fit_on_grid(self.model, obs, self.grid)
+        analysis = _fit_on_grid(self.model, obs, self.grid)
         if forecast is None:
-            return xa
+            return analysis
         forecast = jnp.asarray(forecast)
-        if forecast.size != xa.size:
+        if forecast.size != analysis.size:
             raise ShapeError(
                 f"forecast has shape {forecast.shape}, but the analysis on the "
-                f"grid has {xa.size} values."
+                f"grid has {analysis.size} values."
             )
-        return as_shape(xa, forecast.shape).astype(forecast.dtype)
+        return as_shape(analysis, forecast.shape).astype(forecast.dtype)
 
     def _check_window(self, obs: PointObsBatch) -> None:
         """Valid observation times must lie in the collocation window."""

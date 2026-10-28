@@ -89,23 +89,23 @@ class OptimalInterpolation(eqx.Module):
         """BLUE analysis for each sample in the batch."""
 
         def _one(
-            input_i: Float[Array, "*obs"], mask_i: Float[Array, "*obs"]
+            sample_obs: Float[Array, "*obs"], sample_mask: Float[Array, "*obs"]
         ) -> Float[Array, "*state"]:
             return self._analyse(
-                self.prior_mean, input_i, mask_i, self.obs_op, self.obs_cov_op
+                self.prior_mean, sample_obs, sample_mask, self.obs_op, self.obs_cov_op
             )
 
         return jax.vmap(_one)(batch.input, batch.mask)
 
     def _analyse(
         self,
-        x_b: Float[Array, "*state"],
-        input_i: Float[Array, "*obs"],
-        mask_i: Float[Array, "*obs"],
+        background: Float[Array, "*state"],
+        sample_obs: Float[Array, "*obs"],
+        sample_mask: Float[Array, "*obs"],
         obs_op: Any,
         obs_cov_op: lx.AbstractLinearOperator,
     ) -> Float[Array, "*state"]:
-        """BLUE analysis of one sample around the background ``x_b``."""
+        """BLUE analysis of one sample around the ``background``."""
 
         # The effective observation operator is mask ⊙ H(·) — apply the
         # mask both to the predicted obs (innovation) AND to the
@@ -113,18 +113,29 @@ class OptimalInterpolation(eqx.Module):
         # mask in `linearize`, missing entries are treated as
         # zero-innovation observations and bias the analysis whenever
         # B couples observed and missing components.
-        def masked_obs(x: Float[Array, "*state"]) -> Float[Array, "*obs"]:
-            raw = obs_op(x, mask=mask_i) if _accepts_mask(obs_op) else obs_op(x)
-            return mask_i * raw
+        def masked_obs(state: Float[Array, "*state"]) -> Float[Array, "*obs"]:
+            raw = (
+                obs_op(state, mask=sample_mask)
+                if _accepts_mask(obs_op)
+                else obs_op(state)
+            )
+            return sample_mask * raw
 
-        y_pred = masked_obs(x_b)
-        innovation = (input_i * mask_i) - y_pred
+        predicted_obs = masked_obs(background)
+        # d = m ⊙ y − m ⊙ H(x_b)
+        innovation = (sample_obs * sample_mask) - predicted_obs
 
         # Build (H B H^T + R) as a composed lineax operator. We
         # tag it positive-semidefinite so lineax.CG accepts it
         # (the composition itself doesn't carry the tag).
-        H = lx.JacobianLinearOperator(lambda x, _args=None: masked_obs(x), x_b)
-        inner_raw = H @ self.prior_cov_op @ H.transpose() + obs_cov_op
+        # H = ∂(m ⊙ H(x))/∂x at x_b
+        obs_jacobian = lx.JacobianLinearOperator(
+            lambda state, _args=None: masked_obs(state), background
+        )
+        # H B Hᵀ + R
+        inner_raw = (
+            obs_jacobian @ self.prior_cov_op @ obs_jacobian.transpose() + obs_cov_op
+        )
         inner_op = lx.TaggedLinearOperator(inner_raw, lx.positive_semidefinite_tag)
 
         solver = self.solver or lx.CG(
@@ -132,10 +143,13 @@ class OptimalInterpolation(eqx.Module):
             rtol=self.cg_rtol,
             max_steps=self.cg_max_steps,
         )
-        v = lx.linear_solve(inner_op, innovation, solver=solver).value
+        # v = (H B Hᵀ + R)⁻¹ d
+        dual_weights = lx.linear_solve(inner_op, innovation, solver=solver).value
 
-        # x_star = x_b + B H^T v
-        return x_b + self.prior_cov_op.mv(H.transpose().mv(v))
+        # xₐ = x_b + B Hᵀ v
+        return background + self.prior_cov_op.mv(
+            obs_jacobian.transpose().mv(dual_weights)
+        )
 
     def posterior(self, batch: Batch1D, adapter: Any = None) -> Any:
         """Analyse one window and return its [`Posterior`][vardax.Posterior].

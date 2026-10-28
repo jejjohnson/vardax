@@ -122,22 +122,22 @@ class DynamicalPrior(eqx.Module):
         params: PyTree | None,
     ) -> PyTree:
         """Integrate ``model`` from ``ts[0]`` to ``ts[-1]`` starting at ``y0``."""
-        t0 = ts[0]
-        t1 = ts[-1]
-        dt0 = ts[1] - ts[0] if dt is None else dt
-        sol = dfx.diffeqsolve(
+        start_time = ts[0]
+        end_time = ts[-1]
+        initial_step = ts[1] - ts[0] if dt is None else dt
+        solution = dfx.diffeqsolve(
             terms=dfx.ODETerm(self.model),
             solver=self.solver,
-            t0=t0,
-            t1=t1,
-            dt0=dt0,
+            t0=start_time,
+            t1=end_time,
+            dt0=initial_step,
             y0=y0,
             saveat=saveat,
             adjoint=self.adjoint,
             stepsize_controller=self.stepsize,
             args=params if params is not None else self.params,
         )
-        return sol.ys
+        return solution.ys
 
     def __call__(
         self,
@@ -274,8 +274,8 @@ class DynIncrements(DynamicalPrior):
             State at the final time, shape ``(*state,)``.
         """
         saveat = dfx.SaveAt(ts=jnp.asarray([ts[-1]]))
-        ys = self._integrate(x, ts, saveat, dt, params)
-        return ys[-1]
+        saved_states = self._integrate(x, ts, saveat, dt, params)
+        return saved_states[-1]
 
     def loss(
         self,
@@ -307,9 +307,10 @@ class DynIncrements(DynamicalPrior):
                 f"{len(x)} | {len(ts_pairs)} | {len(x_gt)}"
             )
             raise ShapeError(msg)
-        fn = ft.partial(self, params=params)
-        x_pred = jax.vmap(fn, in_axes=(0, 0))(x[:-1], ts_pairs)
-        return jnp.sum((x_pred - x_gt[1:]) ** 2)
+        propagate = ft.partial(self, params=params)
+        predicted_states = jax.vmap(propagate, in_axes=(0, 0))(x[:-1], ts_pairs)
+        # R = Σ_t ‖φ(u_t) − u_{t+1}‖²
+        return jnp.sum((predicted_states - x_gt[1:]) ** 2)
 
     def reconstruct(
         self,
@@ -325,11 +326,11 @@ class DynIncrements(DynamicalPrior):
         residual of :meth:`loss` (the $t=0$ term vanishes).
         """
         ts_pairs = time_patches(ts)
-        fn = ft.partial(self, params=params)
-        x_pred = jax.vmap(fn, in_axes=(0, 0))(x[:-1], ts_pairs)
+        propagate = ft.partial(self, params=params)
+        predicted_states = jax.vmap(propagate, in_axes=(0, 0))(x[:-1], ts_pairs)
         # x̂ = [x₀; φ(x₀), …, φ(x_{T−1})]
         # jnp, not einx: a one-state trajectory has no predictions to size
-        return jnp.concatenate([x[:1], x_pred])
+        return jnp.concatenate([x[:1], predicted_states])
 
 
 class DynTrajectory(DynamicalPrior):
@@ -390,8 +391,9 @@ class DynTrajectory(DynamicalPrior):
         """
         if x_gt is None:
             x_gt = x
-        x_pred = self(x[0], ts, params=params)
-        return jnp.sum((x_pred - x_gt) ** 2)
+        predicted_states = self(x[0], ts, params=params)
+        # R = Σ_t ‖φ_t(u_0) − u_t‖²
+        return jnp.sum((predicted_states - x_gt) ** 2)
 
     def reconstruct(
         self,
@@ -442,8 +444,8 @@ class _DynamicalForwardModel(eqx.Module):
         """Advance ``state`` by ``dt`` through the wrapped ODE."""
         ts = jnp.asarray([0.0, dt])
         saveat = dfx.SaveAt(t1=True)
-        ys = self.prior._integrate(state, ts, saveat, dt, None)
-        return ys[-1]
+        saved_states = self.prior._integrate(state, ts, saveat, dt, None)
+        return saved_states[-1]
 
     @property
     def state_signature(self) -> None:

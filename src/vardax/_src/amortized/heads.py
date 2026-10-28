@@ -60,22 +60,22 @@ class RegressionHead(eqx.Module):
     ) -> None:
         self.state_shape = tuple(state_shape)
         flat_dim = 1
-        for d in self.state_shape:
-            flat_dim *= d
-        k_mu, k_lv = jax.random.split(key)
+        for dim_size in self.state_shape:
+            flat_dim *= dim_size
+        key_mean, key_log_var = jax.random.split(key)
         self.mlp_mu = eqx.nn.MLP(
             in_size=context_dim,
             out_size=flat_dim,
             width_size=hidden_dim,
             depth=depth,
-            key=k_mu,
+            key=key_mean,
         )
         self.mlp_log_var = eqx.nn.MLP(
             in_size=context_dim,
             out_size=flat_dim,
             width_size=hidden_dim,
             depth=depth,
-            key=k_lv,
+            key=key_log_var,
         )
 
     def map_estimate(self, ctx: Float[Array, " D"]) -> Float[Array, ...]:
@@ -87,21 +87,25 @@ class RegressionHead(eqx.Module):
         key: PRNGKeyArray,
         n: int,
     ) -> Float[Array, ...]:
-        mu = einx.id("(s...) -> s...", self.mlp_mu(ctx), s=self.state_shape)
+        mean = einx.id("(s...) -> s...", self.mlp_mu(ctx), s=self.state_shape)
         log_var = einx.id("(s...) -> s...", self.mlp_log_var(ctx), s=self.state_shape)
-        sigma = jnp.exp(0.5 * log_var)
-        eps = jax.random.normal(key, (n, *self.state_shape))
-        return mu + sigma * eps
+        # σ = exp(½ log σ²)
+        std = jnp.exp(0.5 * log_var)
+        noise = jax.random.normal(key, (n, *self.state_shape))
+        # x = μ + σ ⊙ ε
+        return mean + std * noise
 
     def log_prob(
         self,
         x: Float[Array, ...],
         ctx: Float[Array, " D"],
     ) -> Float[Array, ""]:
-        mu = einx.id("(s...) -> s...", self.mlp_mu(ctx), s=self.state_shape)
+        mean = einx.id("(s...) -> s...", self.mlp_mu(ctx), s=self.state_shape)
         log_var = einx.id("(s...) -> s...", self.mlp_log_var(ctx), s=self.state_shape)
         # log N(x | mu, diag(exp(log_var))) — sum over state dims.
-        return -0.5 * jnp.sum(((x - mu) ** 2) * jnp.exp(-log_var) + log_var + _LOG_2PI)
+        return -0.5 * jnp.sum(
+            ((x - mean) ** 2) * jnp.exp(-log_var) + log_var + _LOG_2PI
+        )
 
 
 class ConditionalFlowHead(eqx.Module):

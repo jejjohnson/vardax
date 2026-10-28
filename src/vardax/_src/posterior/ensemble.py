@@ -61,8 +61,8 @@ class EnsembleCovariance(eqx.Module):
             ``MatrixLinearOperator`` (only assembled if you ask for
             it; safe for moderate M).
         """
-        m = analyses.shape[0]
-        if m != self.n_members:
+        n_analyses = analyses.shape[0]
+        if n_analyses != self.n_members:
             # Allow runtime mismatch; the configured ``n_members`` is
             # advisory rather than enforced.
             pass
@@ -83,7 +83,7 @@ class EnsembleCovariance(eqx.Module):
             samples=analyses,
             provenance={
                 "adapter": "EnsembleCovariance",
-                "n_members": int(m),
+                "n_members": int(n_analyses),
                 "inflation": float(self.inflation),
             },
         )

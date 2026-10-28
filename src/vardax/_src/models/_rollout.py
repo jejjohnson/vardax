@@ -230,7 +230,7 @@ def observed_trajectory(
     and ``jax.vjp``) apply ∑ₜ H'ₜ M'ₜ without forming a Jacobian.
 
     Args:
-        model: A model with ``obs_op`` and ``_rollout(x0, n_steps)``.
+        model: A model with ``obs_op`` and ``_rollout(initial_state, n_steps)``.
         mask: Observation mask mₜ; its length sets the window, T + 1.
 
     Returns:
@@ -239,13 +239,13 @@ def observed_trajectory(
     n_steps = mask.shape[0] - 1
     obs_op = model.obs_op
 
-    def observe(state: Float[Array, " N"], mask_t: Float[Array, " N"]):
+    def observe(state: Float[Array, " N"], step_mask: Float[Array, " N"]):
         # mₜ ⊙ Hₜ(xₜ)
         if accepts_mask(obs_op):
-            predicted = obs_op(state, mask=mask_t)
+            predicted = obs_op(state, mask=step_mask)
         else:
             predicted = obs_op(state)
-        return mask_t * predicted
+        return step_mask * predicted
 
     def observed(initial_state: Float[Array, " N"]) -> Float[Array, "T_plus_1 N"]:
         trajectory = model._rollout(initial_state, n_steps)

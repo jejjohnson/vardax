@@ -27,14 +27,15 @@ from vardax._src.errors import ConfigurationError, ShapeError
 
 def _as_variance(variance: float | Float[ArrayLike, " M"], nbasis: int) -> _np.ndarray:
     """Broadcast ``variance`` to ``(nbasis,)`` and require strict positivity."""
-    var_arr = _np.broadcast_to(_np.asarray(variance, dtype=float), (nbasis,))
-    if not _np.all(_np.isfinite(var_arr)):
+    variance_array = _np.broadcast_to(_np.asarray(variance, dtype=float), (nbasis,))
+    if not _np.all(_np.isfinite(variance_array)):
         raise ConfigurationError("variance must be finite.")
-    if _np.any(var_arr <= 0):
+    if _np.any(variance_array <= 0):
         raise ConfigurationError(
-            f"variance must be strictly positive; got min={float(var_arr.min())}."
+            "variance must be strictly positive; "
+            f"got min={float(variance_array.min())}."
         )
-    return var_arr
+    return variance_array
 
 
 class LinearBasis(eqx.Module):
@@ -96,20 +97,26 @@ def linear_basis(
     Returns:
         Configured `LinearBasis`.
     """
-    phi_arr = jnp.asarray(phi)
-    if phi_arr.ndim != 2:
-        raise ShapeError(f"phi must be 2-D (N, M); got shape {phi_arr.shape}.")
-    n, m = int(phi_arr.shape[0]), int(phi_arr.shape[1])
-    shape = (n,) if output_shape is None else tuple(int(s) for s in output_shape)
-    if math.prod(shape) != n:
+    design_matrix = jnp.asarray(phi)
+    if design_matrix.ndim != 2:
+        raise ShapeError(f"phi must be 2-D (N, M); got shape {design_matrix.shape}.")
+    state_dim, n_atoms = int(design_matrix.shape[0]), int(design_matrix.shape[1])
+    shape = (
+        (state_dim,)
+        if output_shape is None
+        else tuple(int(extent) for extent in output_shape)
+    )
+    if math.prod(shape) != state_dim:
         raise ShapeError(
-            f"prod(output_shape)={math.prod(shape)} does not match phi rows N={n}."
+            f"prod(output_shape)={math.prod(shape)} does not match phi rows "
+            f"N={state_dim}."
         )
     return LinearBasis(
-        phi=phi_arr,
+        phi=design_matrix,
         # the prior variance follows Φ's dtype, so x64 callers keep float64
         variance=jnp.asarray(
-            _as_variance(variance, m), dtype=jnp.result_type(phi_arr, float)
+            _as_variance(variance, n_atoms),
+            dtype=jnp.result_type(design_matrix, float),
         ),
         output_shape=shape,
     )

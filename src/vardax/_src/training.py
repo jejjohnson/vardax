@@ -142,8 +142,8 @@ def amortized_nll_loss_fn(
         raise MissingInputError(
             "amortized_nll_loss_fn requires batch.target (the true x) to be set."
         )
-    log_p = model.log_prob(target, batch)
-    return -jnp.mean(log_p)
+    log_prob = model.log_prob(target, batch)
+    return -jnp.mean(log_prob)
 
 
 @eqx.filter_jit

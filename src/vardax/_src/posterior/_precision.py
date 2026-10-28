@@ -193,14 +193,14 @@ def _masked_tangent(
             "batch, e.g. jax.tree.map(lambda a: a[i:i + 1], batch)."
         )
     mask = window_mask(batch)
-    out = tangent.out_structure()
-    if mask.shape != out.shape:
+    obs_structure = tangent.out_structure()
+    if mask.shape != obs_structure.shape:
         raise ShapeError(
             f"The batch mask has shape {mask.shape} but the observation "
-            f"operator returns {out.shape}."
+            f"operator returns {obs_structure.shape}."
         )
     mask_op = lx.FunctionLinearOperator(
-        lambda observed: mask * observed, out, lx.symmetric_tag
+        lambda observed: mask * observed, obs_structure, lx.symmetric_tag
     )
     return mask_op @ tangent
 
@@ -337,14 +337,14 @@ def gauss_newton_covariance(
         def apply_obs_precision(
             observed_vector: Float[Array, "T_plus_1 N"],
         ) -> Float[Array, "T_plus_1 N"]:
-            def solve(vector_t: Array, mask_t: Array) -> Array:
-                mask_op = lx.DiagonalLinearOperator(mask_t)
+            def solve(step_vector: Array, step_mask: Array) -> Array:
+                mask_op = lx.DiagonalLinearOperator(step_mask)
                 marginal = lx.TaggedLinearOperator(
                     mask_op @ obs_cov_op @ mask_op
-                    + lx.DiagonalLinearOperator(1.0 - mask_t),
+                    + lx.DiagonalLinearOperator(1.0 - step_mask),
                     lx.positive_semidefinite_tag,
                 )
-                return lx.linear_solve(marginal, vector_t, solver=solver).value
+                return lx.linear_solve(marginal, step_vector, solver=solver).value
 
             return jax.vmap(solve)(observed_vector, mask)
 
@@ -453,10 +453,10 @@ def _weak_covariance(
         state, errors = control
         trajectory = model._rollout_with_error(state, errors)
 
-        def observe(state_t, mask_t):
+        def observe(step_state, step_mask):
             if accepts_mask(model.obs_op):
-                return mask_t * model.obs_op(state_t, mask=mask_t)
-            return mask_t * model.obs_op(state_t)
+                return step_mask * model.obs_op(step_state, mask=step_mask)
+            return step_mask * model.obs_op(step_state)
 
         return jax.vmap(observe)(trajectory, mask)
 

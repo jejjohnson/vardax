@@ -204,12 +204,12 @@ class ReducedBasisFourDVar(eqx.Module):
 
     def _rollout(
         self,
-        x_0: Float[Array, " N"],
+        initial_state: Float[Array, " N"],
         n_steps: int,
     ) -> Float[Array, "T_plus_1 N"]:
         """Step the forward ``n_steps`` times, returning the ``T+1``-long trajectory."""
         forward = resolve_forward(self.forward, self.forward_adjoint)
-        return rollout(forward, x_0, n_steps, checkpoint=self.checkpoint)
+        return rollout(forward, initial_state, n_steps, checkpoint=self.checkpoint)
 
     def __call__(self, batch: Batch1D | PointObsBatch) -> Float[Array, "*batch N"]:
         """Reduced-basis 4DVar analysis: minimise over ``x_0`` (or ``X``).
@@ -224,33 +224,34 @@ class ReducedBasisFourDVar(eqx.Module):
             check_point_obs_cov(self.obs_cov_op)
             n_steps = window_steps(batch)
 
-            def _one_points(b: PointObsBatch) -> Float[Array, " N"]:
+            def _one_points(window: PointObsBatch) -> Float[Array, " N"]:
                 def _obs_cost(
                     trajectory: Float[Array, "T_plus_1 N"],
                 ) -> Float[Array, ""]:
-                    return grid_point_obs_cost(self.obs_op, trajectory, b)
+                    return grid_point_obs_cost(self.obs_op, trajectory, window)
 
                 return self._solve(_obs_cost, n_steps)
 
             return map_point_batch(_one_points, batch)
 
         obs_cov_op = require_obs_cov(self.obs_cov_op)
-        T = batch.input.shape[1] - 1
+        n_steps = batch.input.shape[1] - 1
 
         def _one(
-            input_i: Float[Array, "T_plus_1 N"],
-            mask_i: Float[Array, "T_plus_1 N"],
+            window_obs: Float[Array, "T_plus_1 N"],
+            window_mask: Float[Array, "T_plus_1 N"],
         ) -> Float[Array, " N"]:
             def _obs_cost(
                 trajectory: Float[Array, "T_plus_1 N"],
             ) -> Float[Array, ""]:
-                def _per_step(x_t, y_t, m_t):
-                    y_pred = (
-                        self.obs_op(x_t, mask=m_t)
+                def _per_step(state, observation, step_mask):
+                    predicted_obs = (
+                        self.obs_op(state, mask=step_mask)
                         if _accepts_mask(self.obs_op)
-                        else self.obs_op(x_t)
+                        else self.obs_op(state)
                     )
-                    residual = m_t * (y_t - y_pred)
+                    # r = m ⊙ (y − H(x))
+                    residual = step_mask * (observation - predicted_obs)
                     # Solve against the marginalized covariance
                     # R~ = M R M + (I - M): for a 0/1 mask its inverse on
                     # the observed block equals (R_oo)^{-1}, so masked
@@ -258,75 +259,97 @@ class ReducedBasisFourDVar(eqx.Module):
                     # the full R against a zeroed residual would instead
                     # weight observed entries by the observed block of
                     # R^{-1}, biasing the analysis when R is correlated.
-                    mask_op = lx.DiagonalLinearOperator(m_t)
-                    r_masked = lx.TaggedLinearOperator(
+                    mask_op = lx.DiagonalLinearOperator(step_mask)
+                    masked_obs_cov = lx.TaggedLinearOperator(
                         mask_op @ obs_cov_op @ mask_op
-                        + lx.DiagonalLinearOperator(1.0 - m_t),
+                        + lx.DiagonalLinearOperator(1.0 - step_mask),
                         lx.positive_semidefinite_tag,
                     )
-                    R_inv_r = lx.linear_solve(
-                        r_masked,
+                    # R̃⁻¹r
+                    weighted_residual = lx.linear_solve(
+                        masked_obs_cov,
                         residual,
                         solver=self.cov_solver,
                     ).value
-                    return 0.5 * jnp.sum(residual * R_inv_r)
+                    # J_o,t = ½ rᵀ R̃⁻¹ r
+                    return 0.5 * jnp.sum(residual * weighted_residual)
 
-                per_step_costs = jax.vmap(_per_step)(trajectory, input_i, mask_i)
+                per_step_costs = jax.vmap(_per_step)(
+                    trajectory, window_obs, window_mask
+                )
                 return jnp.sum(per_step_costs)
 
-            return self._solve(_obs_cost, T)
+            return self._solve(_obs_cost, n_steps)
 
         return jax.vmap(_one)(batch.input, batch.mask)
 
-    def _solve(self, _obs_cost: Callable[[Array], Array], T: int) -> Float[Array, " N"]:
+    def _solve(
+        self, _obs_cost: Callable[[Array], Array], n_steps: int
+    ) -> Float[Array, " N"]:
         """Minimise background (or penalty) plus the trajectory ``_obs_cost``."""
         param = self.parameterization
         if self.basis is not None:
             # The reduced-basis path, unchanged; it equals
             # LinearParameterization(basis, prior_mean) mathematically.
-            def cost(X: Float[Array, " M"], _args: Any) -> Float[Array, ""]:
-                j_bg = 0.5 * jnp.sum(X * self.basis.prior_inv(X))
-                increment = self.basis.operg(0.0, X)
+            def cost(coefficients: Float[Array, " M"], _args: Any) -> Float[Array, ""]:
+                # J_b = ½ Xᵀ P⁻¹ X
+                background_cost = 0.5 * jnp.sum(
+                    coefficients * self.basis.prior_inv(coefficients)
+                )
+                basis_increment = self.basis.operg(0.0, coefficients)
                 # x₀ = x_b + Φ X
-                x_0 = self.prior_mean + as_shape(increment, self.prior_mean.shape)
-                return j_bg + _obs_cost(self._rollout(x_0, n_steps=T))
+                initial_state = self.prior_mean + as_shape(
+                    basis_increment, self.prior_mean.shape
+                )
+                return background_cost + _obs_cost(
+                    self._rollout(initial_state, n_steps=n_steps)
+                )
 
-            y0 = jnp.zeros((self.basis.nbasis,), dtype=self.prior_mean.dtype)
+            initial_control = jnp.zeros(
+                (self.basis.nbasis,), dtype=self.prior_mean.dtype
+            )
         elif param is not None:
 
             def cost(theta: Any, _args: Any) -> Float[Array, ""]:
-                x_0 = as_shape(param.decode(theta), self.prior_mean.shape)
-                return param.penalty(theta) + _obs_cost(self._rollout(x_0, n_steps=T))
+                initial_state = as_shape(param.decode(theta), self.prior_mean.shape)
+                return param.penalty(theta) + _obs_cost(
+                    self._rollout(initial_state, n_steps=n_steps)
+                )
 
-            y0 = param.init_control()
+            initial_control = param.init_control()
         else:
 
-            def cost(x_0: Float[Array, " N"], _args: Any) -> Float[Array, ""]:
-                dx = x_0 - self.prior_mean
-                B_inv_dx = lx.linear_solve(
+            def cost(initial_state: Float[Array, " N"], _args: Any) -> Float[Array, ""]:
+                # δx = x₀ − x_b
+                increment = initial_state - self.prior_mean
+                # B⁻¹δx
+                weighted_increment = lx.linear_solve(
                     self.prior_cov_op,
-                    dx,
+                    increment,
                     solver=self.cov_solver,
                 ).value
-                j_bg = 0.5 * jnp.sum(dx * B_inv_dx)
-                return j_bg + _obs_cost(self._rollout(x_0, n_steps=T))
+                # J_b = ½ δxᵀ B⁻¹ δx
+                background_cost = 0.5 * jnp.sum(increment * weighted_increment)
+                return background_cost + _obs_cost(
+                    self._rollout(initial_state, n_steps=n_steps)
+                )
 
-            y0 = self.prior_mean
+            initial_control = self.prior_mean
 
-        x_star = minimise(
+        control_star = minimise(
             self.minimiser,
             cost,
-            y0,
+            initial_control,
             adjoint=self.minimiser_adjoint,
             max_steps=self.max_steps,
         )
         if self.basis is not None:
-            increment = self.basis.operg(0.0, x_star)
+            increment = self.basis.operg(0.0, control_star)
             # x₀* = x_b + Φ X*
             return self.prior_mean + as_shape(increment, self.prior_mean.shape)
         if param is not None:
-            return as_shape(param.decode(x_star), self.prior_mean.shape)
-        return x_star
+            return as_shape(param.decode(control_star), self.prior_mean.shape)
+        return control_star
 
     def posterior(self, batch: Batch1D, adapter: Any = None) -> Any:
         """Analyse one window and return its [`Posterior`][vardax.Posterior].
@@ -390,7 +413,7 @@ class _ReducedBasisFourDVarAnalysisStep(eqx.Module):
         obs_err_cov: Any,
     ) -> Float[Array, ...]:
         if isinstance(obs, list):
-            obs_stack = jnp.stack([jnp.asarray(o) for o in obs])
+            obs_stack = jnp.stack([jnp.asarray(obs_sample) for obs_sample in obs])
             window = len(obs)
         else:
             obs_stack = einx.id("s... -> 1 s...", jnp.asarray(obs))
@@ -402,23 +425,23 @@ class _ReducedBasisFourDVarAnalysisStep(eqx.Module):
         mask_batch = einx.id("s... -> 1 s...", mask)
         batch = Batch1D(input=obs_batch, mask=mask_batch, target=None)
 
-        bg = (
+        background = (
             jnp.asarray(forecast[0])
             if isinstance(forecast, list)
             else jnp.asarray(forecast)
         )
-        swapped = eqx.tree_at(lambda m: m.prior_mean, self.model, bg)
+        swapped = eqx.tree_at(lambda model: model.prior_mean, self.model, background)
         if obs_op is not None:
-            swapped = eqx.tree_at(lambda m: m.obs_op, swapped, obs_op)
+            swapped = eqx.tree_at(lambda model: model.obs_op, swapped, obs_op)
         if obs_err_cov is not None:
-            swapped = eqx.tree_at(lambda m: m.obs_cov_op, swapped, obs_err_cov)
+            swapped = eqx.tree_at(lambda model: model.obs_cov_op, swapped, obs_err_cov)
 
         analysed = swapped(batch)[0]
         if window > 1:
             dt = swapped.forward.dt
 
-            def _step(x, _):
-                return swapped.forward.step(x, dt), None
+            def _step(state, _):
+                return swapped.forward.step(state, dt), None
 
             final, _ = jax.lax.scan(_step, analysed, None, length=window - 1)
             return final

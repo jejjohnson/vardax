@@ -61,10 +61,10 @@ class InterpObs(eqx.Module):
         corners = flat[self.indices]
         # yₒ = Σₖ wₒₖ x[iₒₖ]: bilinear weights over the four corners;
         # jnp, not einx: a time step may have no observations
-        out = jnp.sum(corners * self.weights, axis=-1)
+        predicted_obs = jnp.sum(corners * self.weights, axis=-1)
         if mask is not None:
-            out = out * mask
-        return out
+            predicted_obs = predicted_obs * mask
+        return predicted_obs
 
     def linearize(
         self,
@@ -124,22 +124,34 @@ def interp_obs_from_coords(
                 f"{name} must be strictly increasing with at least 2 points; "
                 "reverse a descending axis before calling interp_obs_from_coords."
             )
-    pts = _np.asarray(obs_coords, dtype=float)
-    if pts.ndim != 2 or pts.shape[1] != 2:
-        raise ShapeError(f"obs_coords must be (n_obs, 2); got {pts.shape}.")
+    points = _np.asarray(obs_coords, dtype=float)
+    if points.ndim != 2 or points.shape[1] != 2:
+        raise ShapeError(f"obs_coords must be (n_obs, 2); got {points.shape}.")
 
-    ny, nx = y_axis.size, x_axis.size
-    iy0, wy1 = _bracket(y_axis, pts[:, 0])
-    ix0, wx1 = _bracket(x_axis, pts[:, 1])
-    iy1, ix1 = iy0 + 1, ix0 + 1
-    wy0, wx0 = 1.0 - wy1, 1.0 - wx1
+    n_y, n_x = y_axis.size, x_axis.size
+    y_lower_index, y_upper_weight = _bracket(y_axis, points[:, 0])
+    x_lower_index, x_upper_weight = _bracket(x_axis, points[:, 1])
+    y_upper_index, x_upper_index = y_lower_index + 1, x_lower_index + 1
+    y_lower_weight, x_lower_weight = 1.0 - y_upper_weight, 1.0 - x_upper_weight
 
+    # flat index of the 2x2 stencil: (lo, lo), (lo, hi), (hi, lo), (hi, hi)
     indices = _np.stack(
-        [iy0 * nx + ix0, iy0 * nx + ix1, iy1 * nx + ix0, iy1 * nx + ix1],
+        [
+            y_lower_index * n_x + x_lower_index,
+            y_lower_index * n_x + x_upper_index,
+            y_upper_index * n_x + x_lower_index,
+            y_upper_index * n_x + x_upper_index,
+        ],
         axis=1,
     )
+    # bilinear weight of each corner, w_y w_x, in the same order
     weights = _np.stack(
-        [wy0 * wx0, wy0 * wx1, wy1 * wx0, wy1 * wx1],
+        [
+            y_lower_weight * x_lower_weight,
+            y_lower_weight * x_upper_weight,
+            y_upper_weight * x_lower_weight,
+            y_upper_weight * x_upper_weight,
+        ],
         axis=1,
     )
 
@@ -147,18 +159,18 @@ def interp_obs_from_coords(
         indices=jnp.asarray(indices, dtype=jnp.int32),
         # JAX's default float dtype, so the weights are float64 under x64
         weights=jnp.asarray(weights),
-        grid_shape=(int(ny), int(nx)),
+        grid_shape=(int(n_y), int(n_x)),
     )
 
 
-def _bracket(axis: _np.ndarray, pts: _np.ndarray) -> tuple[_np.ndarray, _np.ndarray]:
-    """For each point ``p`` in ``pts``, return ``(idx, frac)`` such that
+def _bracket(axis: _np.ndarray, points: _np.ndarray) -> tuple[_np.ndarray, _np.ndarray]:
+    """For each point ``p`` in ``points``, return ``(idx, frac)`` such that
     ``axis[idx] + frac * (axis[idx+1] - axis[idx])`` matches ``p``.
 
     Points outside ``axis`` are clamped to the edges.
     """
-    n = axis.size
-    idx = _np.clip(_np.searchsorted(axis, pts) - 1, 0, n - 2)
-    span = axis[idx + 1] - axis[idx]
-    frac = _np.where(span > 0, (pts - axis[idx]) / span, 0.0)
-    return idx, _np.clip(frac, 0.0, 1.0)
+    n_nodes = axis.size
+    left_index = _np.clip(_np.searchsorted(axis, points) - 1, 0, n_nodes - 2)
+    span = axis[left_index + 1] - axis[left_index]
+    fraction = _np.where(span > 0, (points - axis[left_index]) / span, 0.0)
+    return left_index, _np.clip(fraction, 0.0, 1.0)
