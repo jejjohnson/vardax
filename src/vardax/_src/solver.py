@@ -72,10 +72,11 @@ def init_solver_state_1d(
     Returns:
         Zero-initialised [`SolverState1D`][vardax.SolverState1D].
     """
-    b, _, n = batch.input.shape
-    x0 = batch.input * batch.mask
-    lstm = LSTMState1D.zeros(b, hidden_dim, n)
-    return SolverState1D(x=x0, lstm=lstm, step=0)
+    batch_size, _, n_space = batch.input.shape
+    # u₀ = m ⊙ y
+    initial_state = batch.input * batch.mask
+    lstm = LSTMState1D.zeros(batch_size, hidden_dim, n_space)
+    return SolverState1D(x=initial_state, lstm=lstm, step=0)
 
 
 def init_solver_state_2d(
@@ -91,10 +92,11 @@ def init_solver_state_2d(
     Returns:
         Zero-initialised [`SolverState2D`][vardax.SolverState2D].
     """
-    b, _, h, w = batch.input.shape
-    x0 = batch.input * batch.mask
-    lstm = LSTMState2D.zeros(b, hidden_dim, h, w)
-    return SolverState2D(x=x0, lstm=lstm, step=0)
+    batch_size, _, height, width = batch.input.shape
+    # u₀ = m ⊙ y
+    initial_state = batch.input * batch.mask
+    lstm = LSTMState2D.zeros(batch_size, hidden_dim, height, width)
+    return SolverState2D(x=initial_state, lstm=lstm, step=0)
 
 
 # ---------------------------------------------------------------------------
@@ -126,20 +128,23 @@ def solver_step_1d(
     Returns:
         Updated [`SolverState1D`][vardax.SolverState1D].
     """
-    x = solver_state.x
+    state = solver_state.x
 
-    def cost_fn(x_):
-        x_prior = prior_fn(x_)
-        obs_diff = batch.mask * (x_ - batch.input)
-        j_obs = jnp.sum(obs_diff**2)
-        j_prior = prior_weight * jnp.sum((x_ - x_prior) ** 2)
-        return j_obs + j_prior
+    def cost_fn(current_state):
+        prior_state = prior_fn(current_state)
+        obs_diff = batch.mask * (current_state - batch.input)
+        # J_obs = ‖m ⊙ (u − y)‖²
+        obs_cost = jnp.sum(obs_diff**2)
+        # J_prior = λ ‖u − φ(u)‖²
+        prior_cost = prior_weight * jnp.sum((current_state - prior_state) ** 2)
+        return obs_cost + prior_cost
 
-    grad = jax.grad(cost_fn)(x)
-    update, new_lstm = grad_mod_fn(grad, x, solver_state.lstm)
-    x_new = x - alpha * update
+    grad = jax.grad(cost_fn)(state)
+    update, new_lstm = grad_mod_fn(grad, state, solver_state.lstm)
+    # u ← u − α · update
+    new_state = state - alpha * update
 
-    return SolverState1D(x=x_new, lstm=new_lstm, step=solver_state.step + 1)
+    return SolverState1D(x=new_state, lstm=new_lstm, step=solver_state.step + 1)
 
 
 def solver_step_2d(
@@ -163,20 +168,23 @@ def solver_step_2d(
     Returns:
         Updated [`SolverState2D`][vardax.SolverState2D].
     """
-    x = solver_state.x
+    state = solver_state.x
 
-    def cost_fn(x_):
-        x_prior = prior_fn(x_)
-        obs_diff = batch.mask * (x_ - batch.input)
-        j_obs = jnp.sum(obs_diff**2)
-        j_prior = prior_weight * jnp.sum((x_ - x_prior) ** 2)
-        return j_obs + j_prior
+    def cost_fn(current_state):
+        prior_state = prior_fn(current_state)
+        obs_diff = batch.mask * (current_state - batch.input)
+        # J_obs = ‖m ⊙ (u − y)‖²
+        obs_cost = jnp.sum(obs_diff**2)
+        # J_prior = λ ‖u − φ(u)‖²
+        prior_cost = prior_weight * jnp.sum((current_state - prior_state) ** 2)
+        return obs_cost + prior_cost
 
-    grad = jax.grad(cost_fn)(x)
-    update, new_lstm = grad_mod_fn(grad, x, solver_state.lstm)
-    x_new = x - alpha * update
+    grad = jax.grad(cost_fn)(state)
+    update, new_lstm = grad_mod_fn(grad, state, solver_state.lstm)
+    # u ← u − α · update
+    new_state = state - alpha * update
 
-    return SolverState2D(x=x_new, lstm=new_lstm, step=solver_state.step + 1)
+    return SolverState2D(x=new_state, lstm=new_lstm, step=solver_state.step + 1)
 
 
 # ---------------------------------------------------------------------------
@@ -267,8 +275,9 @@ def fp_solver_step_1d(
     Returns:
         Updated state estimate of shape ``(B, T, N)``.
     """
-    x_phi = prior_fn(x)
-    return batch.mask * batch.input + (1 - batch.mask) * x_phi
+    prior_state = prior_fn(x)
+    # u ← m ⊙ y + (1 − m) ⊙ φ(u)
+    return batch.mask * batch.input + (1 - batch.mask) * prior_state
 
 
 def solve_4dvarnet_1d_fixedpoint(
@@ -290,14 +299,15 @@ def solve_4dvarnet_1d_fixedpoint(
     Returns:
         Final state estimate of shape ``(B, T, N)``.
     """
-    x0 = batch.input * batch.mask
+    # u₀ = m ⊙ y
+    initial_state = batch.input * batch.mask
 
     def scan_fn(carry: Float[Array, "B T N"], _: None) -> tuple:
-        x_new = fp_solver_step_1d(carry, batch, prior_fn)
-        return x_new, None
+        new_state = fp_solver_step_1d(carry, batch, prior_fn)
+        return new_state, None
 
-    x_final, _ = jax.lax.scan(scan_fn, x0, None, length=n_fp_steps)
-    return x_final
+    final_state, _ = jax.lax.scan(scan_fn, initial_state, None, length=n_fp_steps)
+    return final_state
 
 
 # ---------------------------------------------------------------------------

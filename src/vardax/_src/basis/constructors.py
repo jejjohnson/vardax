@@ -46,16 +46,16 @@ def _grid_points(
     """Turn per-axis coordinate arrays into ``(N, d)`` points + grid shape."""
     if len(grid_coords) < 1:
         raise GridError("grid_coords must contain at least one axis array.")
-    axes = [_np.asarray(a, dtype=float) for a in grid_coords]
-    for i, ax in enumerate(axes):
-        if ax.ndim != 1 or ax.size < 1:
+    axes = [_np.asarray(axis_values, dtype=float) for axis_values in grid_coords]
+    for axis_number, axis in enumerate(axes):
+        if axis.ndim != 1 or axis.size < 1:
             raise GridError(
-                f"grid_coords[{i}] must be a non-empty 1-D axis array; "
-                f"got shape {ax.shape}."
+                f"grid_coords[{axis_number}] must be a non-empty 1-D axis array; "
+                f"got shape {axis.shape}."
             )
     mesh = _np.meshgrid(*axes, indexing="ij")
-    pts = _np.stack([m.ravel() for m in mesh], axis=1)
-    return pts, tuple(ax.size for ax in axes)
+    points = _np.stack([grid_axis.ravel() for grid_axis in mesh], axis=1)
+    return points, tuple(axis.size for axis in axes)
 
 
 def rbf_basis(
@@ -87,27 +87,28 @@ def rbf_basis(
         `LinearBasis` with ``output_shape`` the grid shape and
         ``nbasis == M``.
     """
-    pts, grid_shape = _grid_points(grid_coords)
-    ndim = pts.shape[1]
-    cen = _np.asarray(centers, dtype=float)
-    if cen.ndim != 2 or cen.shape[1] != ndim:
+    points, grid_shape = _grid_points(grid_coords)
+    ndim = points.shape[1]
+    centers_array = _np.asarray(centers, dtype=float)
+    if centers_array.ndim != 2 or centers_array.shape[1] != ndim:
         raise ShapeError(
             f"centers must be (M, {ndim}) to match {ndim}-D grid_coords; "
-            f"got {cen.shape}."
+            f"got {centers_array.shape}."
         )
-    m = cen.shape[0]
-    width_arr = _np.broadcast_to(_np.asarray(widths, dtype=float), (m,))
-    if _np.any(width_arr <= 0):
+    n_atoms = centers_array.shape[0]
+    widths_array = _np.broadcast_to(_np.asarray(widths, dtype=float), (n_atoms,))
+    if _np.any(widths_array <= 0):
         raise ConfigurationError(
-            f"widths must be strictly positive; got min={float(width_arr.min())}."
+            f"widths must be strictly positive; got min={float(widths_array.min())}."
         )
-    phi = _gnx.rbf_basis(
-        jnp.asarray(pts),
-        jnp.asarray(cen),
-        jnp.asarray(width_arr),
+    # Φ[:, a] = K(‖g − c_a‖ / ℓ_a)
+    design_matrix = _gnx.rbf_basis(
+        jnp.asarray(points),
+        jnp.asarray(centers_array),
+        jnp.asarray(widths_array),
         kernel=kernel,
     )
-    return linear_basis(phi, variance=variance, output_shape=grid_shape)
+    return linear_basis(design_matrix, variance=variance, output_shape=grid_shape)
 
 
 def fourier_basis(
@@ -146,29 +147,33 @@ def fourier_basis(
     """
     if boundary_scale < 1.0:
         raise ConfigurationError(f"boundary_scale must be >= 1, got {boundary_scale}.")
-    pts, grid_shape = _grid_points(grid_coords)
-    lo, hi = pts.min(axis=0), pts.max(axis=0)
-    half_span = (hi - lo) / 2.0
+    points, grid_shape = _grid_points(grid_coords)
+    lower, upper = points.min(axis=0), points.max(axis=0)
+    half_span = (upper - lower) / 2.0
     if _np.any(half_span <= 0):
         raise GridError(
             "each grid_coords axis must span a non-degenerate interval "
             f"(got half-spans {tuple(half_span.tolist())})."
         )
-    centered = pts - (lo + hi) / 2.0
-    ndim = pts.shape[1]
-    half_widths = tuple(float(h) * boundary_scale for h in half_span)
+    centered = points - (lower + upper) / 2.0
+    ndim = points.shape[1]
+    half_widths = tuple(float(span) * boundary_scale for span in half_span)
     modes = (
         (int(num_modes),) * ndim
         if isinstance(num_modes, int)
-        else tuple(int(k) for k in num_modes)
+        else tuple(int(axis_modes) for axis_modes in num_modes)
     )
-    phi, eigvals = _gnx.fourier_basis(jnp.asarray(centered), modes, half_widths)
-    var = (
+    # Φ: Dirichlet eigenfunctions of −Δ on the box, eigenvalues λ
+    design_matrix, eigvals = _gnx.fourier_basis(
+        jnp.asarray(centered), modes, half_widths
+    )
+    # Q = variance · S(λ)
+    prior_variance = (
         variance * spectral_density(eigvals)
         if spectral_density is not None
         else variance
     )
-    return linear_basis(phi, variance=var, output_shape=grid_shape)
+    return linear_basis(design_matrix, variance=prior_variance, output_shape=grid_shape)
 
 
 def wavelet_basis(
@@ -198,9 +203,11 @@ def wavelet_basis(
     """
     shape = (grid_shape,) if isinstance(grid_shape, int) else tuple(grid_shape)
     if len(shape) == 1:
-        phi = _gnx.wavelet_basis_1d(int(shape[0]), wavelet=wavelet, levels=levels)
+        design_matrix = _gnx.wavelet_basis_1d(
+            int(shape[0]), wavelet=wavelet, levels=levels
+        )
     elif len(shape) == 2:
-        phi = _gnx.wavelet_basis_2d(
+        design_matrix = _gnx.wavelet_basis_2d(
             int(shape[0]), int(shape[1]), wavelet=wavelet, levels=levels
         )
     else:
@@ -208,7 +215,7 @@ def wavelet_basis(
             f"wavelet_basis supports 1-D or 2-D grids; got {len(shape)}-D "
             f"grid_shape {shape}."
         )
-    return linear_basis(phi, variance=variance, output_shape=shape)
+    return linear_basis(design_matrix, variance=variance, output_shape=shape)
 
 
 def eof_basis(
@@ -240,21 +247,27 @@ def eof_basis(
     Returns:
         `LinearBasis` with orthonormal columns and ``nbasis == n_modes``.
     """
-    data_arr = jnp.asarray(data)
-    phi, svals = _gnx.eof_basis(data_arr, n_modes, center=center)
+    data_array = jnp.asarray(data)
+    # Φ: leading EOFs of the data, singular values σ
+    design_matrix, singular_values = _gnx.eof_basis(data_array, n_modes, center=center)
     if isinstance(variance, str):
         if variance != "explained":
             raise ConfigurationError(
                 f'variance must be "explained", a scalar, or an array; '
                 f"got {variance!r}."
             )
-        n_samples = int(data_arr.shape[0])
+        n_samples = int(data_array.shape[0])
         if n_samples < 2:
             raise DataError(
                 'variance="explained" needs at least 2 samples (T >= 2); '
                 f"got T={n_samples}."
             )
-        var: float | Float[Array, " M"] = svals**2 / (n_samples - 1)
+        # σ_a² / (T − 1)
+        prior_variance: float | Float[Array, " M"] = singular_values**2 / (
+            n_samples - 1
+        )
     else:
-        var = variance
-    return linear_basis(phi, variance=var, output_shape=output_shape)
+        prior_variance = variance
+    return linear_basis(
+        design_matrix, variance=prior_variance, output_shape=output_shape
+    )

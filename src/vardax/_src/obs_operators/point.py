@@ -127,10 +127,10 @@ def _bracket(
     axis: Float[Array, " K"], points: Float[Array, " N_obs"]
 ) -> tuple[Int[Array, " N_obs"], Float[Array, " N_obs"]]:
     """Left neighbour index and fractional offset, clamped to the axis."""
-    idx = jnp.clip(jnp.searchsorted(axis, points) - 1, 0, axis.shape[0] - 2)
-    span = axis[idx + 1] - axis[idx]
-    frac = jnp.clip((points - axis[idx]) / span, 0.0, 1.0)
-    return idx, frac
+    left_index = jnp.clip(jnp.searchsorted(axis, points) - 1, 0, axis.shape[0] - 2)
+    span = axis[left_index + 1] - axis[left_index]
+    fraction = jnp.clip((points - axis[left_index]) / span, 0.0, 1.0)
+    return left_index, fraction
 
 
 class GridPointObs(eqx.Module):
@@ -174,17 +174,19 @@ class GridPointObs(eqx.Module):
     grid_axes: tuple[Float[Array, " _"], ...]
 
     def __init__(self, grid_axes: tuple[Float[Array, " _"], ...]) -> None:
-        axes = tuple(jnp.asarray(a) for a in grid_axes)
+        axes = tuple(jnp.asarray(axis_values) for axis_values in grid_axes)
         if len(axes) not in (1, 2):
             raise GridError(f"grid_axes must hold 1 or 2 axes; got {len(axes)}.")
-        for k, axis in enumerate(axes):
+        for axis_number, axis in enumerate(axes):
             if axis.ndim != 1 or axis.shape[0] < 2:
                 raise GridError(
-                    f"grid_axes[{k}] must be 1-D with at least 2 points; "
+                    f"grid_axes[{axis_number}] must be 1-D with at least 2 points; "
                     f"got shape {axis.shape}."
                 )
             if not bool(jnp.all(jnp.diff(axis) > 0)):
-                raise GridError(f"grid_axes[{k}] must be strictly increasing.")
+                raise GridError(
+                    f"grid_axes[{axis_number}] must be strictly increasing."
+                )
         self.grid_axes = axes
 
     def __call__(
@@ -193,28 +195,30 @@ class GridPointObs(eqx.Module):
         """Interpolate ``state[time_index]`` at the observation coordinates."""
         safe = _safe(batch)
         n_obs = safe.values.shape[0]
-        grid_shape = tuple(a.shape[0] for a in self.grid_axes)
+        grid_shape = tuple(axis.shape[0] for axis in self.grid_axes)
         flat_frames = einx.id("t s... -> t (s...)", state)
         frames = einx.id("t (g...) -> t g...", flat_frames, g=grid_shape)
-        t_idx = (
+        time_indices = (
             jnp.zeros(n_obs, dtype=jnp.int32)
             if safe.time_index is None
             else jnp.clip(safe.time_index, 0, state.shape[0] - 1)
         )
         if len(self.grid_axes) == 1:
-            i0, w1 = _bracket(self.grid_axes[0], safe.coords[:, 0])
-            left = frames[t_idx, i0]
-            right = frames[t_idx, i0 + 1]
-            return (1.0 - w1) * left + w1 * right
-        iy, wy = _bracket(self.grid_axes[0], safe.coords[:, 0])
-        ix, wx = _bracket(self.grid_axes[1], safe.coords[:, 1])
-        f00 = frames[t_idx, iy, ix]
-        f01 = frames[t_idx, iy, ix + 1]
-        f10 = frames[t_idx, iy + 1, ix]
-        f11 = frames[t_idx, iy + 1, ix + 1]
-        return (1.0 - wy) * ((1.0 - wx) * f00 + wx * f01) + wy * (
-            (1.0 - wx) * f10 + wx * f11
-        )
+            left_index, right_weight = _bracket(self.grid_axes[0], safe.coords[:, 0])
+            left = frames[time_indices, left_index]
+            right = frames[time_indices, left_index + 1]
+            # ŷ = (1 − w) f_left + w f_right
+            return (1.0 - right_weight) * left + right_weight * right
+        y_index, y_weight = _bracket(self.grid_axes[0], safe.coords[:, 0])
+        x_index, x_weight = _bracket(self.grid_axes[1], safe.coords[:, 1])
+        corner_00 = frames[time_indices, y_index, x_index]
+        corner_01 = frames[time_indices, y_index, x_index + 1]
+        corner_10 = frames[time_indices, y_index + 1, x_index]
+        corner_11 = frames[time_indices, y_index + 1, x_index + 1]
+        # ŷ = (1 − w_y) [(1 − w_x) f₀₀ + w_x f₀₁] + w_y [(1 − w_x) f₁₀ + w_x f₁₁]
+        return (1.0 - y_weight) * (
+            (1.0 - x_weight) * corner_00 + x_weight * corner_01
+        ) + y_weight * ((1.0 - x_weight) * corner_10 + x_weight * corner_11)
 
 
 class FieldPointObs(eqx.Module):
@@ -281,19 +285,19 @@ def window_steps(batch: PointObsBatch) -> int:
         # Validate eagerly when the indices are concrete; traced indices are
         # clamped to [0, n_times - 1] by GridPointObs.
         try:
-            t_idx = np.asarray(batch.time_index)
+            time_indices = np.asarray(batch.time_index)
             valid = np.asarray(batch.valid, dtype=bool)
         except (
             jax.errors.TracerArrayConversionError,
             jax.errors.ConcretizationTypeError,
         ):
             return batch.n_times - 1
-        bad = valid & ((t_idx < 0) | (t_idx >= batch.n_times))
-        if bad.any():
+        out_of_range = valid & ((time_indices < 0) | (time_indices >= batch.n_times))
+        if out_of_range.any():
             raise ObservationError(
                 f"PointObsBatch.time_index has valid entries outside "
                 f"[0, n_times - 1] = [0, {batch.n_times - 1}]: "
-                f"{np.unique(t_idx[bad]).tolist()}."
+                f"{np.unique(time_indices[out_of_range]).tolist()}."
             )
     return batch.n_times - 1
 

@@ -75,17 +75,19 @@ class SoftBoundedForward(eqx.Module):
         return getattr(self.forward, "state_signature", None)
 
     def _confine(self, state: Array) -> Array:
-        b = self.bound
-        a = jnp.abs(state)
+        half_width = self.bound
+        abs_state = jnp.abs(state)
         # The in-box branch returns ``state`` itself (not ``sign * abs``) so the
         # gradient is exactly one everywhere inside, including at zero, where
         # ``jnp.sign`` would otherwise zero it. Outside, the algebraic
         # saturation u / (1 + u) keeps the derivative 1 / (1 + u)^2 finite and
         # non-zero far beyond any state a line search will try (tanh would
         # underflow to a zero gradient a few bounds out).
-        u = jnp.maximum(a - b, 0.0) / b
-        outside = jnp.sign(state) * (b + b * u / (1.0 + u))
-        return jnp.where(a <= b, state, outside)
+        # u = max(|x| − b, 0) / b
+        excess = jnp.maximum(abs_state - half_width, 0.0) / half_width
+        # s(x) = sign(x) (b + b u / (1 + u))
+        outside = jnp.sign(state) * (half_width + half_width * excess / (1.0 + excess))
+        return jnp.where(abs_state <= half_width, state, outside)
 
     def step(self, state: Array, dt: float) -> Array:
         """Advance ``state`` by ``dt`` with confinement before and after."""

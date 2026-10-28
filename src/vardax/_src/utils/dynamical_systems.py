@@ -34,11 +34,14 @@ class Lorenz63(eqx.Module):
         args: None,
     ) -> Float[Array, " 3"]:
         """Evaluate the vector field at state ``y`` and time ``t``."""
-        x_, y_, z_ = y[0], y[1], y[2]
-        dx = self.sigma * (y_ - x_)
-        dy = x_ * (self.rho - z_) - y_
-        dz = x_ * y_ - self.beta * z_
-        return jnp.array([dx, dy, dz])
+        state_x, state_y, state_z = y[0], y[1], y[2]
+        # dx/dt = σ(y − x)
+        dx_dt = self.sigma * (state_y - state_x)
+        # dy/dt = x(ρ − z) − y
+        dy_dt = state_x * (self.rho - state_z) - state_y
+        # dz/dt = xy − βz
+        dz_dt = state_x * state_y - self.beta * state_z
+        return jnp.array([dx_dt, dy_dt, dz_dt])
 
 
 def simulate_lorenz63(
@@ -84,16 +87,16 @@ def simulate_lorenz63(
         x0 = jnp.array([1.0, 1.0, 1.0]) + noise
 
     total_steps = n_burn_in + n_steps
-    t0 = 0.0
-    t1 = total_steps * dt
+    start_time = 0.0
+    end_time = total_steps * dt
 
-    save_times = jnp.linspace(t0, t1, total_steps + 1)
+    save_times = jnp.linspace(start_time, end_time, total_steps + 1)
 
-    sol = diffeqsolve(
+    solution = diffeqsolve(
         ODETerm(model),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
         Tsit5(),
-        t0=t0,
-        t1=t1,
+        t0=start_time,
+        t1=end_time,
         dt0=dt,
         y0=x0,
         saveat=SaveAt(ts=save_times),
@@ -103,7 +106,7 @@ def simulate_lorenz63(
     )
 
     # Discard burn-in steps; keep indices n_burn_in .. total_steps (inclusive)
-    states = sol.ys[n_burn_in:]
+    states = solution.ys[n_burn_in:]
     time_coords = save_times[n_burn_in:] - save_times[n_burn_in]
     return time_coords, states
 
@@ -161,29 +164,29 @@ def simulate_lorenz96(
     model = Lorenz96(F=F)
 
     # Standard L96 initialization: uniform forcing with a small random perturbation
-    x0 = jnp.full((N,), F)
+    initial_state = jnp.full((N,), F)
     noise = jax.random.normal(key, shape=(N,)) * 0.01
-    x0 = x0 + noise
+    initial_state = initial_state + noise
 
     total_steps = n_burn_in + n_steps
-    t0 = 0.0
-    t1 = total_steps * dt
+    start_time = 0.0
+    end_time = total_steps * dt
 
-    save_times = jnp.linspace(t0, t1, total_steps + 1)
+    save_times = jnp.linspace(start_time, end_time, total_steps + 1)
 
-    sol = diffeqsolve(
+    solution = diffeqsolve(
         ODETerm(model),  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
         Tsit5(),
-        t0=t0,
-        t1=t1,
+        t0=start_time,
+        t1=end_time,
         dt0=dt,
-        y0=x0,
+        y0=initial_state,
         saveat=SaveAt(ts=save_times),
         # Fixed-step integration takes exactly ``total_steps`` steps; diffrax's
         # default cap (4096) would abort long simulations (e.g. 5000 + 1000).
         max_steps=total_steps + 1,
     )
 
-    states = sol.ys[n_burn_in:]
+    states = solution.ys[n_burn_in:]
     time_coords = save_times[n_burn_in:] - save_times[n_burn_in]
     return time_coords, states

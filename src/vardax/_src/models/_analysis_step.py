@@ -87,15 +87,25 @@ def analyse_forecast(
         )
 
     obs_shape = obs.shape[1:] if batched else obs.shape
-    H = default_obs_op if obs_op is None else obs_op
-    R = _resolve_obs_err_cov(obs_err_cov, default_obs_cov_op, obs_shape, obs.dtype)
+    resolved_obs_op = default_obs_op if obs_op is None else obs_op
+    resolved_obs_cov_op = _resolve_obs_err_cov(
+        obs_err_cov, default_obs_cov_op, obs_shape, obs.dtype
+    )
 
     finite = jnp.isfinite(obs)
     mask = finite.astype(obs.dtype)
     obs_clean = jnp.where(finite, obs, jnp.zeros((), obs.dtype))
 
-    def _one(x_b: Float[Array, "*state"], y: Array, m: Array) -> Float[Array, "*state"]:
-        return analyse_one(x_b, y, m, H, R)
+    def _one(
+        background: Float[Array, "*state"], sample_obs: Array, sample_mask: Array
+    ) -> Float[Array, "*state"]:
+        return analyse_one(
+            background,
+            sample_obs,
+            sample_mask,
+            resolved_obs_op,
+            resolved_obs_cov_op,
+        )
 
     if batched:
         return jax.vmap(_one)(forecast, obs_clean, mask)

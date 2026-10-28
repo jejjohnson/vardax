@@ -87,17 +87,17 @@ class FourDVarNet1D(eqx.Module):
         self.alpha = alpha
         self.prior_weight = prior_weight
         self.solver_adjoint = solver_adjoint or _default_adjoint()
-        k_prior, k_grad = jax.random.split(key)
+        key_prior, key_grad = jax.random.split(key)
         self.prior = BilinAEPrior1D(
             state_dim=state_dim,
             latent_dim=latent_dim,
             n_time=n_time,
-            key=k_prior,
+            key=key_prior,
         )
         self.grad_mod = ConvLSTMGradMod1D(
             state_channels=n_time,
             hidden_dim=hidden_dim,
-            key=k_grad,
+            key=key_grad,
         )
 
     def __call__(self, batch: Batch1D) -> Float[Array, "B T N"]:
@@ -115,23 +115,29 @@ class FourDVarNet1D(eqx.Module):
         return self._call_unrolled(batch)
 
     def _call_unrolled(self, batch: Batch1D) -> Float[Array, "B T N"]:
-        b, _, n = batch.input.shape
-        x = batch.input * batch.mask
-        lstm = LSTMState1D.zeros(b, self.grad_mod.hidden_dim, n)
+        batch_size, _, n_space = batch.input.shape
+        # u₀ = m ⊙ y
+        state = batch.input * batch.mask
+        lstm = LSTMState1D.zeros(batch_size, self.grad_mod.hidden_dim, n_space)
 
         for _ in range(self.n_solver_steps):
 
-            def cost_fn(x_):
-                obs_diff = batch.mask * (x_ - batch.input)
-                j_obs = jnp.sum(obs_diff**2)
-                j_prior = self.prior_weight * jnp.sum((x_ - self.prior(x_)) ** 2)
-                return j_obs + j_prior
+            def cost_fn(current_state):
+                obs_diff = batch.mask * (current_state - batch.input)
+                # J_obs = ‖m ⊙ (u − y)‖²
+                obs_cost = jnp.sum(obs_diff**2)
+                # J_prior = λ ‖u − φ(u)‖²
+                prior_cost = self.prior_weight * jnp.sum(
+                    (current_state - self.prior(current_state)) ** 2
+                )
+                return obs_cost + prior_cost
 
-            grad = jax.grad(cost_fn)(x)
-            update, lstm = self.grad_mod(grad, x, lstm)
-            x = x - self.alpha * update
+            grad = jax.grad(cost_fn)(state)
+            update, lstm = self.grad_mod(grad, state, lstm)
+            # u ← u − α · update
+            state = state - self.alpha * update
 
-        return x
+        return state
 
     def _call_one_step(self, batch: Batch1D) -> Float[Array, "B T N"]:
         from .solver import one_step_solve_4dvarnet_1d
@@ -220,18 +226,18 @@ class FourDVarNet2D(eqx.Module):
         self.alpha = alpha
         self.prior_weight = prior_weight
         self.solver_adjoint = solver_adjoint or _default_adjoint()
-        k_prior, k_grad = jax.random.split(key)
+        key_prior, key_grad = jax.random.split(key)
         self.prior = BilinAEPrior2D(
             latent_dim=latent_dim,
             n_time=n_time,
             height=height,
             width=width,
-            key=k_prior,
+            key=key_prior,
         )
         self.grad_mod = ConvLSTMGradMod2D(
             state_channels=n_time,
             hidden_dim=hidden_dim,
-            key=k_grad,
+            key=key_grad,
         )
 
     def __call__(self, batch: Batch2D) -> Float[Array, "B T H W"]:
@@ -247,23 +253,29 @@ class FourDVarNet2D(eqx.Module):
         return self._call_unrolled(batch)
 
     def _call_unrolled(self, batch: Batch2D) -> Float[Array, "B T H W"]:
-        b, _, h, w = batch.input.shape
-        x = batch.input * batch.mask
-        lstm = LSTMState2D.zeros(b, self.grad_mod.hidden_dim, h, w)
+        batch_size, _, height, width = batch.input.shape
+        # u₀ = m ⊙ y
+        state = batch.input * batch.mask
+        lstm = LSTMState2D.zeros(batch_size, self.grad_mod.hidden_dim, height, width)
 
         for _ in range(self.n_solver_steps):
 
-            def cost_fn(x_):
-                obs_diff = batch.mask * (x_ - batch.input)
-                j_obs = jnp.sum(obs_diff**2)
-                j_prior = self.prior_weight * jnp.sum((x_ - self.prior(x_)) ** 2)
-                return j_obs + j_prior
+            def cost_fn(current_state):
+                obs_diff = batch.mask * (current_state - batch.input)
+                # J_obs = ‖m ⊙ (u − y)‖²
+                obs_cost = jnp.sum(obs_diff**2)
+                # J_prior = λ ‖u − φ(u)‖²
+                prior_cost = self.prior_weight * jnp.sum(
+                    (current_state - self.prior(current_state)) ** 2
+                )
+                return obs_cost + prior_cost
 
-            grad = jax.grad(cost_fn)(x)
-            update, lstm = self.grad_mod(grad, x, lstm)
-            x = x - self.alpha * update
+            grad = jax.grad(cost_fn)(state)
+            update, lstm = self.grad_mod(grad, state, lstm)
+            # u ← u − α · update
+            state = state - self.alpha * update
 
-        return x
+        return state
 
     def _call_one_step(self, batch: Batch2D) -> Float[Array, "B T H W"]:
         from .solver import one_step_solve_4dvarnet_2d

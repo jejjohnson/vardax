@@ -36,9 +36,10 @@ class _BilinearBlock(eqx.Module):
 
     def __call__(self, x: Array) -> Array:
         # eqx.nn.Linear operates on a single sample, vmap over batch
-        a = jax.vmap(self.linear_a)(x)
-        b = jax.vmap(self.linear_b)(x)
-        return jax.nn.relu(a) * jnp.tanh(b)
+        relu_input = jax.vmap(self.linear_a)(x)
+        tanh_input = jax.vmap(self.linear_b)(x)
+        # relu(Ax) * tanh(Bx)
+        return jax.nn.relu(relu_input) * jnp.tanh(tanh_input)
 
 
 # ---------------------------------------------------------------------------
@@ -91,20 +92,20 @@ class BilinAEPrior1D(eqx.Module):
         self._decode_dense = eqx.nn.Linear(latent_dim, n_time * state_dim, key=key_dec)
 
     def __call__(self, x: Float[Array, "B T N"]) -> Float[Array, "B T N"]:
-        x_flat = einx.id("b t n -> b (t n)", x)
-        z = self._bilin(x_flat)
-        out = jax.vmap(self._decode_dense)(z)
-        return einx.id("b (t n) -> b t n", out, t=x.shape[1])
+        state_flat = einx.id("b t n -> b (t n)", x)
+        latent = self._bilin(state_flat)
+        decoded = jax.vmap(self._decode_dense)(latent)
+        return einx.id("b (t n) -> b t n", decoded, t=x.shape[1])
 
     def encode(self, x: Float[Array, "B T N"]) -> Float[Array, "B Z"]:
         """Encode input to latent space."""
-        x_flat = einx.id("b t n -> b (t n)", x)
-        return self._bilin(x_flat)
+        state_flat = einx.id("b t n -> b (t n)", x)
+        return self._bilin(state_flat)
 
     def decode(self, z: Float[Array, "B Z"]) -> Float[Array, "B T N"]:
         """Decode latent code to state space."""
-        out = jax.vmap(self._decode_dense)(z)
-        return einx.id("b (t n) -> b t n", out, t=self.n_time, n=self.state_dim)
+        decoded = jax.vmap(self._decode_dense)(z)
+        return einx.id("b (t n) -> b t n", decoded, t=self.n_time, n=self.state_dim)
 
 
 class MLPAEPrior1D(eqx.Module):
@@ -134,19 +135,19 @@ class MLPAEPrior1D(eqx.Module):
     ) -> None:
         self.n_time = n_time
         in_features = n_time * state_dim
-        k1, k2, k3, k4 = jax.random.split(key, 4)
-        self.enc1 = eqx.nn.Linear(in_features, hidden_dim, key=k1)
-        self.enc2 = eqx.nn.Linear(hidden_dim, latent_dim, key=k2)
-        self.dec1 = eqx.nn.Linear(latent_dim, hidden_dim, key=k3)
-        self.dec2 = eqx.nn.Linear(hidden_dim, in_features, key=k4)
+        key_enc1, key_enc2, key_dec1, key_dec2 = jax.random.split(key, 4)
+        self.enc1 = eqx.nn.Linear(in_features, hidden_dim, key=key_enc1)
+        self.enc2 = eqx.nn.Linear(hidden_dim, latent_dim, key=key_enc2)
+        self.dec1 = eqx.nn.Linear(latent_dim, hidden_dim, key=key_dec1)
+        self.dec2 = eqx.nn.Linear(hidden_dim, in_features, key=key_dec2)
 
     def __call__(self, x: Float[Array, "B T N"]) -> Float[Array, "B T N"]:
-        x_flat = einx.id("b t n -> b (t n)", x)
-        z = jax.nn.relu(jax.vmap(self.enc1)(x_flat))
-        z = jax.vmap(self.enc2)(z)
-        h = jax.nn.relu(jax.vmap(self.dec1)(z))
-        out = jax.vmap(self.dec2)(h)
-        return einx.id("b (t n) -> b t n", out, t=x.shape[1])
+        state_flat = einx.id("b t n -> b (t n)", x)
+        latent = jax.nn.relu(jax.vmap(self.enc1)(state_flat))
+        latent = jax.vmap(self.enc2)(latent)
+        hidden = jax.nn.relu(jax.vmap(self.dec1)(latent))
+        decoded = jax.vmap(self.dec2)(hidden)
+        return einx.id("b (t n) -> b t n", decoded, t=x.shape[1])
 
 
 class BilinAEPrior2D(eqx.Module):
@@ -178,16 +179,16 @@ class BilinAEPrior2D(eqx.Module):
         self.height = height
         self.width = width
         in_features = n_time * height * width
-        k_bilin, k_dec = jax.random.split(key)
-        self._bilin = _BilinearBlock(in_features, latent_dim, key=k_bilin)
-        self._decode_dense = eqx.nn.Linear(latent_dim, in_features, key=k_dec)
+        key_bilin, key_dec = jax.random.split(key)
+        self._bilin = _BilinearBlock(in_features, latent_dim, key=key_bilin)
+        self._decode_dense = eqx.nn.Linear(latent_dim, in_features, key=key_dec)
 
     def __call__(self, x: Float[Array, "B T H W"]) -> Float[Array, "B T H W"]:
-        _, t, h, w = x.shape
-        x_flat = einx.id("b t h w -> b (t h w)", x)
-        z = self._bilin(x_flat)
-        out = jax.vmap(self._decode_dense)(z)
-        return einx.id("b (t h w) -> b t h w", out, t=t, h=h, w=w)
+        _, n_time, height, width = x.shape
+        state_flat = einx.id("b t h w -> b (t h w)", x)
+        latent = self._bilin(state_flat)
+        decoded = jax.vmap(self._decode_dense)(latent)
+        return einx.id("b (t h w) -> b t h w", decoded, t=n_time, h=height, w=width)
 
 
 class BilinAEPrior2DMultivar(eqx.Module):
@@ -223,16 +224,23 @@ class BilinAEPrior2DMultivar(eqx.Module):
         self.height = height
         self.width = width
         in_features = n_time * n_channels * height * width
-        k_bilin, k_dec = jax.random.split(key)
-        self._bilin = _BilinearBlock(in_features, latent_dim, key=k_bilin)
-        self._decode_dense = eqx.nn.Linear(latent_dim, in_features, key=k_dec)
+        key_bilin, key_dec = jax.random.split(key)
+        self._bilin = _BilinearBlock(in_features, latent_dim, key=key_bilin)
+        self._decode_dense = eqx.nn.Linear(latent_dim, in_features, key=key_dec)
 
     def __call__(self, x: Float[Array, "B T C H W"]) -> Float[Array, "B T C H W"]:
-        _, t, c, h, w = x.shape
-        x_flat = einx.id("b t c h w -> b (t c h w)", x)
-        z = self._bilin(x_flat)
-        out = jax.vmap(self._decode_dense)(z)
-        return einx.id("b (t c h w) -> b t c h w", out, t=t, c=c, h=h, w=w)
+        _, n_time, n_channels, height, width = x.shape
+        state_flat = einx.id("b t c h w -> b (t c h w)", x)
+        latent = self._bilin(state_flat)
+        decoded = jax.vmap(self._decode_dense)(latent)
+        return einx.id(
+            "b (t c h w) -> b t c h w",
+            decoded,
+            t=n_time,
+            c=n_channels,
+            h=height,
+            w=width,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -291,17 +299,17 @@ class L63Prior(eqx.Module):
         *,
         key: PRNGKeyArray,
     ) -> None:
-        k1, k2, k3, k4 = jax.random.split(key, 4)
-        self.enc1 = eqx.nn.Linear(state_dim, hidden_dim, key=k1)
-        self.enc2 = eqx.nn.Linear(hidden_dim, latent_dim, key=k2)
-        self.dec1 = eqx.nn.Linear(latent_dim, hidden_dim, key=k3)
-        self.dec2 = eqx.nn.Linear(hidden_dim, state_dim, key=k4)
+        key_enc1, key_enc2, key_dec1, key_dec2 = jax.random.split(key, 4)
+        self.enc1 = eqx.nn.Linear(state_dim, hidden_dim, key=key_enc1)
+        self.enc2 = eqx.nn.Linear(hidden_dim, latent_dim, key=key_enc2)
+        self.dec1 = eqx.nn.Linear(latent_dim, hidden_dim, key=key_dec1)
+        self.dec2 = eqx.nn.Linear(hidden_dim, state_dim, key=key_dec2)
 
     def __call__(self, x: Float[Array, "B N"]) -> Float[Array, "B N"]:
-        z = jnp.tanh(jax.vmap(self.enc1)(x))
-        z = jax.vmap(self.enc2)(z)
-        h = jnp.tanh(jax.vmap(self.dec1)(z))
-        return jax.vmap(self.dec2)(h)
+        latent = jnp.tanh(jax.vmap(self.enc1)(x))
+        latent = jax.vmap(self.enc2)(latent)
+        hidden = jnp.tanh(jax.vmap(self.dec1)(latent))
+        return jax.vmap(self.dec2)(hidden)
 
 
 class L96Prior(eqx.Module):
@@ -329,17 +337,17 @@ class L96Prior(eqx.Module):
         *,
         key: PRNGKeyArray,
     ) -> None:
-        k1, k2, k3, k4 = jax.random.split(key, 4)
-        self.enc1 = eqx.nn.Linear(state_dim, hidden_dim, key=k1)
-        self.enc2 = eqx.nn.Linear(hidden_dim, latent_dim, key=k2)
-        self.dec1 = eqx.nn.Linear(latent_dim, hidden_dim, key=k3)
-        self.dec2 = eqx.nn.Linear(hidden_dim, state_dim, key=k4)
+        key_enc1, key_enc2, key_dec1, key_dec2 = jax.random.split(key, 4)
+        self.enc1 = eqx.nn.Linear(state_dim, hidden_dim, key=key_enc1)
+        self.enc2 = eqx.nn.Linear(hidden_dim, latent_dim, key=key_enc2)
+        self.dec1 = eqx.nn.Linear(latent_dim, hidden_dim, key=key_dec1)
+        self.dec2 = eqx.nn.Linear(hidden_dim, state_dim, key=key_dec2)
 
     def __call__(self, x: Float[Array, "B N"]) -> Float[Array, "B N"]:
-        z = jnp.tanh(jax.vmap(self.enc1)(x))
-        z = jax.vmap(self.enc2)(z)
-        h = jnp.tanh(jax.vmap(self.dec1)(z))
-        return jax.vmap(self.dec2)(h)
+        latent = jnp.tanh(jax.vmap(self.enc1)(x))
+        latent = jax.vmap(self.enc2)(latent)
+        hidden = jnp.tanh(jax.vmap(self.dec1)(latent))
+        return jax.vmap(self.dec2)(hidden)
 
 
 class ConvAEPrior1D(eqx.Module):
@@ -375,40 +383,40 @@ class ConvAEPrior1D(eqx.Module):
             )
         self.kernel_size = kernel_size
         self.n_time = n_time
-        k_enc, k_dec = jax.random.split(key)
+        key_enc, key_dec = jax.random.split(key)
         # eqx.nn.Conv1d uses channels-first: (in_channels, length)
         self._enc_conv = eqx.nn.Conv1d(
             in_channels=n_time,
             out_channels=latent_channels,
             kernel_size=kernel_size,
             padding=0,  # we apply circular padding manually
-            key=k_enc,
+            key=key_enc,
         )
         self._dec_conv = eqx.nn.Conv1d(
             in_channels=latent_channels,
             out_channels=n_time,
             kernel_size=kernel_size,
             padding=0,
-            key=k_dec,
+            key=key_dec,
         )
 
     def __call__(self, x: Float[Array, "B T N"]) -> Float[Array, "B T N"]:
-        t = x.shape[1]
-        if t != self.n_time:
+        n_time = x.shape[1]
+        if n_time != self.n_time:
             raise ShapeError(
-                f"Input time dimension {t} does not match n_time={self.n_time}."
+                f"Input time dimension {n_time} does not match n_time={self.n_time}."
             )
         # eqx Conv1d expects channels-first: (in_channels=T, length=N)
         # x is already (B, T, N) so vmap over the batch dim works directly.
         pad = self.kernel_size // 2
 
-        def _forward(xi: Float[Array, "T N"]) -> Float[Array, "T N"]:
+        def _forward(sample: Float[Array, "T N"]) -> Float[Array, "T N"]:
             # circular padding on the spatial axis only: the grid is periodic
             periodic_pad = ((0, 0), (pad, pad))
-            h = jnp.pad(xi, periodic_pad, mode="wrap")
-            h = self._enc_conv(h)
-            h = jax.nn.relu(h)
-            h = jnp.pad(h, periodic_pad, mode="wrap")
-            return self._dec_conv(h)
+            hidden = jnp.pad(sample, periodic_pad, mode="wrap")
+            hidden = self._enc_conv(hidden)
+            hidden = jax.nn.relu(hidden)
+            hidden = jnp.pad(hidden, periodic_pad, mode="wrap")
+            return self._dec_conv(hidden)
 
         return jax.vmap(_forward)(x)

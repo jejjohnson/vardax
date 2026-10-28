@@ -76,7 +76,7 @@ def _tree_l2_norm(tree: PyTree[Array]) -> Float[Array, ""]:
 
 
 def _close_over(
-    cost_fn: Callable[[Any, Any], Float[Array, ""]], x0: PyTree, batch: Any
+    cost_fn: Callable[[Any, Any], Float[Array, ""]], initial_guess: PyTree, batch: Any
 ) -> Callable[[Any, Any], Float[Array, ""]]:
     """Closure-convert ``cost_fn`` so arrays it closes over become leaves.
 
@@ -84,15 +84,15 @@ def _close_over(
     inputs, so a cost that closes over model arrays (``prior_mean``, an
     operator) must expose them, as ``optimistix.minimise`` does.
     """
-    fn = eqx.filter_closure_convert(cost_fn, x0, batch)
-    f_struct = fn.out_struct  # ty:ignore[unresolved-attribute]
+    closed_cost_fn = eqx.filter_closure_convert(cost_fn, initial_guess, batch)
+    cost_struct = closed_cost_fn.out_struct  # ty:ignore[unresolved-attribute]
     if not (
-        isinstance(f_struct, jax.ShapeDtypeStruct)
-        and f_struct.shape == ()
-        and jnp.issubdtype(f_struct.dtype, jnp.floating)
+        isinstance(cost_struct, jax.ShapeDtypeStruct)
+        and cost_struct.shape == ()
+        and jnp.issubdtype(cost_struct.dtype, jnp.floating)
     ):
         raise ShapeError("cost_fn must return a single floating-point scalar.")
-    return fn
+    return closed_cost_fn
 
 
 class OptimistixMinimiser(eqx.Module):
@@ -372,8 +372,8 @@ class OptaxMinimiser(eqx.Module):
             A [`MinimiseResult`][vardax.MinimiseResult].
         """
         x0 = jtu.tree_map(jnp.asarray, x0)
-        fn = _close_over(cost_fn, x0, batch)
-        inputs = (fn, self, x0, batch)
+        closed_cost_fn = _close_over(cost_fn, x0, batch)
+        inputs = (closed_cost_fn, self, x0, batch)
         value, (num_steps, converged) = (adjoint or optx.ImplicitAdjoint()).apply(
             _optax_primal, _optax_rewrite, inputs, frozenset()
         )
@@ -406,34 +406,42 @@ def _cost_and_grad_norm(cost_fn, value, batch):
     on the parameters. The gradient norm is a diagnostic and is detached.
     """
     cost = cost_fn(value, batch)
-    x_star = jax.lax.stop_gradient(value)
-    grad = jax.grad(cost_fn)(x_star, batch)
+    minimum = jax.lax.stop_gradient(value)
+    grad = jax.grad(cost_fn)(minimum, batch)
     return cost, jax.lax.stop_gradient(_tree_l2_norm(grad))
 
 
-def _optax_loop(fn, batch, x0, optimizer, max_steps, tols, patience, while_loop):
+def _optax_loop(
+    cost_fn, batch, initial_guess, optimizer, max_steps, tols, patience, while_loop
+):
     """One early-stopped loop; returns (best iterate, steps, converged)."""
     gtol, rtol, atol, step_patience = tols
     optimizer = optax.with_extra_args_support(optimizer)
 
-    def value_fn(x):
-        return fn(x, batch)
+    def value_fn(iterate):
+        return cost_fn(iterate, batch)
 
-    f_dtype = fn.out_struct.dtype
-    inf = jnp.asarray(jnp.inf, dtype=f_dtype)
-    eps = jnp.finfo(f_dtype).eps
+    cost_dtype = cost_fn.out_struct.dtype
+    inf = jnp.asarray(jnp.inf, dtype=cost_dtype)
+    eps = jnp.finfo(cost_dtype).eps
 
-    def slack(ref):
-        return jnp.where(jnp.isfinite(ref), 8 * eps * jnp.abs(ref), 0.0)
+    def slack(reference_cost):
+        return jnp.where(
+            jnp.isfinite(reference_cost), 8 * eps * jnp.abs(reference_cost), 0.0
+        )
 
-    def better(f, g_norm, best_f, best_g):
+    def better(cost, grad_norm, best_cost, best_grad_norm):
         # Lower cost beyond round-off, or a tie within round-off broken by
         # the gradient norm (closer to stationary).
-        s = slack(best_f)
-        return (f < best_f - s) | ((f <= best_f + s) & (g_norm <= best_g))
+        tolerance = slack(best_cost)
+        return (cost < best_cost - tolerance) | (
+            (cost <= best_cost + tolerance) & (grad_norm <= best_grad_norm)
+        )
 
-    def select(take, a, b):
-        return jtu.tree_map(lambda u, v: jnp.where(take, u, v), a, b)
+    def select(take, if_true, if_false):
+        return jtu.tree_map(
+            lambda new, old: jnp.where(take, new, old), if_true, if_false
+        )
 
     def cond(carry):
         step, _, _, _, _, _, _, since_best, _, converged = carry
@@ -443,36 +451,47 @@ def _optax_loop(fn, batch, x0, optimizer, max_steps, tols, patience, while_loop)
         return keep
 
     def body(carry):
-        (step, x, opt_state, best_x, best_f, best_g, min_f, since_best, n_small, _) = (
-            carry
-        )
-        f, g = jax.value_and_grad(fn)(x, batch)
-        g_norm = _tree_l2_norm(g)
-        take = better(f, g_norm, best_f, best_g)
-        best_x = select(take, x, best_x)
-        best_f = jnp.where(take, f, best_f)
-        best_g = jnp.where(take, g_norm, best_g)
+        (
+            step,
+            iterate,
+            opt_state,
+            best_iterate,
+            best_cost,
+            best_grad_norm,
+            min_cost,
+            since_best,
+            n_small,
+            _,
+        ) = carry
+        cost, gradient = jax.value_and_grad(cost_fn)(iterate, batch)
+        grad_norm = _tree_l2_norm(gradient)
+        take = better(cost, grad_norm, best_cost, best_grad_norm)
+        best_iterate = select(take, iterate, best_iterate)
+        best_cost = jnp.where(take, cost, best_cost)
+        best_grad_norm = jnp.where(take, grad_norm, best_grad_norm)
         # Patience: a step counts unless its cost is worse than the lowest
         # seen by more than round-off.
-        since_best = jnp.where(f <= min_f + slack(min_f), 0, since_best + 1)
-        min_f = jnp.minimum(f, min_f)
-        small_grad = g_norm <= gtol
+        since_best = jnp.where(cost <= min_cost + slack(min_cost), 0, since_best + 1)
+        min_cost = jnp.minimum(cost, min_cost)
+        small_grad = grad_norm <= gtol
         updates, opt_state = optimizer.update(
-            g, opt_state, x, value=f, grad=g, value_fn=value_fn
+            gradient, opt_state, iterate, value=cost, grad=gradient, value_fn=value_fn
         )
-        small_step = _tree_l2_norm(updates) <= atol + rtol * _tree_l2_norm(x)
+        small_step = _tree_l2_norm(updates) <= atol + rtol * _tree_l2_norm(iterate)
         n_small = jnp.where(small_step, n_small + 1, 0)
         # A stationary iterate is final: do not apply the (momentum) update.
-        x_new = select(small_grad, x, optax.apply_updates(x, updates))
+        next_iterate = select(
+            small_grad, iterate, optax.apply_updates(iterate, updates)
+        )
         converged = small_grad | (n_small >= step_patience)
         return (
             step + 1,
-            x_new,
+            next_iterate,
             opt_state,
-            best_x,
-            best_f,
-            best_g,
-            min_f,
+            best_iterate,
+            best_cost,
+            best_grad_norm,
+            min_cost,
             since_best,
             n_small,
             converged,
@@ -481,9 +500,9 @@ def _optax_loop(fn, batch, x0, optimizer, max_steps, tols, patience, while_loop)
     zero = jnp.asarray(0, dtype=jnp.int32)
     init = (
         zero,
-        x0,
-        optimizer.init(x0),
-        x0,
+        initial_guess,
+        optimizer.init(initial_guess),
+        initial_guess,
         inf,
         inf,
         inf,
@@ -491,24 +510,26 @@ def _optax_loop(fn, batch, x0, optimizer, max_steps, tols, patience, while_loop)
         zero,
         jnp.asarray(False),
     )
-    step, x_last, _, best_x, best_f, best_g, *_, converged = while_loop(
-        cond, body, init, max_steps=max_steps
+    step, last_iterate, _, best_iterate, best_cost, best_grad_norm, *_, converged = (
+        while_loop(cond, body, init, max_steps=max_steps)
     )
     # The last iterate may not have been evaluated: keep it if it is better.
-    f_last, g_last = jax.value_and_grad(fn)(x_last, batch)
-    take_last = better(f_last, _tree_l2_norm(g_last), best_f, best_g)
-    return select(take_last, x_last, best_x), step, converged
+    last_cost, last_gradient = jax.value_and_grad(cost_fn)(last_iterate, batch)
+    take_last = better(
+        last_cost, _tree_l2_norm(last_gradient), best_cost, best_grad_norm
+    )
+    return select(take_last, last_iterate, best_iterate), step, converged
 
 
 # optimistix's implicit adjoint requires global functions with no closure;
 # no_type_check keeps the jaxtyping test hook from wrapping this one
 @no_type_check
 def _optax_primal(inputs):
-    fn, minimiser, x0, batch, while_loop = inputs
-    x, steps, converged = _optax_loop(
-        fn,
+    cost_fn, minimiser, initial_guess, batch, while_loop = inputs
+    iterate, steps, converged = _optax_loop(
+        cost_fn,
         batch,
-        x0,
+        initial_guess,
         minimiser.optimizer,
         minimiser.max_steps,
         (minimiser.gtol, minimiser.rtol, minimiser.atol, minimiser.step_patience),
@@ -516,10 +537,10 @@ def _optax_primal(inputs):
         while_loop,
     )
     if minimiser.polish is not None:
-        x, polish_steps, converged = _optax_loop(
-            fn,
+        iterate, polish_steps, converged = _optax_loop(
+            cost_fn,
             batch,
-            x,
+            iterate,
             minimiser.polish,
             minimiser.polish_steps,
             (
@@ -532,15 +553,15 @@ def _optax_primal(inputs):
             while_loop,
         )
         steps = steps + polish_steps
-    return x, (steps, converged)
+    return iterate, (steps, converged)
 
 
 # global and unwrapped for the implicit adjoint, as _optax_primal
 @no_type_check
 def _optax_rewrite(root, _residual, inputs):
     """Stationarity condition $\\nabla J(\\theta^\\star) = 0$ for the IFT."""
-    fn, _, _, batch, *_ = inputs
-    return jax.grad(fn)(root, batch)
+    cost_fn, _, _, batch, *_ = inputs
+    return jax.grad(cost_fn)(root, batch)
 
 
 def minimise(

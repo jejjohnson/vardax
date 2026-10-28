@@ -50,28 +50,28 @@ class ConvLSTMGradMod1D(eqx.Module):
         self.state_channels = state_channels
         self.hidden_dim = hidden_dim
         self.kernel_size = kernel_size
-        k1, k2, k3 = jax.random.split(key, 3)
+        key_input, key_hidden, key_output = jax.random.split(key, 3)
         pad = kernel_size // 2
         self._gates_input_conv = eqx.nn.Conv1d(
             in_channels=2 * state_channels,
             out_channels=4 * hidden_dim,
             kernel_size=kernel_size,
             padding=pad,
-            key=k1,
+            key=key_input,
         )
         self._gates_hidden_conv = eqx.nn.Conv1d(
             in_channels=hidden_dim,
             out_channels=4 * hidden_dim,
             kernel_size=kernel_size,
             padding=pad,
-            key=k2,
+            key=key_hidden,
         )
         self._output_conv = eqx.nn.Conv1d(
             in_channels=hidden_dim,
             out_channels=state_channels,
             kernel_size=kernel_size,
             padding=pad,
-            key=k3,
+            key=key_output,
         )
 
     def __call__(
@@ -95,26 +95,36 @@ class ConvLSTMGradMod1D(eqx.Module):
         # for the LSTM state — vmap over the leading batch dim.
 
         def _forward(
-            grad_i: Float[Array, "T N"],
-            state_i: Float[Array, "T N"],
-            h_i: Float[Array, "H N"],
-            c_i: Float[Array, "H N"],
+            grad_sample: Float[Array, "T N"],
+            state_sample: Float[Array, "T N"],
+            hidden_sample: Float[Array, "H N"],
+            cell_sample: Float[Array, "H N"],
         ) -> tuple[Float[Array, "T N"], Float[Array, "H N"], Float[Array, "H N"]]:
             # the input channels are the gradient stacked over the state
-            x = einx.id("a n, b n -> (a + b) n", grad_i, state_i)
-            gates = self._gates_input_conv(x) + self._gates_hidden_conv(h_i)
-            i, f, g, o = einx.id("(gate h) n -> gate h n", gates, gate=4)
-            i = jax.nn.sigmoid(i)
-            f = jax.nn.sigmoid(f)
-            g = jnp.tanh(g)
-            o = jax.nn.sigmoid(o)
-            c_new = f * c_i + i * g
-            h_new = o * jnp.tanh(c_new)
-            out = self._output_conv(h_new)
-            return out, h_new, c_new
+            stacked_input = einx.id("a n, b n -> (a + b) n", grad_sample, state_sample)
+            # gates = W_x [∇J; u] + W_h h
+            gates = self._gates_input_conv(stacked_input) + self._gates_hidden_conv(
+                hidden_sample
+            )
+            # [i; f; g; o] = split(gates)
+            input_gate, forget_gate, cell_candidate, output_gate = einx.id(
+                "(gate h) n -> gate h n", gates, gate=4
+            )
+            input_gate = jax.nn.sigmoid(input_gate)
+            forget_gate = jax.nn.sigmoid(forget_gate)
+            cell_candidate = jnp.tanh(cell_candidate)
+            output_gate = jax.nn.sigmoid(output_gate)
+            # c' = f ⊙ c + i ⊙ g
+            new_cell = forget_gate * cell_sample + input_gate * cell_candidate
+            # h' = o ⊙ tanh(c')
+            new_hidden = output_gate * jnp.tanh(new_cell)
+            update = self._output_conv(new_hidden)
+            return update, new_hidden, new_cell
 
-        out, h_new, c_new = jax.vmap(_forward)(grad, state, lstm_state.h, lstm_state.c)
-        return out, LSTMState1D(h=h_new, c=c_new)
+        update, new_hidden, new_cell = jax.vmap(_forward)(
+            grad, state, lstm_state.h, lstm_state.c
+        )
+        return update, LSTMState1D(h=new_hidden, c=new_cell)
 
 
 class ConvLSTMGradMod2D(eqx.Module):
@@ -144,28 +154,28 @@ class ConvLSTMGradMod2D(eqx.Module):
         self.state_channels = state_channels
         self.hidden_dim = hidden_dim
         self.kernel_size = kernel_size
-        k1, k2, k3 = jax.random.split(key, 3)
+        key_input, key_hidden, key_output = jax.random.split(key, 3)
         pad = kernel_size // 2
         self._gates_input_conv = eqx.nn.Conv2d(
             in_channels=2 * state_channels,
             out_channels=4 * hidden_dim,
             kernel_size=kernel_size,
             padding=pad,
-            key=k1,
+            key=key_input,
         )
         self._gates_hidden_conv = eqx.nn.Conv2d(
             in_channels=hidden_dim,
             out_channels=4 * hidden_dim,
             kernel_size=kernel_size,
             padding=pad,
-            key=k2,
+            key=key_hidden,
         )
         self._output_conv = eqx.nn.Conv2d(
             in_channels=hidden_dim,
             out_channels=state_channels,
             kernel_size=kernel_size,
             padding=pad,
-            key=k3,
+            key=key_output,
         )
 
     def __call__(
@@ -186,27 +196,39 @@ class ConvLSTMGradMod2D(eqx.Module):
         """
 
         def _forward(
-            grad_i: Float[Array, "T H W"],
-            state_i: Float[Array, "T H W"],
-            h_i: Float[Array, "H_dim H W"],
-            c_i: Float[Array, "H_dim H W"],
+            grad_sample: Float[Array, "T H W"],
+            state_sample: Float[Array, "T H W"],
+            hidden_sample: Float[Array, "H_dim H W"],
+            cell_sample: Float[Array, "H_dim H W"],
         ) -> tuple[
             Float[Array, "T H W"],
             Float[Array, "H_dim H W"],
             Float[Array, "H_dim H W"],
         ]:
             # the input channels are the gradient stacked over the state
-            x = einx.id("a h w, b h w -> (a + b) h w", grad_i, state_i)
-            gates = self._gates_input_conv(x) + self._gates_hidden_conv(h_i)
-            i, f, g, o = einx.id("(gate c) h w -> gate c h w", gates, gate=4)
-            i = jax.nn.sigmoid(i)
-            f = jax.nn.sigmoid(f)
-            g = jnp.tanh(g)
-            o = jax.nn.sigmoid(o)
-            c_new = f * c_i + i * g
-            h_new = o * jnp.tanh(c_new)
-            out = self._output_conv(h_new)
-            return out, h_new, c_new
+            stacked_input = einx.id(
+                "a h w, b h w -> (a + b) h w", grad_sample, state_sample
+            )
+            # gates = W_x [∇J; u] + W_h h
+            gates = self._gates_input_conv(stacked_input) + self._gates_hidden_conv(
+                hidden_sample
+            )
+            # [i; f; g; o] = split(gates)
+            input_gate, forget_gate, cell_candidate, output_gate = einx.id(
+                "(gate c) h w -> gate c h w", gates, gate=4
+            )
+            input_gate = jax.nn.sigmoid(input_gate)
+            forget_gate = jax.nn.sigmoid(forget_gate)
+            cell_candidate = jnp.tanh(cell_candidate)
+            output_gate = jax.nn.sigmoid(output_gate)
+            # c' = f ⊙ c + i ⊙ g
+            new_cell = forget_gate * cell_sample + input_gate * cell_candidate
+            # h' = o ⊙ tanh(c')
+            new_hidden = output_gate * jnp.tanh(new_cell)
+            update = self._output_conv(new_hidden)
+            return update, new_hidden, new_cell
 
-        out, h_new, c_new = jax.vmap(_forward)(grad, state, lstm_state.h, lstm_state.c)
-        return out, LSTMState2D(h=h_new, c=c_new)
+        update, new_hidden, new_cell = jax.vmap(_forward)(
+            grad, state, lstm_state.h, lstm_state.c
+        )
+        return update, LSTMState2D(h=new_hidden, c=new_cell)

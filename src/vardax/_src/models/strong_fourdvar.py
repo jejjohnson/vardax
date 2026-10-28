@@ -161,10 +161,12 @@ class StrongFourDVar(eqx.Module):
         self.parameterization = parameterization
         self.checkpoint = checkpoint
 
-    def _rollout(self, x_0: Float[Array, " N"], n_steps: int) -> Float[Array, "T N"]:
+    def _rollout(
+        self, initial_state: Float[Array, " N"], n_steps: int
+    ) -> Float[Array, "T N"]:
         """Step the forward model ``n_steps`` times, returning ``T + 1`` states."""
         forward = resolve_forward(self.forward, self.forward_adjoint)
-        return rollout(forward, x_0, n_steps, checkpoint=self.checkpoint)
+        return rollout(forward, initial_state, n_steps, checkpoint=self.checkpoint)
 
     def __call__(self, batch: Batch1D | PointObsBatch) -> Float[Array, "*batch N"]:
         """Strong-4DVar analysis: minimise over $x_0$.
@@ -180,41 +182,48 @@ class StrongFourDVar(eqx.Module):
             check_point_obs_cov(self.obs_cov_op)
             n_steps = window_steps(batch)
 
-            def _one_points(b: PointObsBatch) -> Float[Array, " N"]:
-                def obs_cost(x_0: Float[Array, " N"]) -> Float[Array, ""]:
-                    trajectory = self._rollout(x_0, n_steps=n_steps)
-                    return grid_point_obs_cost(self.obs_op, trajectory, b)
+            def _one_points(window: PointObsBatch) -> Float[Array, " N"]:
+                def obs_cost(initial_state: Float[Array, " N"]) -> Float[Array, ""]:
+                    trajectory = self._rollout(initial_state, n_steps=n_steps)
+                    return grid_point_obs_cost(self.obs_op, trajectory, window)
 
                 return self._solve(obs_cost)
 
             return map_point_batch(_one_points, batch)
 
         obs_cov_op = require_obs_cov(self.obs_cov_op)
-        T = batch.input.shape[1] - 1  # rollout steps (input has T+1 timesteps)
+        # rollout steps (input has T+1 timesteps)
+        n_steps = batch.input.shape[1] - 1
 
         def _one(
-            input_i: Float[Array, "T_plus_1 N"], mask_i: Float[Array, "T_plus_1 N"]
+            window_obs: Float[Array, "T_plus_1 N"],
+            window_mask: Float[Array, "T_plus_1 N"],
         ) -> Float[Array, " N"]:
-            def obs_cost(x_0: Float[Array, " N"]) -> Float[Array, ""]:
+            def obs_cost(initial_state: Float[Array, " N"]) -> Float[Array, ""]:
                 # Roll out the trajectory.
-                trajectory = self._rollout(x_0, n_steps=T)
+                trajectory = self._rollout(initial_state, n_steps=n_steps)
 
                 # Observation term, summed across time.
-                def _per_step(x_t, y_t, m_t):
-                    y_pred = (
-                        self.obs_op(x_t, mask=m_t)
+                def _per_step(state, observation, step_mask):
+                    predicted_obs = (
+                        self.obs_op(state, mask=step_mask)
                         if _accepts_mask(self.obs_op)
-                        else self.obs_op(x_t)
+                        else self.obs_op(state)
                     )
-                    residual = m_t * (y_t - y_pred)
-                    R_inv_r = lx.linear_solve(
+                    # r = m ⊙ (y − H(x))
+                    residual = step_mask * (observation - predicted_obs)
+                    # R⁻¹r
+                    weighted_residual = lx.linear_solve(
                         obs_cov_op,
                         residual,
                         solver=self.cov_solver,
                     ).value
-                    return 0.5 * jnp.sum(residual * R_inv_r)
+                    # J_o,t = ½ rᵀ R⁻¹ r
+                    return 0.5 * jnp.sum(residual * weighted_residual)
 
-                per_step_costs = jax.vmap(_per_step)(trajectory, input_i, mask_i)
+                per_step_costs = jax.vmap(_per_step)(
+                    trajectory, window_obs, window_mask
+                )
                 return jnp.sum(per_step_costs)
 
             return self._solve(obs_cost)
@@ -244,16 +253,19 @@ class StrongFourDVar(eqx.Module):
             )
             return decode(theta_star)
 
-        def cost(x_0: Float[Array, " N"], _args: Any) -> Float[Array, ""]:
+        def cost(initial_state: Float[Array, " N"], _args: Any) -> Float[Array, ""]:
             # Background term
-            dx = x_0 - self.prior_mean
-            B_inv_dx = lx.linear_solve(
+            # δx = x₀ − x_b
+            increment = initial_state - self.prior_mean
+            # B⁻¹δx
+            weighted_increment = lx.linear_solve(
                 self.prior_cov_op,
-                dx,
+                increment,
                 solver=self.cov_solver,
             ).value
-            j_bg = 0.5 * jnp.sum(dx * B_inv_dx)
-            return j_bg + obs_cost(x_0)
+            # J_b = ½ δxᵀ B⁻¹ δx
+            background_cost = 0.5 * jnp.sum(increment * weighted_increment)
+            return background_cost + obs_cost(initial_state)
 
         return minimise(
             self.minimiser,

@@ -77,10 +77,11 @@ def assert_posterior_agreement(
             "p_fast.mean and p_oracle.mean must have the same shape; got "
             f"{p_fast.mean.shape} vs {p_oracle.mean.shape}."
         )
-    sigma = _marginal_std(p_oracle.cov, p_oracle.mean)
-    z = jnp.abs(p_fast.mean - p_oracle.mean) / jnp.maximum(sigma, 1e-12)
-    if jnp.any(z > tolerance_sigma):
-        worst = float(jnp.max(z))
+    oracle_std = _marginal_std(p_oracle.cov, p_oracle.mean)
+    # z = |x*_fast − x*_oracle| / σ_oracle
+    z_score = jnp.abs(p_fast.mean - p_oracle.mean) / jnp.maximum(oracle_std, 1e-12)
+    if jnp.any(z_score > tolerance_sigma):
+        worst = float(jnp.max(z_score))
         raise AssertionError(
             f"posterior agreement failed: max z = {worst:.3f} > {tolerance_sigma:.3f}."
         )
@@ -123,14 +124,15 @@ def assert_adjoint_calibrated(
     """
     keys = jax.random.split(key, n_probes)
     worst_rel = 0.0
-    for k in keys:
-        v = jax.random.normal(k, y.shape)
-        v = v / jnp.linalg.norm(v)
-        _, jv_fast = jax.jvp(fn_fast, (y,), (v,))
-        _, jv_oracle = jax.jvp(fn_oracle, (y,), (v,))
-        denom = jnp.linalg.norm(jv_oracle) + 1e-12
-        rel = float(jnp.linalg.norm(jv_fast - jv_oracle) / denom)
-        worst_rel = max(worst_rel, rel)
+    for probe_key in keys:
+        probe = jax.random.normal(probe_key, y.shape)
+        probe = probe / jnp.linalg.norm(probe)
+        _, jvp_fast = jax.jvp(fn_fast, (y,), (probe,))
+        _, jvp_oracle = jax.jvp(fn_oracle, (y,), (probe,))
+        denom = jnp.linalg.norm(jvp_oracle) + 1e-12
+        # ‖J_fast v − J_oracle v‖ / ‖J_oracle v‖
+        relative_error = float(jnp.linalg.norm(jvp_fast - jvp_oracle) / denom)
+        worst_rel = max(worst_rel, relative_error)
     if worst_rel > threshold:
         raise AssertionError(
             f"adjoint calibration failed: max relative error {worst_rel:.4f} > "
@@ -180,11 +182,11 @@ def simulation_based_calibration(
     """
     keys = jax.random.split(key, n_runs)
     ranks = []
-    for k in keys:
-        k_prior, k_obs, k_post = jax.random.split(k, 3)
-        x_true = sample_prior(k_prior)
-        y = simulate_obs(x_true, k_obs)
-        samples = sample_posterior(y, k_post, n_samples)
+    for run_key in keys:
+        key_prior, key_obs, key_post = jax.random.split(run_key, 3)
+        x_true = sample_prior(key_prior)
+        observation = simulate_obs(x_true, key_obs)
+        samples = sample_posterior(observation, key_post, n_samples)
         # Flatten and use the L2 norm as the scalar reduction.
         scalar_true = float(jnp.linalg.norm(x_true))
         # ‖xᵢ‖₂ over every state dimension of each sample

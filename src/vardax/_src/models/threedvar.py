@@ -149,16 +149,16 @@ class ThreeDVar(eqx.Module):
         if isinstance(batch, PointObsBatch):
             check_point_obs_cov(self.obs_cov_op)
             return map_point_batch(
-                lambda b: self._analyse_points(self.prior_mean, b), batch
+                lambda window: self._analyse_points(self.prior_mean, window), batch
             )
 
         obs_cov_op = require_obs_cov(self.obs_cov_op)
 
         def _one(
-            input_i: Float[Array, "*obs"], mask_i: Float[Array, "*obs"]
+            sample_obs: Float[Array, "*obs"], sample_mask: Float[Array, "*obs"]
         ) -> Float[Array, "*state"]:
             return self._analyse(
-                self.prior_mean, input_i, mask_i, self.obs_op, obs_cov_op
+                self.prior_mean, sample_obs, sample_mask, self.obs_op, obs_cov_op
             )
 
         return jax.vmap(_one)(batch.input, batch.mask)
@@ -189,12 +189,12 @@ class ThreeDVar(eqx.Module):
         obs_cov_op = require_obs_cov(self.obs_cov_op)
 
         def _one(
-            input_i: Float[Array, "*obs"], mask_i: Float[Array, "*obs"]
+            sample_obs: Float[Array, "*obs"], sample_mask: Float[Array, "*obs"]
         ) -> tuple[Float[Array, "*state"], MinimiseResult]:
             return self._analyse(
                 self.prior_mean,
-                input_i,
-                mask_i,
+                sample_obs,
+                sample_mask,
                 self.obs_op,
                 obs_cov_op,
                 with_result=True,
@@ -204,35 +204,42 @@ class ThreeDVar(eqx.Module):
 
     def _analyse(
         self,
-        x_b: Float[Array, "*state"],
-        input_i: Float[Array, "*obs"],
-        mask_i: Float[Array, "*obs"],
+        background: Float[Array, "*state"],
+        sample_obs: Float[Array, "*obs"],
+        sample_mask: Float[Array, "*obs"],
         obs_op: Any,
         obs_cov_op: lx.AbstractLinearOperator,
         *,
         with_result: bool = False,
     ) -> Any:
-        """Minimise the 3D-Var cost of one sample around the background ``x_b``."""
+        """Minimise the 3D-Var cost of one sample around the ``background``."""
 
-        def obs_cost(x: Float[Array, "*state"]) -> Float[Array, ""]:
+        def obs_cost(state: Float[Array, "*state"]) -> Float[Array, ""]:
             # Observation term — apply R^{-1} via lineax solve.
             # Mask predictions AND observations symmetrically: for
             # obs_ops that don't take a `mask` kwarg (e.g.
             # LinearObs), unmasked predictions at missing entries
             # would otherwise penalise the analysis there.
-            y_pred = obs_op(x, mask=mask_i) if _accepts_mask(obs_op) else obs_op(x)
-            residual = mask_i * (input_i - y_pred)
-            R_inv_r = lx.linear_solve(
+            predicted_obs = (
+                obs_op(state, mask=sample_mask)
+                if _accepts_mask(obs_op)
+                else obs_op(state)
+            )
+            # r = m ⊙ (y − H(x))
+            residual = sample_mask * (sample_obs - predicted_obs)
+            # R⁻¹r
+            weighted_residual = lx.linear_solve(
                 obs_cov_op,
                 residual,
                 solver=self.cov_solver,
             ).value
-            return 0.5 * jnp.sum(residual * R_inv_r)
+            # J_o = ½ rᵀ R⁻¹ r
+            return 0.5 * jnp.sum(residual * weighted_residual)
 
-        return self._solve(x_b, obs_cost, with_result=with_result)
+        return self._solve(background, obs_cost, with_result=with_result)
 
     def _analyse_points(
-        self, x_b: Float[Array, "*state"], batch: PointObsBatch
+        self, background: Float[Array, "*state"], batch: PointObsBatch
     ) -> Float[Array, "*state"]:
         """Minimise the 3D-Var cost of one point-observation sample."""
         if isinstance(self.obs_op, FieldPointObs):
@@ -247,22 +254,22 @@ class ThreeDVar(eqx.Module):
             def control_obs_cost(theta: Any) -> Float[Array, ""]:
                 return point_obs_cost(field_op(param.as_field(theta), batch), batch)
 
-            return self._solve(x_b, None, control_obs_cost=control_obs_cost)
+            return self._solve(background, None, control_obs_cost=control_obs_cost)
 
-        def obs_cost(x: Float[Array, "*state"]) -> Float[Array, ""]:
-            return grid_point_obs_cost(self.obs_op, x, batch)
+        def obs_cost(state: Float[Array, "*state"]) -> Float[Array, ""]:
+            return grid_point_obs_cost(self.obs_op, state, batch)
 
-        return self._solve(x_b, obs_cost)
+        return self._solve(background, obs_cost)
 
     def _solve(
         self,
-        x_b: Float[Array, "*state"],
+        background: Float[Array, "*state"],
         obs_cost: Callable[[Array], Array] | None,
         *,
         control_obs_cost: Callable[[Any], Array] | None = None,
         with_result: bool = False,
     ) -> Any:
-        """Minimise background (or penalty) plus ``obs_cost`` from ``x_b``.
+        """Minimise background (or penalty) plus ``obs_cost`` from ``background``.
 
         Returns the analysis, or ``(analysis, MinimiseResult)`` when
         ``with_result``.
@@ -272,7 +279,7 @@ class ThreeDVar(eqx.Module):
         if param is not None:
             # J(θ) = pen(θ) + J_o(ψ(θ)): the penalty replaces the B term.
             def decode(theta: Any) -> Float[Array, "*state"]:
-                return as_shape(param.decode(theta), x_b.shape)
+                return as_shape(param.decode(theta), background.shape)
 
             def param_cost(theta: Any, _args: Any) -> Float[Array, ""]:
                 if control_obs_cost is not None:
@@ -280,7 +287,7 @@ class ThreeDVar(eqx.Module):
                 assert obs_cost is not None
                 return param.penalty(theta) + obs_cost(decode(theta))
 
-            out = run(
+            result = run(
                 self.minimiser,
                 param_cost,
                 param.init_control(),
@@ -288,31 +295,34 @@ class ThreeDVar(eqx.Module):
                 max_steps=self.max_steps,
             )
             if with_result:
-                return decode(out.value), out
-            return decode(out)
+                return decode(result.value), result
+            return decode(result)
 
-        def cost(x: Float[Array, "*state"], _args: Any) -> Float[Array, ""]:
+        def cost(state: Float[Array, "*state"], _args: Any) -> Float[Array, ""]:
             # Background term — apply B^{-1} via lineax solve.
-            dx = x - x_b
-            B_inv_dx = lx.linear_solve(
+            # δx = x − x_b
+            increment = state - background
+            # B⁻¹δx
+            weighted_increment = lx.linear_solve(
                 self.prior_cov_op,
-                dx,
+                increment,
                 solver=self.cov_solver,
             ).value
-            j_bg = 0.5 * jnp.sum(dx * B_inv_dx)
+            # J_b = ½ δxᵀ B⁻¹ δx
+            background_cost = 0.5 * jnp.sum(increment * weighted_increment)
             assert obs_cost is not None
-            return j_bg + obs_cost(x)
+            return background_cost + obs_cost(state)
 
-        out = run(
+        result = run(
             self.minimiser,
             cost,
-            x_b,
+            background,
             adjoint=self.minimiser_adjoint,
             max_steps=self.max_steps,
         )
         if with_result:
-            return out.value, out
-        return out
+            return result.value, result
+        return result
 
     def posterior(self, batch: Batch1D, adapter: Any = None) -> Any:
         """Analyse one window and return its [`Posterior`][vardax.Posterior].

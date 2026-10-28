@@ -159,9 +159,11 @@ def variational_cost(
         0.5
     """
     obs_diff = batch.mask * (x - batch.input)
-    j_obs = jnp.mean(obs_diff**2)
-    j_prior = jnp.mean((x - prior_fn(x)) ** 2)
-    return alpha_obs * j_obs + alpha_prior * j_prior
+    # J_o = mean((m ⊙ (x − y))²)
+    observation_term_cost = jnp.mean(obs_diff**2)
+    # J_p = mean((x − φ(x))²)
+    prior_term_cost = jnp.mean((x - prior_fn(x)) ** 2)
+    return alpha_obs * observation_term_cost + alpha_prior * prior_term_cost
 
 
 def variational_cost_grad(
@@ -292,13 +294,15 @@ def strong_variational_cost(
     """
     if xb is None:
         xb = x0
-    traj = forward_fn(x0, ts)
+    trajectory = forward_fn(x0, ts)
     obs = batch.input
     if nan_to_num:
         obs = jnp.nan_to_num(obs)
-    j_obs = jnp.mean((batch.mask * (traj - obs)) ** 2)
-    j_bg = background_cost(x0, xb)
-    return alpha_obs * j_obs + alpha_bg * j_bg
+    # J_o = mean((m ⊙ (φ(x₀) − y))²)
+    observation_term_cost = jnp.mean((batch.mask * (trajectory - obs)) ** 2)
+    # J_b = mean((x₀ − x_b)²)
+    background_term_cost = background_cost(x0, xb)
+    return alpha_obs * observation_term_cost + alpha_bg * background_term_cost
 
 
 # ---------------------------------------------------------------------------
@@ -443,6 +447,8 @@ class ResidualPenalty(eqx.Module):
             self.weight, self.weight < 0, "weight must be non-negative"
         )
         # N[f](c_j) for every point: (N_c, R)
-        r = jax.vmap(lambda c: jnp.atleast_1d(self.residual_fn(field, c)))(points)
+        residuals = jax.vmap(
+            lambda point: jnp.atleast_1d(self.residual_fn(field, point))
+        )(points)
         # J = λ/(2 N_c) Σⱼ ‖N[f](c_j)‖²: ()
-        return weight / (2 * points.shape[0]) * jnp.sum(r**2)
+        return weight / (2 * points.shape[0]) * jnp.sum(residuals**2)

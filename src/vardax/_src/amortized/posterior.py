@@ -62,9 +62,9 @@ class AmortizedPosterior(eqx.Module):
     def __call__(self, batch: Batch1D | Batch2D) -> Float[Array, ...]:
         r"""Return the per-sample MAP / mode of $q_\phi(x \mid y)$."""
 
-        def _one(input_i, mask_i):
-            ctx = self.encoder(input_i, mask_i)
-            return self.head.map_estimate(ctx)
+        def _one(input_sample, mask_sample):
+            context = self.encoder(input_sample, mask_sample)
+            return self.head.map_estimate(context)
 
         return jax.vmap(_one)(batch.input, batch.mask)
 
@@ -79,12 +79,12 @@ class AmortizedPosterior(eqx.Module):
         Returns an array of shape ``(B, n, *state_shape)``.
         """
         n = self.config.n_samples if n is None else n
-        b = batch.input.shape[0]
-        keys = jax.random.split(key, b)
+        batch_size = batch.input.shape[0]
+        keys = jax.random.split(key, batch_size)
 
-        def _one(input_i, mask_i, key_i):
-            ctx = self.encoder(input_i, mask_i)
-            return self.head.sample(ctx, key_i, n)
+        def _one(input_sample, mask_sample, key_sample):
+            context = self.encoder(input_sample, mask_sample)
+            return self.head.sample(context, key_sample, n)
 
         return jax.vmap(_one)(batch.input, batch.mask, keys)
 
@@ -99,9 +99,9 @@ class AmortizedPosterior(eqx.Module):
         (no closed-form density). Use ``sample`` instead.
         """
 
-        def _one(x_i, input_i, mask_i):
-            ctx = self.encoder(input_i, mask_i)
-            return self.head.log_prob(x_i, ctx)
+        def _one(state_sample, input_sample, mask_sample):
+            context = self.encoder(input_sample, mask_sample)
+            return self.head.log_prob(state_sample, context)
 
         return jax.vmap(_one)(x, batch.input, batch.mask)
 

@@ -27,10 +27,10 @@ Residual = Callable[[Field, Float[Array, " D"]], Float[Array, " R"]]
 
 
 def _at_time(
-    f: Callable[[Float[Array, " 3"]], Float[Array, ""]], t: Float[Array, ""]
+    field: Callable[[Float[Array, " 3"]], Float[Array, ""]], time: Float[Array, ""]
 ) -> Callable[[Float[Array, " 2"]], Float[Array, ""]]:
     """Restrict a field of $(t, x, y)$ to a field of $(x, y)$ at time ``t``."""
-    return lambda xy: f(einx.id(", d -> (1 + d)", t, xy))
+    return lambda space_point: field(einx.id(", d -> (1 + d)", time, space_point))
 
 
 def advection_diffusion_2d(
@@ -81,25 +81,33 @@ def advection_diffusion_2d(
         >>> r.shape, bool(jnp.abs(r[0]) < 1e-4)
         ((1,), True)
     """
-    c = jnp.asarray(velocity)
-    if c.shape != (2,):
-        raise ShapeError(f"velocity must have two components; got shape {c.shape}.")
+    advection_velocity = jnp.asarray(velocity)
+    if advection_velocity.shape != (2,):
+        raise ShapeError(
+            f"velocity must have two components; got shape {advection_velocity.shape}."
+        )
     if diffusivity < 0:
         raise ConfigurationError(
             f"diffusivity must be non-negative; got {diffusivity}."
         )
 
-    def residual(field: Field, s: Float[Array, " 3"]) -> Float[Array, " 1"]:
-        def u(z: Float[Array, " 3"]) -> Float[Array, ""]:
-            return field(z)[0]
+    def residual(field: Field, point: Float[Array, " 3"]) -> Float[Array, " 1"]:
+        def tracer(space_time_point: Float[Array, " 3"]) -> Float[Array, ""]:
+            return field(space_time_point)[0]
 
         # ∇ₛu = (∂ₜu, ∂ₓu, ∂ᵧu): (3,)
-        du = diffops.grad(u)(s)
+        tracer_gradient = diffops.grad(tracer)(point)
         # Δu = ∂ₓₓu + ∂ᵧᵧu at fixed t: ()
-        lap = diffops.laplacian(_at_time(u, s[0]))(s[1:])
+        tracer_laplacian = diffops.laplacian(_at_time(tracer, point[0]))(point[1:])
         # N[u] = ∂ₜu + c·∇u - κΔu: ()
-        r = du[0] + jnp.dot(c.astype(du.dtype), du[1:]) - diffusivity * lap
-        return einx.id(" -> 1", r)
+        pde_residual = (
+            tracer_gradient[0]
+            + jnp.dot(
+                advection_velocity.astype(tracer_gradient.dtype), tracer_gradient[1:]
+            )
+            - diffusivity * tracer_laplacian
+        )
+        return einx.id(" -> 1", pde_residual)
 
     return residual
 
@@ -170,26 +178,34 @@ def navier_stokes_vorticity_2d(
     if viscosity < 0:
         raise ConfigurationError(f"viscosity must be non-negative; got {viscosity}.")
 
-    def residual(field: Field, s: Float[Array, " 3"]) -> Float[Array, " 1"]:
-        def psi(z: Float[Array, " 3"]) -> Float[Array, ""]:
-            return field(z)[0]
+    def residual(field: Field, point: Float[Array, " 3"]) -> Float[Array, " 1"]:
+        def streamfunction(space_time_point: Float[Array, " 3"]) -> Float[Array, ""]:
+            return field(space_time_point)[0]
 
-        def omega(z: Float[Array, " 3"]) -> Float[Array, ""]:
+        def vorticity(space_time_point: Float[Array, " 3"]) -> Float[Array, ""]:
             # ω = Δψ at fixed t: ()
-            return diffops.laplacian(_at_time(psi, z[0]))(z[1:])
+            return diffops.laplacian(_at_time(streamfunction, space_time_point[0]))(
+                space_time_point[1:]
+            )
 
         # ∇ₛψ = (∂ₜψ, ∂ₓψ, ∂ᵧψ): (3,)
-        dpsi = diffops.grad(psi)(s)
+        streamfunction_gradient = diffops.grad(streamfunction)(point)
         # u = ∇^⊥ψ = (-∂ᵧψ, ∂ₓψ): (2,)
-        u = jnp.stack([-dpsi[2], dpsi[1]])
+        velocity = jnp.stack([-streamfunction_gradient[2], streamfunction_gradient[1]])
         # ∇ₛω = (∂ₜω, ∂ₓω, ∂ᵧω): (3,)
-        domega = diffops.grad(omega)(s)
+        vorticity_gradient = diffops.grad(vorticity)(point)
         # Δω at fixed t: ()
-        lap_omega = diffops.laplacian(_at_time(omega, s[0]))(s[1:])
+        vorticity_laplacian = diffops.laplacian(_at_time(vorticity, point[0]))(
+            point[1:]
+        )
         # N[ψ] = ∂ₜω + u·∇ω - nu Δω - F: ()
-        r = domega[0] + jnp.dot(u, domega[1:]) - viscosity * lap_omega
+        pde_residual = (
+            vorticity_gradient[0]
+            + jnp.dot(velocity, vorticity_gradient[1:])
+            - viscosity * vorticity_laplacian
+        )
         if forcing is not None:
-            r = r - forcing(s)
-        return einx.id(" -> 1", r)
+            pde_residual = pde_residual - forcing(point)
+        return einx.id(" -> 1", pde_residual)
 
     return residual
