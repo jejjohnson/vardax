@@ -57,21 +57,22 @@ Adjoint = dfx.AbstractAdjoint
 
 
 class DynamicalPrior(eqx.Module):
-    """Base class for ODE-based dynamical priors.
+    r"""Base class for ODE-based dynamical priors.
 
-    Wraps a diffrax ``diffeqsolve`` around an ODE right-hand side with
-    pluggable solver, step-size controller, and adjoint strategy. The
-    adjoint choice trades memory against speed for reverse-mode
-    differentiation through the solve (relevant for long windows).
+    Wraps a diffrax ``diffeqsolve`` around an ODE right-hand side
+    $\mathrm{d}x/\mathrm{d}t = f(t, x; \theta)$ with pluggable solver, step-size
+    controller, and adjoint strategy. The adjoint choice trades memory against
+    speed for reverse-mode differentiation through the solve (relevant for long
+    windows).
 
     Concrete subclasses implement ``__call__`` (the integration) and
     ``loss`` (the dynamical residual). Instantiating ``DynamicalPrior``
     directly and calling it raises ``NotImplementedError``.
 
-    Attributes:
+    Args:
         model: Diffrax-compatible ODE right-hand side ``f(t, y, args) -> dy``.
         params: Optional default ``args`` threaded to ``model`` /
-            ``diffeqsolve`` (e.g. learnable ODE parameters ``θ``).
+            ``diffeqsolve`` (e.g. learnable ODE parameters $\theta$).
             Overridable per call.
         solver: Diffrax solver (default :class:`diffrax.Tsit5`).
         stepsize: Diffrax step-size controller. Defaults to an adaptive
@@ -82,6 +83,30 @@ class DynamicalPrior(eqx.Module):
             controller.
         adjoint: Diffrax adjoint strategy (default
             :class:`diffrax.RecursiveCheckpointAdjoint`).
+
+    Examples:
+        The concrete subclasses share the constructor; the step-size controller
+        follows the solver:
+
+        >>> import diffrax as dfx
+        >>> import vardax as vdx
+        >>> def decay(t, y, args):
+        ...     return -y
+        >>> type(vdx.DynTrajectory(model=decay).stepsize).__name__
+        'PIDController'
+        >>> euler = vdx.DynTrajectory(model=decay, solver=dfx.Euler())
+        >>> type(euler.stepsize).__name__
+        'ConstantStepSize'
+
+        The base class itself has no integration to run:
+
+        >>> import jax.numpy as jnp
+        >>> vdx.DynamicalPrior(model=decay)(
+        ...     jnp.ones(2), jnp.array([0.0, 1.0])
+        ... )  # doctest: +IGNORE_EXCEPTION_DETAIL
+        Traceback (most recent call last):
+        ...
+        NotImplementedError
     """
 
     model: tp.Callable
@@ -166,9 +191,17 @@ class DynamicalPrior(eqx.Module):
         r"""Dynamics-consistent reconstruction of a state sequence.
 
         Returns an array of the *same shape* as ``x`` such that
-        ``||x - reconstruct(x, ts)||²`` is the prior's dynamical residual —
+        $\|x - \mathrm{reconstruct}(x, t_s)\|^2$ is the prior's dynamical residual,
         the temporal analogue of the autoencoder reconstruction used by the
         static [`Prior`][vardax.Prior] seam (Decision D18).
+
+        Args:
+            x: State sequence.
+            ts: Time coordinates $t_s$ of the sequence.
+            params: ODE ``args`` override.
+
+        Returns:
+            The dynamics-consistent sequence, with the shape of ``x``.
         """
         raise NotImplementedError
 
@@ -177,17 +210,17 @@ class DynamicalPrior(eqx.Module):
         ts: Array,
         params: PyTree | None = None,
     ) -> _BoundTemporalPrior:
-        r"""Bind a time grid, yielding a one-argument `Prior` adapter.
+        """Bind a time grid, yielding a one-argument `Prior` adapter.
 
         The returned callable satisfies the static
         [`Prior`][vardax.Prior] protocol (``__call__(x) -> x_prior``) by
         closing over ``ts``, so a dynamical prior can be used anywhere a
-        static prior is expected — e.g. as the ``prior_fn`` of
+        static prior is expected, e.g. as the ``prior_fn`` of
         [`variational_cost`][vardax.variational_cost], turning the prior
         term into a weak-constraint dynamical residual.
 
         Args:
-            ts: Time coordinates of shape ``(T,)`` to close over.
+            ts: Time coordinates $t_s$ to close over.
             params: ODE ``args`` override to close over.
 
         Returns:
@@ -205,6 +238,12 @@ class DynamicalPrior(eqx.Module):
             >>> traj = DynTrajectory(model=decay)(jnp.ones(3), ts)
             >>> bool(jnp.allclose(bound(traj), traj, atol=1e-4))
             True
+
+            A sequence that violates the dynamics is pulled back onto the flow, so
+            its reconstruction differs from it:
+
+            >>> bool(jnp.allclose(bound(traj + 1.0), traj + 1.0, atol=1e-4))
+            False
         """
         return _BoundTemporalPrior(prior=self, ts=ts, params=params)
 
@@ -213,18 +252,37 @@ class DynamicalPrior(eqx.Module):
 
         The returned adapter exposes ``step(state, dt)``, ``dt``, and
         ``state_signature``, so the wrapped ODE can drive anything that
-        consumes the pipekit forward-model seam —
+        consumes the pipekit forward-model seam,
         [`StrongFourDVar`][vardax.StrongFourDVar], ``pipekit_cycle.DACycle``,
         etc. (Decisions D8/D18). ``step`` integrates the ODE over
-        ``[0, dt]``; the dynamics are therefore treated as autonomous
+        $[0, \Delta t]$; the dynamics are therefore treated as autonomous
         (time-shift invariant), which holds for the standard testbeds
         (Lorenz-63/96) and any RHS that ignores ``t``.
 
         Args:
-            dt: Default integration step advertised as the adapter's ``dt``.
+            dt: Default integration step $\Delta t$ advertised as the adapter's ``dt``.
 
         Returns:
             A ``ForwardModel``-conforming adapter around this prior.
+
+        Examples:
+            One step of exponential decay matches the closed form:
+
+            >>> import jax.numpy as jnp
+            >>> import vardax as vdx
+            >>> def decay(t, y, args):
+            ...     return -y
+            >>> fwd = vdx.DynTrajectory(model=decay).as_forward_model(0.1)
+            >>> fwd.dt, fwd.state_signature
+            (0.1, None)
+            >>> x = jnp.array([1.0, 2.0])
+            >>> bool(jnp.allclose(fwd.step(x, 0.1), x * jnp.exp(-0.1), atol=1e-4))
+            True
+
+            A zero step leaves the state alone:
+
+            >>> bool(jnp.allclose(fwd.step(x, 0.0), x))
+            True
         """
         return _DynamicalForwardModel(prior=self, dt=dt)
 
@@ -239,6 +297,25 @@ class DynIncrements(DynamicalPrior):
     R(u; \theta) = \sum_t \| u_{t+1} - \varphi_{\Delta t}(u_t; \theta) \|^2 .
     $$
 
+    Algorithm:
+        1. Split the time grid into consecutive pairs
+           $(t_t, t_{t+1})$ with [`time_patches`][vardax.time_patches].
+        2. Propagate every state $u_t$ one step with the ODE solver, in
+           parallel over $t$.
+        3. Sum the squared differences to the next states.
+
+    Args:
+        model: Diffrax-compatible ODE right-hand side ``f(t, y, args) -> dy``.
+        params: Optional default ``args`` threaded to ``model`` (e.g. $\theta$).
+        solver: Diffrax solver (default :class:`diffrax.Tsit5`).
+        stepsize: Diffrax step-size controller (adaptive by default for
+            adaptive solvers).
+        adjoint: Diffrax adjoint strategy.
+
+    Raises:
+        ShapeError: From ``loss``, if the lengths of ``x``, ``ts`` and ``x_gt``
+            are inconsistent.
+
     Examples:
         A consistent trajectory (produced by rolling out the same model)
         has (near-)zero increment loss.
@@ -252,6 +329,20 @@ class DynIncrements(DynamicalPrior):
         >>> traj = DynTrajectory(model=decay)(x0, ts)
         >>> bool(DynIncrements(model=decay).loss(traj, ts) < 1e-3)
         True
+
+        A perturbed trajectory is penalised:
+
+        >>> bool(DynIncrements(model=decay).loss(traj + 1.0, ts) > 1e-3)
+        True
+
+        A time grid that does not match the sequence is rejected:
+
+        >>> DynIncrements(model=decay).loss(
+        ...     traj[:3], ts
+        ... )  # doctest: +IGNORE_EXCEPTION_DETAIL
+        Traceback (most recent call last):
+        ...
+        ShapeError: Size mismatch for DynIncrements.loss: expected ...
     """
 
     def __call__(
@@ -264,14 +355,13 @@ class DynIncrements(DynamicalPrior):
         """Integrate ``x`` one step from ``ts[0]`` to ``ts[-1]``.
 
         Args:
-            x: State at ``ts[0]`` of shape ``(*state,)``.
-            ts: Integration endpoints of shape ``(2,)`` (or more; only the
-                first and last are used).
+            x: State at ``ts[0]``.
+            ts: Integration endpoints (or more; only the first and last are used).
             dt: Initial step size. Defaults to ``ts[1] - ts[0]``.
             params: ODE ``args`` override (defaults to ``self.params``).
 
         Returns:
-            State at the final time, shape ``(*state,)``.
+            State at the final time.
         """
         saveat = dfx.SaveAt(ts=jnp.asarray([ts[-1]]))
         saved_states = self._integrate(x, ts, saveat, dt, params)
@@ -287,15 +377,18 @@ class DynIncrements(DynamicalPrior):
         r"""One-step-increment dynamical loss.
 
         Args:
-            x: State sequence of shape ``(T, *state)`` — the sources for the
-                one-step predictions.
-            ts: Time coordinates of shape ``(T,)``.
-            x_gt: Target state sequence of shape ``(T, *state)``. Defaults to
-                ``x`` (self-consistency).
+            x: State sequence whose entries are the sources for the one-step
+                predictions.
+            ts: Time coordinates of the sequence.
+            x_gt: Target state sequence. Defaults to ``x`` (self-consistency).
             params: ODE ``args`` override.
 
         Returns:
-            Scalar dynamical residual ``Σ_t ||φ(u_t) - u_{t+1}||²``.
+            Scalar dynamical residual $\sum_t \|\varphi(u_t) - u_{t+1}\|^2$.
+
+        Raises:
+            ShapeError: If ``len(x) - 1``, the number of time pairs and
+                ``len(x_gt) - 1`` differ.
         """
         if x_gt is None:
             x_gt = x
@@ -323,7 +416,33 @@ class DynIncrements(DynamicalPrior):
         ``reconstruct(x, ts)[t+1]`` is the one-step propagation
         $\varphi_{\Delta t}(x_t)$ and ``reconstruct(x, ts)[0] = x[0]``, so
         $\|x - \text{reconstruct}(x, t_s)\|^2$ equals the increment
-        residual of :meth:`loss` (the $t=0$ term vanishes).
+        residual of [`loss`][vardax.DynIncrements.loss] (the $t=0$ term vanishes).
+
+        Args:
+            x: State sequence.
+            ts: Time coordinates $t_s$ of the sequence.
+            params: ODE ``args`` override.
+
+        Returns:
+            The sequence $[x_0, \varphi(x_0), \dots, \varphi(x_{T-2})]$.
+
+        Examples:
+            The residual of the reconstruction is the increment loss:
+
+            >>> import jax.numpy as jnp
+            >>> from vardax import DynIncrements
+            >>> def decay(t, y, args):
+            ...     return -y
+            >>> prior = DynIncrements(model=decay)
+            >>> ts = jnp.linspace(0.0, 0.5, 6)
+            >>> x = jnp.ones((6, 2)) * jnp.arange(6.0)[:, None]
+            >>> rec = prior.reconstruct(x, ts)
+            >>> rec.shape == x.shape, bool(jnp.all(rec[0] == x[0]))
+            (True, True)
+            >>> bool(
+            ...     jnp.allclose(jnp.sum((x - rec) ** 2), prior.loss(x, ts), rtol=1e-4)
+            ... )
+            True
         """
         ts_pairs = time_patches(ts)
         propagate = ft.partial(self, params=params)
@@ -344,8 +463,53 @@ class DynTrajectory(DynamicalPrior):
     R(u; \theta) = \sum_t \| u_t - \varphi_t(u_0; \theta) \|^2 .
     $$
 
-    This is the propagation used by strong-constraint 4DVar — see
+    This is the propagation used by strong-constraint 4DVar, see
     [`strong_variational_cost`][vardax.strong_variational_cost].
+
+    Algorithm:
+        1. Integrate the ODE from the initial state $u_0$, saving the state at
+           every time in ``ts``.
+        2. Sum the squared differences between the saved trajectory and the
+           target sequence.
+
+    Args:
+        model: Diffrax-compatible ODE right-hand side ``f(t, y, args) -> dy``.
+        params: Optional default ``args`` threaded to ``model`` (e.g. $\theta$).
+        solver: Diffrax solver (default :class:`diffrax.Tsit5`).
+        stepsize: Diffrax step-size controller (adaptive by default for
+            adaptive solvers).
+        adjoint: Diffrax adjoint strategy.
+
+    Examples:
+        Roll out exponential decay from an initial condition:
+
+        >>> import jax.numpy as jnp
+        >>> from vardax import DynTrajectory
+        >>> def decay(t, y, args):
+        ...     return -y
+        >>> ts = jnp.linspace(0.0, 0.5, 6)
+        >>> prior = DynTrajectory(model=decay)
+        >>> traj = prior(jnp.array([1.0, 2.0]), ts)
+        >>> traj.shape
+        (6, 2)
+        >>> bool(
+        ...     jnp.allclose(traj[-1], jnp.array([1.0, 2.0]) * jnp.exp(-0.5), atol=1e-3)
+        ... )
+        True
+
+        A trajectory generated by the model has (near-)zero loss, and a shifted
+        one does not:
+
+        >>> bool(prior.loss(traj, ts) < 1e-6)
+        True
+        >>> bool(prior.loss(traj + 1.0, ts, x_gt=traj) > 1.0)
+        True
+
+        Through [`bind`][vardax.DynamicalPrior.bind] it plugs into the static
+        prior seam:
+
+        >>> bool(jnp.allclose(prior.bind(ts)(traj), traj, atol=1e-4))
+        True
     """
 
     def __call__(
@@ -358,13 +522,13 @@ class DynTrajectory(DynamicalPrior):
         """Integrate the initial state ``x`` across all of ``ts``.
 
         Args:
-            x: Initial condition (state at ``ts[0]``) of shape ``(*state,)``.
-            ts: Time coordinates of shape ``(T,)`` at which to save the state.
+            x: Initial condition (state at ``ts[0]``).
+            ts: Time coordinates at which to save the state.
             dt: Initial step size. Defaults to ``ts[1] - ts[0]``.
             params: ODE ``args`` override.
 
         Returns:
-            State trajectory of shape ``(T, *state)`` (``traj[0] == x``).
+            State trajectory with ``traj[0] == x``, one row per entry of ``ts``.
         """
         saveat = dfx.SaveAt(ts=ts)
         return self._integrate(x, ts, saveat, dt, params)
@@ -379,15 +543,13 @@ class DynTrajectory(DynamicalPrior):
         r"""Full-trajectory dynamical loss.
 
         Args:
-            x: State sequence of shape ``(T, *state)``; the initial condition
-                ``x[0]`` seeds the rollout.
-            ts: Time coordinates of shape ``(T,)``.
-            x_gt: Target trajectory of shape ``(T, *state)``. Defaults to
-                ``x``.
+            x: State sequence; the initial condition ``x[0]`` seeds the rollout.
+            ts: Time coordinates of the sequence.
+            x_gt: Target trajectory. Defaults to ``x``.
             params: ODE ``args`` override.
 
         Returns:
-            Scalar dynamical residual ``Σ_t ||φ_t(u_0) - u_t||²``.
+            Scalar dynamical residual $\sum_t \|\varphi_t(u_0) - u_t\|^2$.
         """
         if x_gt is None:
             x_gt = x
@@ -404,7 +566,15 @@ class DynTrajectory(DynamicalPrior):
         r"""Full-rollout reconstruction: the trajectory from ``x[0]``.
 
         $\|x - \text{reconstruct}(x, t_s)\|^2$ equals the trajectory
-        residual of :meth:`loss`.
+        residual of [`loss`][vardax.DynTrajectory.loss].
+
+        Args:
+            x: State sequence; ``x[0]`` seeds the rollout.
+            ts: Time coordinates $t_s$ of the sequence.
+            params: ODE ``args`` override.
+
+        Returns:
+            The rolled-out trajectory, same shape as ``x``.
         """
         return self(x[0], ts, params=params)
 

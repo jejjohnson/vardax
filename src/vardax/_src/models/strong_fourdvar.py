@@ -20,7 +20,7 @@ every step. Two slots bound that memory:
 - ``forward_adjoint=`` hands a ``diffrax.AbstractAdjoint`` to a forward
   that integrates with diffrax and exposes ``with_adjoint(adjoint)``
   ([`SupportsForwardAdjoint`][vardax.SupportsForwardAdjoint]). A forward
-  without that method raises ``ValueError`` at construction.
+  without that method raises ``UnsupportedInputError`` at construction.
 """
 
 from __future__ import annotations
@@ -52,12 +52,30 @@ from vardax._src.utils.shapes import as_shape
 class StrongFourDVar(eqx.Module):
     r"""Strong-constraint 4DVar.
 
+    $$J(x_0) = \tfrac12 \|x_0 - x_b\|^2_{B^{-1}}
+    + \tfrac12 \sum_t \|m_t \odot (y_t - H(M_t(x_0)))\|^2_{R^{-1}}$$
+
+    Algorithm:
+        1. For each window (``jax.vmap``), start from the background
+           $x_b$ (or the parameterization's initial control).
+        2. Roll the forward model out from $x_0$ for one step fewer than
+           the window has times, with optional ``jax.checkpoint``
+           rematerialisation.
+        3. Sum the masked, $R^{-1}$-weighted observation misfit over every
+           time of the trajectory; a point batch uses the $\sigma_i$-weighted
+           cost at each ``time_index`` instead.
+        4. Add the background term
+           $\tfrac12 \delta x_0^\top B^{-1} \delta x_0$
+           (or the parameterization penalty).
+        5. Minimise over $x_0$ with ``minimiser``, differentiating through
+           the rollout by reverse-mode autodiff.
+
     Attributes:
         forward: ``pipekit_cycle.ForwardModel`` supplying
             ``step(state, dt) -> state``.
         obs_op: Observation operator.
-        prior_mean: Background $x_b$ — initial state of shape
-            ``(N,)`` (state vector at $t=0$).
+        prior_mean: Background $x_b$ — the initial state vector at
+            $t=0$.
         prior_cov_op: $B$.
         obs_cov_op: $R$.
         minimiser: ``optimistix.AbstractMinimiser`` for the outer
@@ -70,7 +88,8 @@ class StrongFourDVar(eqx.Module):
             ``forward.with_adjoint(...)`` before the rollout. Requires a
             forward implementing
             [`SupportsForwardAdjoint`][vardax.SupportsForwardAdjoint];
-            any other forward raises ``ValueError``. Default ``None``
+            any other forward raises ``UnsupportedInputError``. Default
+            ``None``
             (use the forward's own).
         max_steps: Iteration cap on the outer solver when ``minimiser``
             is an ``optimistix`` solver; a vardax `Minimiser` keeps its own.
@@ -115,6 +134,58 @@ class StrongFourDVar(eqx.Module):
         >>> batch = vardax.Batch1D(input=jnp.ones((1, 1, 3)), mask=jnp.ones((1, 1, 3)))
         >>> strong(batch).shape
         (1, 3)
+
+        A decaying forward model $M(x) = x / 2$ and observations at $t = 0$
+        and $t = 1$ both inform $x_0$: with $x_b = 0$ the analysis is
+        $x_0^* = (1 + 1/2) / (1 + 1 + 1/4) = 2/3$.
+
+        >>> class Decay:
+        ...     dt = 1.0
+        ...
+        ...     def step(self, x, dt):
+        ...         return 0.5 * x
+        >>> window = vardax.Batch1D(input=jnp.ones((1, 2, 3)), mask=jnp.ones((1, 2, 3)))
+        >>> decay = vardax.StrongFourDVar(
+        ...     forward=Decay(),
+        ...     obs_op=vardax.MaskedIdentity(),
+        ...     prior_mean=jnp.zeros(3),
+        ...     prior_cov_op=eye,
+        ...     obs_cov_op=eye,
+        ... )
+        >>> bool(jnp.allclose(decay(window), 2 / 3, atol=1e-3))
+        True
+
+        ``checkpoint=True`` rematerialises the rollout in reverse mode and
+        gives the same analysis; the Laplace posterior of the window is
+        $P^* = 1 / 2.25$:
+
+        >>> remat = vardax.StrongFourDVar(
+        ...     forward=Decay(),
+        ...     obs_op=vardax.MaskedIdentity(),
+        ...     prior_mean=jnp.zeros(3),
+        ...     prior_cov_op=eye,
+        ...     obs_cov_op=eye,
+        ...     checkpoint=True,
+        ... )
+        >>> bool(jnp.allclose(remat(window), decay(window), atol=1e-4))
+        True
+        >>> post = remat.posterior(window)
+        >>> bool(jnp.allclose(post.cov.mv(jnp.ones(3)), 1 / 2.25, atol=1e-3))
+        True
+
+        A forward without ``with_adjoint`` cannot take a ``forward_adjoint``:
+
+        >>> vardax.StrongFourDVar(
+        ...     forward=Decay(),
+        ...     obs_op=vardax.MaskedIdentity(),
+        ...     prior_mean=jnp.zeros(3),
+        ...     prior_cov_op=eye,
+        ...     obs_cov_op=eye,
+        ...     forward_adjoint=object(),
+        ... )  # doctest: +IGNORE_EXCEPTION_DETAIL
+        Traceback (most recent call last):
+        ...
+        UnsupportedInputError: forward_adjoint was set but Decay has no ...
     """
 
     forward: Any
@@ -169,14 +240,30 @@ class StrongFourDVar(eqx.Module):
         return rollout(forward, initial_state, n_steps, checkpoint=self.checkpoint)
 
     def __call__(self, batch: Batch1D | PointObsBatch) -> Float[Array, "*batch N"]:
-        """Strong-4DVar analysis: minimise over $x_0$.
+        r"""Strong-4DVar analysis: minimise over $x_0$.
 
         A [`PointObsBatch`][vardax.PointObsBatch] needs
         ``obs_op=GridPointObs(...)``: observation $i$ is compared with the
         trajectory state $x_{\tau_i}$, $\tau_i$ = ``time_index[i]``, over a
-        window of ``n_times`` states, with error variance $\\sigma_i^2$
-        (``obs_cov_op`` must be ``None`` or an identity,
-        else ``ValueError``).
+        window of ``n_times`` states, with error variance $\sigma_i^2$
+        (``obs_cov_op`` must be ``None`` or an identity).
+
+        Args:
+            batch: A gridded [`Batch1D`][vardax.Batch1D] whose time axis
+                holds the window, or a
+                [`PointObsBatch`][vardax.PointObsBatch].
+
+        Returns:
+            The analysed initial state $x_0^*$ of every window.
+
+        Raises:
+            ObservationError: For a point batch with a non-trivial
+                ``obs_cov_op`` or an out-of-range ``time_index``.
+            MissingInputError: For a gridded batch when ``obs_cov_op`` is
+                ``None``, or a point batch with ``time_index`` but no
+                ``n_times``.
+            InputTypeError: For a point batch whose ``obs_op`` is not a
+                ``GridPointObs``.
         """
         if isinstance(batch, PointObsBatch):
             check_point_obs_cov(self.obs_cov_op)
@@ -291,13 +378,20 @@ class StrongFourDVar(eqx.Module):
             The window's posterior: mean and lazy covariance.
 
         Raises:
-            ValueError: If ``batch`` holds more than one window.
+            ShapeError: If ``batch`` holds more than one window.
+            UnsupportedInputError: For a point batch.
         """
         from vardax._src.posterior._precision import model_posterior
 
         return model_posterior(self, batch, adapter)
 
     def as_analysis_step(self) -> _StrongFourDVarAnalysisStep:
+        """Adapt to ``pipekit_cycle.AnalysisStep``.
+
+        Returns:
+            An analysis step that treats non-finite observations as
+            missing and returns the analysed initial state.
+        """
         return _StrongFourDVarAnalysisStep(self)
 
 

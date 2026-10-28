@@ -68,24 +68,62 @@ def rbf_basis(
 ) -> LinearBasis:
     r"""Placeable radial-basis reduced basis (Gaussian or Wendland kernels).
 
-    Column $a$ of $\Phi$ is $\varphi_a(g) = K(\lVert g - c_a \rVert /
-    \ell_a)$ evaluated on the flattened grid. ``kernel="gaussian"``
-    reproduces the MASSH stationary Gaussian-RBF basis; the compactly
-    supported ``"wendland_c2"`` / ``"wendland_c4"`` kernels give columns
+    Column $a$ of $\Phi$ is
+    $\varphi_a(g) = K(\lVert g - c_a \rVert / \ell_a)$
+    evaluated on the flattened grid. ``kernel="gaussian"`` reproduces the
+    MASSH stationary Gaussian-RBF basis; the compactly supported
+    ``"wendland_c2"`` / ``"wendland_c4"`` kernels give columns
     that are exactly zero past their width.
 
     Args:
         grid_coords: Per-axis 1-D coordinate arrays, e.g. ``(y_axis,
             x_axis)`` for a 2-D grid. Any dimension ``d >= 1``.
-        centers: ``(M, d)`` array of atom centre locations.
-        widths: Scalar or per-atom ``(M,)`` width $\ell_a$ (Gaussian
+        centers: Atom centre locations $c_a$, one row per atom with $d$
+            columns.
+        widths: Scalar or per-atom width $\ell_a$ (Gaussian
             length scale, or Wendland support radius); must be positive.
         kernel: ``"gaussian"``, ``"wendland_c2"``, or ``"wendland_c4"``.
         variance: Scalar or per-coefficient prior variance.
 
+    Algorithm:
+        1. Flatten the grid axes into points $g$.
+        2. Evaluate $K(\lVert g - c_a \rVert / \ell_a)$ for every atom.
+        3. Wrap the design matrix with the diagonal prior ``variance``.
+
     Returns:
         `LinearBasis` with ``output_shape`` the grid shape and
         ``nbasis == M``.
+
+    Raises:
+        GridError: If an axis of ``grid_coords`` is empty or not 1-D.
+        ShapeError: If ``centers`` does not match the grid dimension.
+        ConfigurationError: If a width is not strictly positive.
+
+    Examples:
+        Three Gaussian bumps on a 1-D grid of five points:
+
+        >>> import jax.numpy as jnp
+        >>> import vardax as vdx
+        >>> x = jnp.linspace(0.0, 1.0, 5)
+        >>> basis = vdx.rbf_basis([x], jnp.array([[0.0], [0.5], [1.0]]), widths=0.3)
+        >>> basis.nbasis, basis.output_shape
+        (3, (5,))
+
+        A 2-D grid gives increments on the grid shape:
+
+        >>> y = jnp.linspace(0.0, 1.0, 3)
+        >>> b2 = vdx.rbf_basis([y, x], jnp.array([[0.5, 0.5]]), widths=0.4)
+        >>> b2.operg(0.0, jnp.ones(1)).shape
+        (3, 5)
+
+        A non-positive width is rejected:
+
+        >>> vdx.rbf_basis(
+        ...     [x], jnp.zeros((1, 1)), widths=0.0
+        ... )  # doctest: +IGNORE_EXCEPTION_DETAIL
+        Traceback (most recent call last):
+        ...
+        ConfigurationError: widths must be strictly positive; got min=0.0.
     """
     points, grid_shape = _grid_points(grid_coords)
     ndim = points.shape[1]
@@ -137,13 +175,53 @@ def fourier_basis(
             times this factor (``>= 1``). The Dirichlet eigenfunctions
             vanish on the box boundary, so a value ``> 1`` keeps the
             basis expressive at the grid edges.
-        variance: Scalar or per-coefficient ``(M,)`` prior variance;
+        variance: Scalar or per-coefficient prior variance;
             with ``spectral_density`` it acts as a scalar amplitude.
         spectral_density: Optional callable mapping the eigenvalues
-            ``(M,)`` to per-mode prior power ``(M,)`` (HSGP prior).
+            $\lambda_j$ to per-mode prior power (HSGP prior).
+
+    Algorithm:
+        1. Flatten the grid, recentre it, and enlarge the half-spans by
+           ``boundary_scale``.
+        2. Build the tensor-product Dirichlet eigenfunctions $\Phi$ and
+           eigenvalues $\lambda$ with ``num_modes`` modes per axis.
+        3. Set the prior variance to ``variance`` or, with a spectral
+           density, to ``variance * spectral_density(lambda)``.
 
     Returns:
         `LinearBasis` with ``output_shape`` the grid shape.
+
+    Raises:
+        ConfigurationError: If ``boundary_scale < 1``.
+        GridError: If an axis is empty, not 1-D, or has zero span.
+
+    Examples:
+        Four sine modes on a 1-D grid:
+
+        >>> import jax.numpy as jnp
+        >>> import vardax as vdx
+        >>> x = jnp.linspace(0.0, 1.0, 6)
+        >>> basis = vdx.fourier_basis([x], 4)
+        >>> basis.nbasis, basis.output_shape
+        (4, (6,))
+
+        A spectral density turns the prior into an HSGP prior with decaying
+        variance:
+
+        >>> hsgp = vdx.fourier_basis(
+        ...     [x], 4, spectral_density=lambda lam: 1.0 / (1.0 + lam)
+        ... )
+        >>> bool(hsgp.variance[0] > hsgp.variance[-1])
+        True
+
+        A shrinking boundary scale is rejected:
+
+        >>> vdx.fourier_basis(
+        ...     [x], 4, boundary_scale=0.5
+        ... )  # doctest: +IGNORE_EXCEPTION_DETAIL
+        Traceback (most recent call last):
+        ...
+        ConfigurationError: boundary_scale must be >= 1, got 0.5.
     """
     if boundary_scale < 1.0:
         raise ConfigurationError(f"boundary_scale must be >= 1, got {boundary_scale}.")
@@ -197,9 +275,40 @@ def wavelet_basis(
         levels: Decomposition levels; defaults to the full cascade.
         variance: Scalar or per-coefficient prior variance.
 
+    Algorithm:
+        1. Build the 1-D or 2-D synthesis matrix $\Phi$ for the chosen
+           wavelet and number of levels.
+        2. Wrap it with the diagonal prior ``variance``.
+
     Returns:
         `LinearBasis` with ``output_shape == grid_shape`` and
         ``nbasis == prod(grid_shape)``.
+
+    Raises:
+        UnsupportedInputError: If ``grid_shape`` is neither 1-D nor 2-D.
+
+    Examples:
+        A Haar basis on 8 points is complete and orthonormal:
+
+        >>> import jax.numpy as jnp
+        >>> import vardax as vdx
+        >>> basis = vdx.wavelet_basis(8)
+        >>> basis.nbasis
+        8
+        >>> bool(jnp.allclose(basis.phi.T @ basis.phi, jnp.eye(8), atol=1e-5))
+        True
+
+        A 2-D grid flattens to ``ny * nx`` coefficients:
+
+        >>> vdx.wavelet_basis((4, 4)).nbasis
+        16
+
+        A 3-D grid is rejected:
+
+        >>> vdx.wavelet_basis((2, 2, 2))  # doctest: +IGNORE_EXCEPTION_DETAIL
+        Traceback (most recent call last):
+        ...
+        UnsupportedInputError: wavelet_basis supports 1-D or 2-D grids; ...
     """
     shape = (grid_shape,) if isinstance(grid_shape, int) else tuple(grid_shape)
     if len(shape) == 1:
@@ -235,17 +344,46 @@ def eof_basis(
     climatology of the training samples.
 
     Args:
-        data: ``(T, N)`` sample matrix — ``T`` snapshots over the
-            flattened grid.
+        data: Sample matrix, ``T`` snapshots over the flattened grid.
         n_modes: Number of leading EOFs to keep.
         center: Subtract the per-point sample mean before the SVD.
-        variance: ``"explained"`` (default), or a scalar / ``(M,)``
-            array overriding the prior variance.
+        variance: ``"explained"`` (default), or a scalar or
+            per-coefficient array overriding the prior variance.
         output_shape: Grid shape to reshape increments to; must satisfy
             ``prod(output_shape) == N``. Defaults to ``(N,)``.
 
+    Algorithm:
+        1. Optionally subtract the per-point sample mean of ``data``.
+        2. Take the SVD and keep the leading ``n_modes`` right singular
+           vectors as $\Phi$ with singular values $\sigma_a$.
+        3. Set the prior variance to $\sigma_a^2 / (T - 1)$ when
+           ``variance="explained"``, otherwise use ``variance``.
+
     Returns:
         `LinearBasis` with orthonormal columns and ``nbasis == n_modes``.
+
+    Raises:
+        ConfigurationError: If ``variance`` is a string other than
+            ``"explained"``.
+        DataError: If ``variance="explained"`` and ``data`` has fewer than
+            two samples.
+
+    Examples:
+        Two leading EOFs of ten snapshots over four grid points:
+
+        >>> import jax
+        >>> import vardax as vdx
+        >>> data = jax.random.normal(jax.random.PRNGKey(0), (10, 4))
+        >>> basis = vdx.eof_basis(data, 2)
+        >>> basis.phi.shape, basis.variance.shape
+        ((4, 2), (2,))
+
+        A single snapshot cannot give an explained variance:
+
+        >>> vdx.eof_basis(data[:1], 1)  # doctest: +IGNORE_EXCEPTION_DETAIL
+        Traceback (most recent call last):
+        ...
+        DataError: variance="explained" needs at least 2 samples (T >= 2); got T=1.
     """
     data_array = jnp.asarray(data)
     # Φ: leading EOFs of the data, singular values σ

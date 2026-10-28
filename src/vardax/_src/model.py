@@ -50,17 +50,80 @@ class FourDVarNet1D(eqx.Module):
     using ``n_solver_steps`` learned gradient steps modulated by a ConvLSTM,
     with the differentiation strategy selected by ``solver_adjoint``.
 
-    Attributes:
+    Algorithm:
+        1. Start from the masked observations, $x_0 = m \odot y$, with a zero
+           ConvLSTM state.
+        2. For each of ``n_solver_steps`` iterations, compute
+           $\nabla J(x_k)$, pass it through the ConvLSTM gradient modulator
+           $\mathcal{G}$ and update $x_{k+1} = x_k - \alpha\, \mathcal{G}(\cdot)$.
+        3. Return $x_K$.  A ``KStepAdjoint`` runs the one-step solver and an
+           ``ImplicitAdjoint`` the fixed-point projection instead; any other
+           adjoint unrolls with ordinary backprop.
+
+    Args:
+        state_dim: Spatial size $N$ of the state.
+        n_time: Number of time steps $T$ in a window.
+        latent_dim: Dimensionality of the prior's latent code.
+        hidden_dim: Number of hidden channels of the ConvLSTM.
         n_solver_steps: Number of solver iterations to unroll.
-        alpha: Gradient step-size.
+        alpha: Gradient step-size $\alpha$.
         prior_weight: Weight $\lambda$ for the prior cost term.
         solver_adjoint: ``optimistix.AbstractAdjoint`` selecting the
             differentiation strategy. Defaults to
             ``RecursiveCheckpointAdjoint`` (standard backprop). Use
             ``OneStepAdjoint()`` for O(1)-memory training (Bolte et al.
             2023) or ``ImplicitAdjoint()`` for fixed-point projection.
+        key: PRNG key for the prior and gradient-modulator weights.
+
+    Attributes:
         prior: BilinAEPrior1D learned prior.
         grad_mod: ConvLSTMGradMod1D learned gradient modulator.
+
+    Examples:
+        A tiny model reconstructs a batch with the shape of its input:
+
+        >>> import jax
+        >>> import jax.numpy as jnp
+        >>> import vardax as vdx
+        >>> model = vdx.FourDVarNet1D(
+        ...     state_dim=4,
+        ...     n_time=3,
+        ...     latent_dim=2,
+        ...     hidden_dim=3,
+        ...     n_solver_steps=2,
+        ...     key=jax.random.PRNGKey(0),
+        ... )
+        >>> batch = vdx.Batch1D(input=jnp.ones((2, 3, 4)), mask=jnp.ones((2, 3, 4)))
+        >>> model(batch).shape
+        (2, 3, 4)
+
+        Selecting the one-step adjoint changes only the gradient path, not
+        the forward value:
+
+        >>> fast = vdx.FourDVarNet1D(
+        ...     state_dim=4,
+        ...     n_time=3,
+        ...     latent_dim=2,
+        ...     hidden_dim=3,
+        ...     n_solver_steps=2,
+        ...     solver_adjoint=vdx.OneStepAdjoint(),
+        ...     key=jax.random.PRNGKey(0),
+        ... )
+        >>> bool(jnp.allclose(fast(batch), model(batch), atol=1e-5))
+        True
+
+        Compose it with [`train_step`][vardax.train_step] for one optimiser
+        update:
+
+        >>> import optax
+        >>> target = vdx.Batch1D(
+        ...     input=batch.input, mask=batch.mask, target=jnp.zeros((2, 3, 4))
+        ... )
+        >>> optimizer = optax.adam(1e-3)
+        >>> opt_state = optimizer.init(model)
+        >>> model, opt_state, loss = vdx.train_step(model, target, optimizer, opt_state)
+        >>> loss.shape
+        ()
     """
 
     n_solver_steps: int = eqx.field(static=True)
@@ -103,8 +166,13 @@ class FourDVarNet1D(eqx.Module):
     def __call__(self, batch: Batch1D) -> Float[Array, "B T N"]:
         """Run the solver and return the final state estimate.
 
-        Dispatches on ``solver_adjoint`` to pick the differentiation
-        path.
+        Dispatches on ``solver_adjoint`` to pick the differentiation path.
+
+        Args:
+            batch: Observed batch $(y, m)$.
+
+        Returns:
+            Reconstructed state $x_K$ with the shape of ``batch.input``.
         """
         if isinstance(self.solver_adjoint, KStepAdjoint):
             return self._call_one_step(batch)
@@ -163,7 +231,31 @@ class FourDVarNet1D(eqx.Module):
         )
 
     def as_analysis_step(self) -> _FourDVarNet1DAnalysisStep:
-        """Adapt to ``pipekit_cycle.AnalysisStep`` (Decision D8)."""
+        """Adapt to ``pipekit_cycle.AnalysisStep`` (Decision D8).
+
+        Returns:
+            A callable ``(forecast, obs, *, obs_op, obs_err_cov) -> analysis`` that
+            masks the non-finite entries of ``obs`` and runs this model on them.
+
+        Examples:
+            Non-finite observations become unobserved entries:
+
+            >>> import jax
+            >>> import jax.numpy as jnp
+            >>> import vardax as vdx
+            >>> model = vdx.FourDVarNet1D(
+            ...     state_dim=4,
+            ...     n_time=3,
+            ...     latent_dim=2,
+            ...     hidden_dim=3,
+            ...     n_solver_steps=1,
+            ...     key=jax.random.PRNGKey(0),
+            ... )
+            >>> step = model.as_analysis_step()
+            >>> obs = jnp.ones((1, 3, 4)).at[0, 0, 0].set(jnp.nan)
+            >>> step(obs, obs, obs_op=None, obs_err_cov=None).shape
+            (1, 3, 4)
+        """
         return _FourDVarNet1DAnalysisStep(self)
 
 
@@ -187,18 +279,80 @@ class _FourDVarNet1DAnalysisStep(eqx.Module):
 
 
 class FourDVarNet2D(eqx.Module):
-    """End-to-end 4DVarNet model for 2-D spatiotemporal reconstruction.
+    r"""End-to-end 4DVarNet model for 2-D spatiotemporal reconstruction.
 
-    Attributes:
+    Minimises the same variational cost as [`FourDVarNet1D`][vardax.FourDVarNet1D],
+
+    $$
+    J(x) = \|\mathbf{m} \odot (x - y)\|^2 + \lambda \|x - \varphi(x)\|^2
+    $$
+
+    over fields with two spatial axes.
+
+    Algorithm:
+        1. Start from the masked observations, $x_0 = m \odot y$, with a zero
+           ConvLSTM state.
+        2. For each of ``n_solver_steps`` iterations, compute
+           $\nabla J(x_k)$, pass it through the ConvLSTM gradient modulator
+           $\mathcal{G}$ and update $x_{k+1} = x_k - \alpha\, \mathcal{G}(\cdot)$.
+        3. Return $x_K$.  A ``KStepAdjoint`` runs the one-step solver; any
+           other supported adjoint unrolls with ordinary backprop.
+
+    Args:
+        n_time: Number of time steps $T$ in a window.
+        height: Spatial height $H$.
+        width: Spatial width $W$.
+        latent_dim: Dimensionality of the prior's latent code.
+        hidden_dim: Number of hidden channels of the ConvLSTM.
         n_solver_steps: Number of solver iterations to unroll.
-        alpha: Gradient step-size.
-        prior_weight: Weight for the prior cost term.
+        alpha: Gradient step-size $\alpha$.
+        prior_weight: Weight $\lambda$ for the prior cost term.
         solver_adjoint: ``optimistix.AbstractAdjoint`` selecting the
             differentiation strategy. Defaults to
             ``RecursiveCheckpointAdjoint`` (standard backprop).
             ``ImplicitAdjoint`` is not yet implemented for 2-D models.
+        key: PRNG key for the prior and gradient-modulator weights.
+
+    Attributes:
         prior: BilinAEPrior2D learned prior.
         grad_mod: ConvLSTMGradMod2D learned gradient modulator.
+
+    Examples:
+        A tiny model reconstructs a batch with the shape of its input:
+
+        >>> import jax
+        >>> import jax.numpy as jnp
+        >>> import vardax as vdx
+        >>> model = vdx.FourDVarNet2D(
+        ...     n_time=3,
+        ...     height=4,
+        ...     width=5,
+        ...     latent_dim=2,
+        ...     hidden_dim=3,
+        ...     n_solver_steps=2,
+        ...     key=jax.random.PRNGKey(0),
+        ... )
+        >>> batch = vdx.Batch2D(
+        ...     input=jnp.ones((1, 3, 4, 5)), mask=jnp.ones((1, 3, 4, 5))
+        ... )
+        >>> model(batch).shape
+        (1, 3, 4, 5)
+
+        Selecting the one-step adjoint changes only the gradient path, not
+        the forward value:
+
+        >>> fast = vdx.FourDVarNet2D(
+        ...     n_time=3,
+        ...     height=4,
+        ...     width=5,
+        ...     latent_dim=2,
+        ...     hidden_dim=3,
+        ...     n_solver_steps=2,
+        ...     solver_adjoint=vdx.OneStepAdjoint(),
+        ...     key=jax.random.PRNGKey(0),
+        ... )
+        >>> bool(jnp.allclose(fast(batch), model(batch), atol=1e-5))
+        True
     """
 
     n_solver_steps: int = eqx.field(static=True)
@@ -243,8 +397,13 @@ class FourDVarNet2D(eqx.Module):
     def __call__(self, batch: Batch2D) -> Float[Array, "B T H W"]:
         """Run the solver and return the final state estimate.
 
-        Dispatches on ``solver_adjoint`` to pick the differentiation
-        path.
+        Dispatches on ``solver_adjoint`` to pick the differentiation path.
+
+        Args:
+            batch: Observed batch $(y, m)$.
+
+        Returns:
+            Reconstructed state $x_K$ with the shape of ``batch.input``.
         """
         if isinstance(self.solver_adjoint, KStepAdjoint):
             return self._call_one_step(batch)
@@ -298,7 +457,12 @@ class FourDVarNet2D(eqx.Module):
         )
 
     def as_analysis_step(self) -> _FourDVarNet2DAnalysisStep:
-        """Adapt to ``pipekit_cycle.AnalysisStep`` (Decision D8)."""
+        """Adapt to ``pipekit_cycle.AnalysisStep`` (Decision D8).
+
+        Returns:
+            A callable ``(forecast, obs, *, obs_op, obs_err_cov) -> analysis`` that
+            masks the non-finite entries of ``obs`` and runs this model on them.
+        """
         return _FourDVarNet2DAnalysisStep(self)
 
 

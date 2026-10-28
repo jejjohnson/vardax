@@ -28,6 +28,17 @@ class MaskedIdentity(eqx.Module):
         Array([1., 0., 3.], dtype=float32)
         >>> type(op.linearize(x)).__name__
         'JacobianLinearOperator'
+
+        Without a mask the operator is the identity:
+
+        >>> bool(jnp.all(op(x) == x))
+        True
+
+        A per-batch mask broadcasts over the batch axis:
+
+        >>> xb = jnp.ones((2, 3))
+        >>> op(xb, mask=jnp.array([1.0, 0.0, 1.0])).sum(axis=-1)
+        Array([2., 2.], dtype=float32)
     """
 
     def __call__(
@@ -40,5 +51,12 @@ class MaskedIdentity(eqx.Module):
         return x * mask
 
     def linearize(self, x: Float[Array, ...]) -> lx.AbstractLinearOperator:
-        """Tangent-linear operator at ``x``: identity (since $H$ is linear)."""
+        """Tangent-linear operator at ``x``: identity (since $H$ is linear).
+
+        Args:
+            x: State at which to linearise.
+
+        Returns:
+            An identity-like Jacobian operator on the shape of ``x``.
+        """
         return lx.JacobianLinearOperator(lambda y, _args=None: y, x)

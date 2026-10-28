@@ -74,6 +74,44 @@ class SpaceTimeFieldResult(eqx.Module):
     An [`ensemble`][vardax.SpaceTimeFieldVar.ensemble] returns one result
     whose array leaves carry a leading member axis; evaluate it with
     ``eqx.filter_vmap(lambda r: r.initial_condition(grid))(result)``.
+
+    Examples:
+        Fit a line to three points, then query the fitted field:
+
+        >>> import equinox as eqx, jax, jax.numpy as jnp, vardax
+        >>> class Line(eqx.Module):
+        ...     w: jax.Array
+        ...
+        ...     def __call__(self, s):
+        ...         return (self.w[0] + self.w[1] * s[1])[None]
+        >>> obs = vardax.PointObsBatch(
+        ...     coords=jnp.array([[0.0, -1.0], [0.5, 0.0], [1.0, 1.0]]),
+        ...     values=jnp.array([-1.0, 0.0, 1.0]),
+        ...     sigma=jnp.ones(3),
+        ...     valid=jnp.ones(3, bool),
+        ... )
+        >>> ana = vardax.SpaceTimeFieldVar(
+        ...     field=Line(jnp.zeros(2)),
+        ...     weight_decay=1e-6,
+        ...     minimiser=vardax.OptimistixMinimiser(),
+        ... )
+        >>> result = ana(obs)
+        >>> result.evaluate(jnp.array([[0.0, 2.0], [0.0, 3.0]])).round(2)
+        Array([2., 3.], dtype=float32)
+        >>> bool(result.grad_norm < 1e-3)
+        True
+
+        The analysis at the window start on a spatial grid is the initial
+        condition for a forecast, and a non-2-D grid is rejected:
+
+        >>> result.initial_condition(jnp.array([[0.5], [2.0]])).shape
+        (2,)
+        >>> result.initial_condition(
+        ...     jnp.array([0.5, 2.0])
+        ... )  # doctest: +IGNORE_EXCEPTION_DETAIL
+        Traceback (most recent call last):
+        ...
+        GridError: grid must be 2-D (N, D); got shape (2,).
     """
 
     field: Any
@@ -86,10 +124,11 @@ class SpaceTimeFieldResult(eqx.Module):
         """Evaluate the field at space-time points.
 
         Args:
-            coords: Points ``(t, *s)``, shape ``(N, 1 + D)``.
+            coords: Space-time points ``(t, *s)``, one per row.
 
         Returns:
-            ``(N,)`` for a single-channel field, else ``(N, K)``.
+            One value per point for a single-channel field, else one
+            row of ``K`` channels per point.
         """
         return _evaluate(self.field, jnp.asarray(coords))
 
@@ -99,10 +138,14 @@ class SpaceTimeFieldResult(eqx.Module):
         This is the initial state for a forecast with a ``ForwardModel``.
 
         Args:
-            grid: Spatial points $s_j$, shape ``(N, D)``.
+            grid: Spatial points $s_j$, one per row.
 
         Returns:
-            ``(N,)`` for a single-channel field, else ``(N, K)``.
+            One value per grid point for a single-channel field, else one
+            row of ``K`` channels per point.
+
+        Raises:
+            GridError: If ``grid`` is not 2-D.
         """
         grid = jnp.asarray(grid)
         if grid.ndim != 2:
@@ -120,13 +163,11 @@ class SpaceTimeFieldVar(eqx.Module):
 
     Minimises, over the network weights $\theta$,
 
-    $$
-    J(\theta) = \tfrac{1}{2}\sum_k m_k \frac{\big(y_k - f_\theta(t_k, s_k)
-        \big)^2}{\sigma_k^2}
-      + \frac{\lambda}{2 N_c}\sum_j \big\lVert \mathcal N[f_\theta](c_j)
-        \big\rVert^2
-      + \frac{\alpha}{2}\lVert\theta\rVert^2 ,
-    $$
+    $$J(\theta) = J_o + J_\mathcal{N} + \tfrac{\alpha}{2} \lVert\theta\rVert^2$$
+
+    $$J_o(\theta) = \tfrac12 \sum_k m_k (y_k - f_\theta(t_k, s_k))^2 / \sigma_k^2$$
+
+    $$J_\mathcal{N} = \tfrac{\lambda}{2 N_c} \sum_j \| \mathcal N[f_\theta](c_j) \|^2$$
 
     with the observations of a [`PointObsBatch`][vardax.PointObsBatch]
     ($m_k = 0$ on padding rows, which contribute nothing, ``NaN``
@@ -165,6 +206,20 @@ class SpaceTimeFieldVar(eqx.Module):
     deterministic (its patience test, best-iterate tracking and implicit
     adjoint all assume that). Draw more points, or refit with new keys,
     for a better estimate of the expected residual.
+
+    Algorithm:
+        1. Split the field's leaves into the control $\theta$ (by
+           ``filter_spec``) and the frozen rest.
+        2. Draw the penalty's collocation points once from ``key`` when it
+           has a ``sampler``.
+        3. Evaluate the field at the observation coordinates and form the
+           masked, $\sigma$-weighted observation cost.
+        4. Add the weight decay $\tfrac{\alpha}{2}\lVert\theta\rVert^2$ and,
+           if present, the mean squared PDE residual at the collocation
+           points.
+        5. Minimise over $\theta$ with ``minimiser`` in one compiled
+           function and return the fitted field with the cost, gradient
+           norm and step count.
 
     Attributes:
         field: The initial network, a single-example ``eqx.Module``
@@ -209,6 +264,30 @@ class SpaceTimeFieldVar(eqx.Module):
         >>> result = ana(obs)
         >>> result.initial_condition(jnp.array([[0.5], [2.0]])).round(3)
         Array([0.5, 2. ], dtype=float32)
+
+        A deep ensemble refits from random initialisations; the result's
+        array leaves carry a member axis:
+
+        >>> def init(key):
+        ...     return Line(jax.random.normal(key, (2,)))
+        >>> members = ana.ensemble(obs, init, 3, key=jax.random.PRNGKey(0))
+        >>> members.cost.shape
+        (3,)
+
+        The cycle adapter returns the analysis on a grid directly:
+
+        >>> step = ana.as_analysis_step(grid=jnp.array([[0.5], [2.0]]))
+        >>> step(None, obs).shape
+        (2,)
+
+        A negative weight decay is rejected:
+
+        >>> vardax.SpaceTimeFieldVar(  # doctest: +IGNORE_EXCEPTION_DETAIL
+        ...     field=Line(jnp.zeros(2)), weight_decay=-1.0
+        ... )
+        Traceback (most recent call last):
+        ...
+        ConfigurationError: weight_decay must be >= 0, got -1.0.
 
     References:
         Oh, Y. (2025). On the effect of neural field reparameterization for
@@ -296,10 +375,9 @@ class SpaceTimeFieldVar(eqx.Module):
         """Fit the field to one sample of point observations.
 
         Args:
-            obs: The observations, one sample (``values`` of shape
-                ``(N_obs,)``, ``coords`` ``(N_obs, 1 + D)`` with time first;
-                ``time_index`` and ``n_times`` are not used). For a batch
-                of samples, ``eqx.filter_vmap`` over this call.
+            obs: The observations, one sample, with ``coords`` ordered time
+                first (``time_index`` and ``n_times`` are not used). For a
+                batch of samples, ``eqx.filter_vmap`` over this call.
             key: Draws the collocation points when the residual penalty
                 has a ``sampler``; unused otherwise.
 
@@ -307,9 +385,10 @@ class SpaceTimeFieldVar(eqx.Module):
             A [`SpaceTimeFieldResult`][vardax.SpaceTimeFieldResult].
 
         Raises:
-            TypeError: If ``obs`` is not a `PointObsBatch`.
-            ValueError: If ``obs`` carries a batch axis, or the penalty
-                needs a key and none is given.
+            InputTypeError: If ``obs`` is not a `PointObsBatch`.
+            ShapeError: If ``obs`` carries a batch axis.
+            MissingInputError: If the penalty needs a key and none is
+                given.
         """
         if not isinstance(obs, PointObsBatch):
             raise InputTypeError(
@@ -355,7 +434,7 @@ class SpaceTimeFieldVar(eqx.Module):
             array leaves carry a leading axis of size ``n_members``.
 
         Raises:
-            ValueError: If ``n_members < 1``.
+            ConfigurationError: If ``n_members < 1``.
         """
         if n_members < 1:
             raise ConfigurationError(f"n_members must be >= 1, got {n_members}.")
@@ -392,7 +471,7 @@ class SpaceTimeFieldVar(eqx.Module):
         leaves at the ends.
 
         Args:
-            grid: Spatial points $s_j$ of the returned state, ``(N, D)``,
+            grid: Spatial points $s_j$ of the returned state, one per row,
                 or ``None``.
             key: Collocation key; required when the penalty has a
                 ``sampler``.
@@ -401,9 +480,11 @@ class SpaceTimeFieldVar(eqx.Module):
             The adapter.
 
         Raises:
-            ValueError: If ``grid`` is not 2-D, the penalty has a sampler
-                and ``key`` is ``None``, or $t_0$ is outside the
-                collocation window.
+            GridError: If ``grid`` is not 2-D.
+            MissingInputError: If the penalty has a sampler and ``key`` is
+                ``None``.
+            ConfigurationError: If $t_0$ is outside the collocation
+                window.
         """
         if grid is not None:
             grid = jnp.asarray(grid)

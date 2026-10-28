@@ -49,11 +49,30 @@ from vardax._src.utils.shapes import as_shape
 class WeakFourDVar(eqx.Module):
     r"""Weak-constraint 4DVar with augmented control vector.
 
+    $$J(x_0, \eta) = \tfrac12 \|x_0 - x_b\|^2_{B^{-1}} + J_o + J_q$$
+
+    $$J_o = \tfrac12 \sum_t \|y_t - H(x_t)\|^2_{R^{-1}}$$
+
+    $$J_q = \tfrac12 \sum_t \|\eta_t\|^2_{Q^{-1}}$$
+
+    $$x_t = M^\text{free}(x_{t-1}) + \eta_t$$
+
+    Algorithm:
+        1. Start from the background $x_0 = x_b$ and zero model errors.
+        2. Roll the free model out with the forcing $\eta_t$ added after
+           every step.
+        3. Sum the masked, $R^{-1}$-weighted observation misfit over the
+           trajectory, the $Q^{-1}$-weighted model-error cost over the
+           $T$ steps, and the background term (or the parameterization
+           penalty).
+        4. Minimise jointly over $(x_0, \eta)$ with ``minimiser`` and
+           return the pair.
+
     Attributes:
         forward: ``pipekit_cycle.ForwardModel`` (the free model
             $M_t^\text{free}$).
         obs_op: Observation operator.
-        prior_mean: Background $x_b$ — initial state ``(N,)``.
+        prior_mean: Background $x_b$ — the initial state.
         prior_cov_op: $B$.
         obs_cov_op: $R$.
         model_err_cov_op: $Q$ — covariance of the per-step model
@@ -107,6 +126,40 @@ class WeakFourDVar(eqx.Module):
         >>> x0_star, eta_star = weak(batch)
         >>> x0_star.shape, eta_star.shape
         ((1, 3), (1, 0, 3))
+
+        A two-time window has one model-error step. With a tiny model-error
+        covariance the free model is almost exact and the analysis
+        approaches the strong-constraint $x_0^* = 2/3$ for $M(x) = x / 2$:
+
+        >>> class Decay:
+        ...     dt = 1.0
+        ...
+        ...     def step(self, x, dt):
+        ...         return 0.5 * x
+        >>> tiny = lx.TaggedLinearOperator(
+        ...     lx.DiagonalLinearOperator(jnp.full(3, 1e-4)),
+        ...     lx.positive_semidefinite_tag,
+        ... )
+        >>> weak = vardax.WeakFourDVar(
+        ...     forward=Decay(),
+        ...     obs_op=vardax.MaskedIdentity(),
+        ...     prior_mean=jnp.zeros(3),
+        ...     prior_cov_op=eye,
+        ...     obs_cov_op=eye,
+        ...     model_err_cov_op=tiny,
+        ... )
+        >>> window = vardax.Batch1D(input=jnp.ones((1, 2, 3)), mask=jnp.ones((1, 2, 3)))
+        >>> x0_star, eta_star = weak(window)
+        >>> eta_star.shape
+        (1, 1, 3)
+        >>> bool(jnp.allclose(x0_star, 2 / 3, atol=5e-2))
+        True
+
+        Composed with the Laplace adapter, ``posterior`` returns the $x_0$
+        block of the inverse augmented precision:
+
+        >>> weak.posterior(window).cov.mv(jnp.ones(3)).shape
+        (3,)
     """
 
     forward: Any
@@ -179,7 +232,7 @@ class WeakFourDVar(eqx.Module):
         self,
         batch: Batch1D | PointObsBatch,
     ) -> tuple[Float[Array, "*batch N"], Float[Array, "*batch T N"]]:
-        """Weak-4DVar analysis.
+        r"""Weak-4DVar analysis.
 
         Returns ``(x_0_star, eta_star)`` — the analysis initial state
         and the per-step model-error trajectory (one row per
@@ -189,8 +242,24 @@ class WeakFourDVar(eqx.Module):
         ``obs_op=GridPointObs(...)``: observation $i$ is compared with the
         trajectory state at ``time_index[i]`` over a window of ``n_times``
         states (so ``T = n_times - 1``), with error variance
-        $\\sigma_i^2$ (``obs_cov_op`` must be ``None`` or an identity,
-        else ``ValueError``).
+        $\sigma_i^2$ (``obs_cov_op`` must be ``None`` or an identity).
+
+        Args:
+            batch: A gridded [`Batch1D`][vardax.Batch1D] whose time axis
+                holds the window, or a
+                [`PointObsBatch`][vardax.PointObsBatch].
+
+        Returns:
+            The pair $(x_0^*, \eta^*)$ of every window.
+
+        Raises:
+            ObservationError: For a point batch with a non-trivial
+                ``obs_cov_op`` or an out-of-range ``time_index``.
+            MissingInputError: For a gridded batch when ``obs_cov_op`` is
+                ``None``, or a point batch with ``time_index`` but no
+                ``n_times``.
+            InputTypeError: For a point batch whose ``obs_op`` is not a
+                ``GridPointObs``.
         """
         state_dim = self.prior_mean.shape[0]
         if isinstance(batch, PointObsBatch):
@@ -357,13 +426,21 @@ class WeakFourDVar(eqx.Module):
             The window's posterior: mean and lazy covariance.
 
         Raises:
-            ValueError: If ``batch`` holds more than one window.
+            ShapeError: If ``batch`` holds more than one window.
+            UnsupportedInputError: For a point batch, or for a model with
+                a ``parameterization``.
         """
         from vardax._src.posterior._precision import model_posterior
 
         return model_posterior(self, batch, adapter)
 
     def as_analysis_step(self) -> _WeakFourDVarAnalysisStep:
+        """Adapt to ``pipekit_cycle.AnalysisStep``.
+
+        Returns:
+            An analysis step that treats non-finite observations as
+            missing and returns the analysed initial state only.
+        """
         return _WeakFourDVarAnalysisStep(self)
 
 

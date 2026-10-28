@@ -50,9 +50,28 @@ from vardax._src.utils.shapes import as_shape
 class ThreeDVar(eqx.Module):
     r"""3D variational analysis.
 
+    $$J(x) = \tfrac12 \|x - x_b\|^2_{B^{-1}} + \tfrac12 \|y - H(x)\|^2_{R^{-1}}$$
+
+    with the residual masked by $m$ where observations are missing.
+
+    $$x^* = \arg\min_x J(x)$$
+
+    Algorithm:
+        1. For each sample in the batch (``jax.vmap``), start from the
+           background $x_b$ (or the parameterization's initial control).
+        2. Evaluate the background term
+           $\tfrac12 \delta x^\top B^{-1} \delta x$ with a ``cov_solver`` solve; under a
+           ``parameterization`` the penalty $\mathrm{pen}(\theta)$
+           replaces it.
+        3. Evaluate the observation term from the masked residual
+           $m \odot (y - H(x))$ and an $R^{-1}$ solve; a point batch uses
+           the $\sigma_i$-weighted point cost instead.
+        4. Minimise the sum with ``minimiser`` for at most ``max_steps``
+           iterations and return the minimising state.
+
     Attributes:
         obs_op: Observation operator (linear or nonlinear).
-        prior_mean: Background $x_b$ of shape ``(T, N)``.
+        prior_mean: Background $x_b$.
         prior_cov_op: $B$. ``lineax.AbstractLinearOperator``.
         obs_cov_op: $R$. ``lineax.AbstractLinearOperator``.
         minimiser: ``optimistix.AbstractMinimiser`` for the inner
@@ -100,6 +119,35 @@ class ThreeDVar(eqx.Module):
         (1, 1, 3)
         >>> bool(jnp.allclose(xa, 0.5, atol=1e-3))
         True
+
+        A nonlinear $H(x) = x^2$ through
+        [`CallableObs`][vardax.CallableObs]. Where the mask is zero the
+        analysis falls back to the background, and ``analyse`` also
+        returns the minimiser diagnostics:
+
+        >>> sq = vardax.ThreeDVar(
+        ...     obs_op=vardax.CallableObs(fn=lambda x: x**2),
+        ...     prior_mean=jnp.ones((1, 3)),
+        ...     prior_cov_op=eye,
+        ...     obs_cov_op=eye,
+        ... )
+        >>> half = vardax.Batch1D(
+        ...     input=jnp.full((1, 1, 3), 4.0),
+        ...     mask=jnp.array([[[1.0, 0.0, 0.0]]]),
+        ... )
+        >>> xa, result = sq.analyse(half)
+        >>> xa.shape, result.cost.shape
+        ((1, 1, 3), (1,))
+        >>> bool(jnp.allclose(xa[0, 0, 1:], 1.0, atol=1e-3))
+        True
+
+        Composition with a posterior adapter: the default
+        [`LaplaceCovariance`][vardax.LaplaceCovariance] returns
+        $P^* = (I + I)^{-1}$ for the first example's model.
+
+        >>> post = three.posterior(batch)
+        >>> bool(jnp.allclose(post.cov.mv(jnp.ones((1, 3))), 0.5, atol=1e-2))
+        True
     """
 
     obs_op: Any
@@ -144,7 +192,23 @@ class ThreeDVar(eqx.Module):
         [`NeuralFieldParameterization`][vardax.NeuralFieldParameterization],
         which evaluates the field at the coordinates directly. The error
         variances are the batch's $\sigma_i^2$; ``obs_cov_op`` must be
-        ``None`` or an identity (``ValueError`` otherwise).
+        ``None`` or an identity.
+
+        Args:
+            batch: A gridded [`Batch1D`][vardax.Batch1D] or a
+                [`PointObsBatch`][vardax.PointObsBatch].
+
+        Returns:
+            The analysis of every sample, with a leading batch axis.
+
+        Raises:
+            ObservationError: For a point batch with a non-trivial
+                ``obs_cov_op``.
+            MissingInputError: For a gridded batch when ``obs_cov_op`` is
+                ``None``.
+            InputTypeError: For a point batch whose ``obs_op`` is not a
+                point operator, or a ``FieldPointObs`` without a
+                ``NeuralFieldParameterization``.
         """
         if isinstance(batch, PointObsBatch):
             check_point_obs_cov(self.obs_cov_op)
@@ -180,7 +244,8 @@ class ThreeDVar(eqx.Module):
             (the state, or $\theta$ under a ``parameterization``).
 
         Raises:
-            TypeError: For a ``PointObsBatch``.
+            InputTypeError: For a ``PointObsBatch``.
+            MissingInputError: If ``obs_cov_op`` is ``None``.
         """
         if not isinstance(batch, Batch1D):
             raise InputTypeError(
@@ -340,14 +405,20 @@ class ThreeDVar(eqx.Module):
             The window's posterior: mean and lazy covariance.
 
         Raises:
-            ValueError: If ``batch`` holds more than one window.
+            ShapeError: If ``batch`` holds more than one window.
+            UnsupportedInputError: For a point batch.
         """
         from vardax._src.posterior._precision import model_posterior
 
         return model_posterior(self, batch, adapter)
 
     def as_analysis_step(self) -> _ThreeDVarAnalysisStep:
-        """Adapt to ``pipekit_cycle.AnalysisStep`` (Decision D8)."""
+        """Adapt to ``pipekit_cycle.AnalysisStep`` (Decision D8).
+
+        Returns:
+            An analysis step that minimises the cost around a supplied
+            forecast, treating ``NaN`` observations as missing.
+        """
         return _ThreeDVarAnalysisStep(self)
 
 

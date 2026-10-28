@@ -24,6 +24,12 @@ from .k_step import KStepAdjoint
 def to_optimistix_adjoint(spec: Any) -> optx.AbstractAdjoint:
     """Map an adjoint spec onto an ``optimistix.AbstractAdjoint``.
 
+    Algorithm:
+        1. Return ``spec`` unchanged if it already is an
+           ``optimistix.AbstractAdjoint``.
+        2. Otherwise match it by class name against the mapping below.
+        3. Raise for names that have no inner-solve counterpart.
+
     Mapping:
 
     - ``ImplicitAdjoint()`` → ``optx.ImplicitAdjoint()`` — exact at a
@@ -35,7 +41,8 @@ def to_optimistix_adjoint(spec: Any) -> optx.AbstractAdjoint:
       [`KStepAdjoint(k)`][vardax.adjoints.KStepAdjoint] — warmup under
       ``stop_gradient``, then ``k`` differentiable steps (``k=1`` is
       [`OneStepAdjoint`][vardax.adjoints.OneStepAdjoint]).
-    - ``DirectAdjoint`` / ``BacksolveAdjoint`` → ``ValueError``: the
+    - ``DirectAdjoint`` / ``BacksolveAdjoint`` →
+      [`UnsupportedInputError`][vardax.UnsupportedInputError]: the
       first is the plain unrolled default (pass
       ``optx.RecursiveCheckpointAdjoint()`` or nothing), the second
       only exists at the dynamics layer.
@@ -49,7 +56,7 @@ def to_optimistix_adjoint(spec: Any) -> optx.AbstractAdjoint:
         The corresponding optimistix adjoint instance.
 
     Raises:
-        ValueError: for layer-inappropriate or unrecognised specs.
+        UnsupportedInputError: For layer-inappropriate or unrecognised specs.
 
     Examples:
         >>> import optimistix as optx
@@ -61,6 +68,23 @@ def to_optimistix_adjoint(spec: Any) -> optx.AbstractAdjoint:
         ...     to_optimistix_adjoint(optx.ImplicitAdjoint()), optx.ImplicitAdjoint
         ... )
         True
+
+        A pipekit ``TruncatedAdjoint(k=1)`` is the one-step adjoint.
+
+        >>> import vardax
+        >>> adjoint = to_optimistix_adjoint(TruncatedAdjoint(k=1))
+        >>> isinstance(adjoint, vardax.OneStepAdjoint)
+        False
+        >>> isinstance(adjoint, vardax.KStepAdjoint)
+        True
+
+        A spec with no inner-solve meaning is rejected.
+
+        >>> from pipekit_cycle.adjoints import DirectAdjoint
+        >>> to_optimistix_adjoint(DirectAdjoint())  # doctest: +IGNORE_EXCEPTION_DETAIL
+        Traceback (most recent call last):
+        ...
+        UnsupportedInputError: DirectAdjoint does not apply at the inner-solve layer
     """
     if isinstance(spec, optx.AbstractAdjoint):
         return spec

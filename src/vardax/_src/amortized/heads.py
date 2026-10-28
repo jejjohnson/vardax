@@ -32,17 +32,60 @@ _LOG_2PI = math.log(2.0 * math.pi)
 
 
 class RegressionHead(eqx.Module):
-    """Gaussian regression head: ``q_φ(x|y) = N(μ_φ(y), diag(σ²_φ(y)))``.
+    r"""Gaussian regression head: ``q_φ(x|y) = N(μ_φ(y), diag(σ²_φ(y)))``.
+
+    $$
+    q_\phi(x \mid y) = \mathcal{N}(\mu_\phi(y), \mathrm{diag}\,\sigma^2_\phi(y))
+    $$
 
     Two MLPs share the context: one for the mean, one for the log
     variance. Outputs are reshaped to the user-specified
     ``state_shape``.
 
+    Algorithm:
+        1. Map the context to the flat mean $\mu$ and log variance
+           $\log \sigma^2$ with the two MLPs, and reshape them to ``state_shape``.
+        2. ``map_estimate`` returns $\mu$.
+        3. ``sample`` returns $\mu + \sigma \odot \varepsilon$ with
+           $\varepsilon \sim \mathcal{N}(0, I)$.
+        4. ``log_prob`` returns the diagonal-Gaussian log-density summed over
+           all state entries.
+
+    Args:
+        context_dim: Dimension of the context vector from the encoder.
+        state_shape: Shape of a single posterior sample (e.g.
+            ``(T, N)`` for ``Batch1D`` targets).
+        hidden_dim: Width of the MLP hidden layers.
+        depth: Number of hidden layers of each MLP.
+        key: PRNG key for the MLP weights.
+
     Attributes:
         mlp_mu: MLP from context to flat mean (size ``prod(state_shape)``).
         mlp_log_var: MLP from context to flat log variance.
-        state_shape: Shape of a single posterior sample (e.g.
-            ``(T, N)`` for ``Batch1D`` targets).
+
+    Examples:
+        >>> import jax
+        >>> import jax.numpy as jnp
+        >>> import vardax as vdx
+        >>> head = vdx.RegressionHead(
+        ...     context_dim=6, state_shape=(3, 4), key=jax.random.PRNGKey(0)
+        ... )
+        >>> ctx = jnp.ones(6)
+        >>> head.map_estimate(ctx).shape
+        (3, 4)
+        >>> head.sample(ctx, jax.random.PRNGKey(1), 5).shape
+        (5, 3, 4)
+
+        The density is highest at the mean:
+
+        >>> mode = head.map_estimate(ctx)
+        >>> bool(head.log_prob(mode, ctx) > head.log_prob(mode + 3.0, ctx))
+        True
+
+        The head scalar log-density has no batch axis:
+
+        >>> head.log_prob(mode, ctx).shape
+        ()
     """
 
     mlp_mu: eqx.nn.MLP
@@ -109,12 +152,21 @@ class RegressionHead(eqx.Module):
 
 
 class ConditionalFlowHead(eqx.Module):
-    """Conditional normalising flow head (stub).
+    r"""Conditional normalising flow head (stub).
 
-    Implements ``x = f_φ(z; c_ψ(y))`` with ``z ~ N(0, I)``. Exact
+    Implements $x = f_\phi(z; c_\psi(y))$ with $z \sim \mathcal{N}(0, I)$. Exact
     density via change-of-variables. Requires ``gauss_flows`` for the
     flow primitives; ships as a stub until that dependency is added to
     ``pyproject.toml``.
+
+    Examples:
+        Constructing the stub raises until the dependency lands:
+
+        >>> import vardax as vdx
+        >>> vdx.ConditionalFlowHead()  # doctest: +IGNORE_EXCEPTION_DETAIL
+        Traceback (most recent call last):
+        ...
+        NotImplementedError: ConditionalFlowHead requires `gauss_flows` ...
     """
 
     def __init__(self, *_args: object, **_kwargs: object) -> None:
@@ -126,11 +178,20 @@ class ConditionalFlowHead(eqx.Module):
 
 
 class ScoreDiffusionHead(eqx.Module):
-    """Score-based diffusion head (stub).
+    r"""Score-based diffusion head (stub).
 
-    Learns ``s_φ(x, t | y) ≈ ∇_x log p_t(x | y)``; samples via reverse
-    SDE solved with diffrax. Ships as a stub pending the reverse-SDE
+    Learns $s_\phi(x, t \mid y) \approx \nabla_x \log p_t(x \mid y)$; samples via
+    reverse SDE solved with diffrax. Ships as a stub pending the reverse-SDE
     pipeline.
+
+    Examples:
+        Constructing the stub raises until the pipeline lands:
+
+        >>> import vardax as vdx
+        >>> vdx.ScoreDiffusionHead()  # doctest: +IGNORE_EXCEPTION_DETAIL
+        Traceback (most recent call last):
+        ...
+        NotImplementedError: ScoreDiffusionHead is not yet implemented. ...
     """
 
     def __init__(self, *_args: object, **_kwargs: object) -> None:

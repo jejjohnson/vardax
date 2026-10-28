@@ -48,19 +48,37 @@ class MinimiseResult(eqx.Module):
     r"""Outcome of a minimisation.
 
     Attributes:
-        value: The minimiser $\theta^\star$, a pytree shaped like ``x0``.
-        cost: $J(\theta^\star)$, a scalar.
+        value: The minimiser $\theta^\star$, with the structure of ``x0``.
+        cost: The cost $J(\theta^\star)$.
         grad_norm: $\lVert \nabla J(\theta^\star) \rVert_2$ over all
-            leaves of $\theta$, a scalar. The implicit adjoint is exact
-            only when this is (close to) zero.
+            leaves of $\theta$. The implicit adjoint is exact only when
+            this is (close to) zero.
         num_steps: Number of optimiser steps taken (both phases, for
-            `OptaxMinimiser` with a polish), an integer scalar.
-        converged: Whether the minimiser met its own convergence test, a
-            boolean scalar: optimistix's ``result == successful``, or for
+            `OptaxMinimiser` with a polish).
+        converged: Whether the minimiser met its own convergence test:
+            optimistix's ``result == successful``, or for
             `OptaxMinimiser` a small gradient or ``step_patience`` small
             steps (in the polish phase, when there is one); stopping on
             ``patience`` or ``max_steps`` is ``False``. ``None`` for a custom
             [`Minimiser`][vardax.Minimiser], which reports no status.
+
+    Examples:
+        The result carries the minimum and its diagnostics.
+
+        >>> import jax.numpy as jnp, vardax
+        >>> m = jnp.array([1.0, -2.0])
+        >>> result = vardax.OptimistixMinimiser().run(
+        ...     lambda x, m: 0.5 * jnp.sum((x - m) ** 2), jnp.zeros(2), m
+        ... )
+        >>> type(result).__name__
+        'MinimiseResult'
+        >>> bool(jnp.allclose(result.value, m, atol=1e-5))
+        True
+
+        At a minimum the gradient norm is near zero and the run converged.
+
+        >>> bool(result.grad_norm < 1e-4), bool(result.converged)
+        (True, True)
     """
 
     value: PyTree[Array]
@@ -103,6 +121,17 @@ class OptimistixMinimiser(eqx.Module):
     ``throw=False``, so a model built with it returns exactly what the
     default model returns.
 
+    $$ \theta^\star = \arg\min_\theta J(\theta;\, \text{batch}) $$
+
+    Algorithm:
+        1. Hand ``cost_fn(x, batch)``, the solver and ``x0`` to
+           ``optimistix.minimise``, capped at ``max_steps`` iterations.
+        2. Return the minimiser; `run` also reports the cost, the
+           gradient norm and the step count at the solution.
+
+    Raises:
+        ConfigurationError: If ``max_steps`` is below 1.
+
     Attributes:
         solver: The ``optimistix.AbstractMinimiser``.
         max_steps: Iteration cap.
@@ -120,6 +149,24 @@ class OptimistixMinimiser(eqx.Module):
         >>> x = minimiser(lambda x, m: 0.5 * jnp.sum((x - m) ** 2), jnp.zeros(3), m)
         >>> bool(jnp.allclose(x, m, atol=1e-5))
         True
+
+        The minimiser can return diagnostics, and any pytree is a valid
+        control.
+
+        >>> result = minimiser.run(
+        ...     lambda p, m: 0.5 * jnp.sum((p["a"] - m) ** 2) + 0.5 * p["b"] ** 2,
+        ...     {"a": jnp.zeros(3), "b": jnp.ones(())},
+        ...     m,
+        ... )
+        >>> sorted(result.value)
+        ['a', 'b']
+
+        An invalid iteration cap is rejected.
+
+        >>> vardax.OptimistixMinimiser(max_steps=0)  # doctest: +IGNORE_EXCEPTION_DETAIL
+        Traceback (most recent call last):
+        ...
+        ConfigurationError: max_steps must be >= 1, got 0.
     """
 
     solver: optx.AbstractMinimiser = eqx.field(static=True)
@@ -158,6 +205,14 @@ class OptimistixMinimiser(eqx.Module):
 
         Returns:
             A [`MinimiseResult`][vardax.MinimiseResult].
+
+        Examples:
+            >>> import jax.numpy as jnp, vardax
+            >>> result = vardax.OptimistixMinimiser().run(
+            ...     lambda x, m: 0.5 * jnp.sum((x - m) ** 2), jnp.zeros(2), jnp.ones(2)
+            ... )
+            >>> bool(jnp.allclose(result.value, 1.0, atol=1e-5))
+            True
         """
         solution = optx.minimise(
             fn=cost_fn,
@@ -184,7 +239,16 @@ class OptimistixMinimiser(eqx.Module):
         x0: PyTree[Array],
         batch: Any = None,
     ) -> PyTree[Array]:
-        """Return ``argmin_x cost_fn(x, batch)`` starting from ``x0``."""
+        """Return ``argmin_x cost_fn(x, batch)`` starting from ``x0``.
+
+        Args:
+            cost_fn: Scalar cost ``cost_fn(x, batch)``.
+            x0: Initial guess, any pytree of arrays.
+            batch: Passed as the second argument of ``cost_fn``.
+
+        Returns:
+            The minimiser, with the structure of ``x0``.
+        """
         return optx.minimise(
             fn=cost_fn,
             solver=self.solver,
@@ -198,17 +262,18 @@ class OptimistixMinimiser(eqx.Module):
 class OptaxMinimiser(eqx.Module):
     r"""First-order minimisation with an ``optax`` optimiser.
 
-    Iterates $\theta_{k+1} = \theta_k + u_k$, with $u_k$ the ``optimizer``
-    update from $g_k = \nabla J(\theta_k)$, inside a ``jax.lax.while_loop``
-    (so the whole minimisation is ``jit``-able), and stops at the first of:
+    $$ \theta_{k+1} = \theta_k + u_k, \qquad g_k = \nabla J(\theta_k) $$
+
+    with $u_k$ the ``optimizer`` update from $g_k$. The loop is a
+    ``jax.lax.while_loop`` (so the whole minimisation is ``jit``-able) and
+    stops at the first of:
 
     - ``max_steps`` steps;
     - a small gradient, $\lVert g_k \rVert_2 \le \mathrm{gtol}$;
     - ``step_patience`` consecutive small steps,
-      $\lVert u_k \rVert_2 \le \mathrm{atol} +
-      \mathrm{rtol}\,\lVert \theta_k \rVert_2$ (one small step is not
-      enough: a learning-rate schedule starting at zero gives a zero first
-      update);
+      $\lVert u_k \rVert_2 \le \mathrm{atol} + \mathrm{rtol}\,\lVert \theta_k \rVert_2$
+      (one small step is not enough: a learning-rate schedule starting at
+      zero gives a zero first update);
     - ``patience`` consecutive steps whose cost exceeds the lowest cost
       seen by more than float round-off.
 
@@ -234,6 +299,22 @@ class OptaxMinimiser(eqx.Module):
     $\nabla J(\theta^\star) = 0$, which a first-order optimiser stopped
     early does not guarantee: check
     [`MinimiseResult.grad_norm`][vardax.MinimiseResult] from `run`.
+
+    Algorithm:
+        1. Evaluate the cost and gradient at the iterate $\theta_k$.
+        2. Stop if the gradient norm is below ``gtol``; otherwise apply
+           the ``optimizer`` update.
+        3. Track the best iterate, and count consecutive small steps and
+           steps without improvement.
+        4. Repeat until a stopping rule above fires; keep the best
+           iterate.
+        5. With ``polish``, repeat steps 1-4 from the best iterate with
+           the polish optimiser and tolerances.
+
+    Raises:
+        ConfigurationError: If a step cap or ``step_patience`` is below 1,
+            a tolerance is negative, or a patience is neither ``None``
+            nor at least 1.
 
     Attributes:
         optimizer: The ``optax.GradientTransformation`` of the main loop.
@@ -268,6 +349,23 @@ class OptaxMinimiser(eqx.Module):
         True
         >>> bool(result.grad_norm < 1e-5)
         True
+
+        Calling the minimiser returns only the minimiser, and any pytree
+        is a valid control.
+
+        >>> adam = vardax.OptaxMinimiser(optax.adam(1e-1), max_steps=300)
+        >>> x = adam(
+        ...     lambda p, m: 0.5 * jnp.sum((p["a"] - m) ** 2), {"a": jnp.zeros(3)}, m
+        ... )
+        >>> bool(jnp.allclose(x["a"], m, atol=1e-2))
+        True
+
+        An invalid tolerance is rejected.
+
+        >>> vardax.OptaxMinimiser(gtol=-1.0)  # doctest: +IGNORE_EXCEPTION_DETAIL
+        Traceback (most recent call last):
+        ...
+        ConfigurationError: gtol must be >= 0, got -1.0.
 
     References:
         Kingma, D. P. and Ba, J. (2015). Adam: a method for stochastic
@@ -370,6 +468,15 @@ class OptaxMinimiser(eqx.Module):
 
         Returns:
             A [`MinimiseResult`][vardax.MinimiseResult].
+
+        Examples:
+            >>> import jax.numpy as jnp, optax, vardax
+            >>> minimiser = vardax.OptaxMinimiser(optax.adam(1e-1), max_steps=200)
+            >>> result = minimiser.run(
+            ...     lambda x, m: 0.5 * jnp.sum((x - m) ** 2), jnp.zeros(2), jnp.ones(2)
+            ... )
+            >>> result.num_steps > 0
+            Array(True, dtype=bool)
         """
         x0 = jtu.tree_map(jnp.asarray, x0)
         closed_cost_fn = _close_over(cost_fn, x0, batch)
@@ -392,7 +499,16 @@ class OptaxMinimiser(eqx.Module):
         x0: PyTree[Array],
         batch: Any = None,
     ) -> PyTree[Array]:
-        """Return ``argmin_x cost_fn(x, batch)`` starting from ``x0``."""
+        """Return ``argmin_x cost_fn(x, batch)`` starting from ``x0``.
+
+        Args:
+            cost_fn: Scalar cost ``cost_fn(x, batch)``.
+            x0: Initial guess, any pytree of arrays.
+            batch: Passed as the second argument of ``cost_fn``.
+
+        Returns:
+            The minimiser, with the structure of ``x0``.
+        """
         return self.run(cost_fn, x0, batch).value
 
 

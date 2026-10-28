@@ -55,6 +55,16 @@ DEFAULT_SOLVER = lx.CG(atol=1e-6, rtol=1e-6, max_steps=200)
 class LaplaceCovariance(eqx.Module):
     r"""Laplace approximation at MAP.
 
+    $$P^* \approx \big(B^{-1} + H'^\top R^{-1} H'\big)^{-1}$$
+
+    Algorithm:
+        1. Linearise the observation operator (and, for 4DVar, the model
+           rollout) at the analysis.
+        2. Assemble the Gauss-Newton precision
+           $B^{-1} + \sum_t G_t^\top R_t^{-1} G_t$
+           matrix-free, with $G_t = H'_t M'_{t \leftarrow 0}$.
+        3. Return its inverse as a lazy operator applied by ``solver``.
+
     Attributes:
         prior_cov_op: Background-error covariance $B$. Default ``None``:
             the model's ``prior_cov_op``. Unused for a linear control,
@@ -80,6 +90,25 @@ class LaplaceCovariance(eqx.Module):
         >>> # B = R = H = I, so P* = (I + I)^{-1} = I / 2
         >>> bool(jnp.allclose(post.cov.mv(jnp.ones(4)), 0.5, atol=1e-2))
         True
+
+        Weaker observations (R = 3 I) leave a larger posterior,
+        $P^* = (1 + 1/3)^{-1} = 3/4$:
+
+        >>> weak = jnp.float32(3.0) * eye
+        >>> post = vdx.LaplaceCovariance(prior_cov_op=eye, obs_cov_op=weak)(
+        ...     jnp.zeros(4), model, batch=None
+        ... )
+        >>> bool(jnp.allclose(post.cov.mv(jnp.ones(4)), 0.75, atol=1e-2))
+        True
+
+        A model with no ``obs_op`` is rejected:
+
+        >>> laplace(
+        ...     jnp.zeros(4), SimpleNamespace(), batch=None
+        ... )  # doctest: +IGNORE_EXCEPTION_DETAIL
+        Traceback (most recent call last):
+        ...
+        AttributeError: ...
     """
 
     prior_cov_op: lx.AbstractLinearOperator | None = None
@@ -110,10 +139,12 @@ class LaplaceCovariance(eqx.Module):
 
         Raises:
             AttributeError: If the model exposes no ``obs_op``.
-            ValueError: For a point batch, a multi-sample batch, a
-                nonlinear ``parameterization=``, or a parameterized
-                ``WeakFourDVar``. A ``LinearParameterization`` (or
-                ``basis=``) control gives $\Phi P_\theta \Phi^\top$.
+            UnsupportedInputError: For a point batch, a non-``Batch1D``
+                batch, a ``basis=`` or ``parameterization=`` control, or
+                a ``WeakFourDVar`` analysis that is not ``(x0, eta)``.
+            ShapeError: If the batch holds several windows.
+            MissingInputError: If neither the adapter nor the model has
+                a covariance operator.
         """
         mean, covariance, structure = gauss_newton_covariance(
             analysis,
