@@ -169,6 +169,8 @@ class TestPriorCost:
     @given(x=_arrays((2, 3)), r=_arrays((2, 3)), shift=_FLOATS)
     def test_property_symmetric_nonneg_shift_invariant(self, x, r, shift):
         with jax.enable_x64(True):
+            # the costs are annotated with JAX arrays; hypothesis yields NumPy
+            x, r = jnp.asarray(x), jnp.asarray(r)
             cost = vdx.prior_cost(x, r)
             assert cost >= 0
             np.testing.assert_allclose(vdx.prior_cost(r, x), cost, rtol=1e-12)
@@ -210,6 +212,8 @@ class TestBackgroundCost:
     @given(x0=_arrays((5,)), xb=_arrays((5,)), c=_FLOATS)
     def test_property_zero_at_background_and_quadratic(self, x0, xb, c):
         with jax.enable_x64(True):
+            # the costs are annotated with JAX arrays; hypothesis yields NumPy
+            x0, xb = jnp.asarray(x0), jnp.asarray(xb)
             assert vdx.background_cost(x0, x0) == 0
             cost = vdx.background_cost(x0, xb)
             assert cost >= 0
@@ -272,6 +276,8 @@ class TestVariationalCost:
     )
     def test_property_nonneg_and_linear_in_weights(self, x, y, m, a, b):
         with jax.enable_x64(True):
+            # the costs are annotated with JAX arrays; hypothesis yields NumPy
+            x = jnp.asarray(x)
             batch = self._batch(y, m)
             cost = vdx.variational_cost(x, batch, _prior, a, b)
             assert cost >= 0
@@ -348,6 +354,8 @@ class TestStrongVariationalCost:
     )
     def test_property_nonneg_and_background_default(self, x0, xb, y, m):
         with jax.enable_x64(True):
+            # the costs are annotated with JAX arrays; hypothesis yields NumPy
+            x0, xb = jnp.asarray(x0), jnp.asarray(xb)
             ts, batch = jnp.asarray(self.ts), self._batch(y, m)
             cost = vdx.strong_variational_cost(x0, ts, batch, _forward, xb=xb)
             assert cost >= 0
