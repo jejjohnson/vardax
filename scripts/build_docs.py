@@ -136,7 +136,11 @@ def anchor_case_map(entries: dict[str, str]) -> dict[str, str]:
 # HTML rewriting
 # ---------------------------------------------------------------------------
 
-_HREF = re.compile(r'href="([^"]*)"')
+# A link target in rendered HTML (href="…") or in MyST's page JSON ("url": "…"),
+# which the client uses when it navigates between pages without a reload.
+_LINK = re.compile(r'(href=|"url":\s*)"([^"]*)"')
+# The two outputs MyST writes for every page; both carry the API links.
+PAGE_SUFFIXES = ("*.html", "*.json")
 _NAV = re.compile(r'"nav":\s*(\[.*?\])', re.DOTALL)
 
 
@@ -167,10 +171,10 @@ def nav_base_url_problems(html: str) -> list[str]:
 
 
 def restore_anchor_case(html: str, mapping: dict[str, str]) -> tuple[str, int]:
-    """Repair lowercased API anchors in one HTML document.
+    """Repair lowercased API anchors in one HTML document or page JSON.
 
     Args:
-        html: The document source.
+        html: The document source, HTML or MyST page JSON.
         mapping: Lowercased-to-true anchor map from [`anchor_case_map`][].
 
     Returns:
@@ -180,14 +184,14 @@ def restore_anchor_case(html: str, mapping: dict[str, str]) -> tuple[str, int]:
 
     def fix(match: re.Match[str]) -> str:
         nonlocal count
-        href = match.group(1)
+        prefix, href = match.group(1), match.group(2)
         base, sep, anchor = href.partition("#")
         if not sep or anchor not in mapping:
             return match.group(0)
         count += 1
-        return f'href="{base}#{mapping[anchor]}"'
+        return f'{prefix}"{base}#{mapping[anchor]}"'
 
-    return _HREF.sub(fix, html), count
+    return _LINK.sub(fix, html), count
 
 
 def rewrite_api_origin(html: str, origin: str, replacement: str) -> tuple[str, int]:
@@ -394,9 +398,13 @@ def assemble(base_url: str) -> list[str]:
 
     fixed_anchors = 0
     rewritten = 0
-    for page in PUBLIC.rglob("*.html"):
-        if page.is_relative_to(PUBLIC / API_SUBDIR):
-            continue
+    prose_pages = [
+        page
+        for pattern in PAGE_SUFFIXES
+        for page in PUBLIC.rglob(pattern)
+        if not page.is_relative_to(PUBLIC / API_SUBDIR)
+    ]
+    for page in prose_pages:
         html = page.read_text(encoding="utf-8")
         html, anchors = restore_anchor_case(html, mapping)
         html, origins = rewrite_api_origin(html, API_ORIGIN, replacement)
@@ -409,9 +417,7 @@ def assemble(base_url: str) -> list[str]:
     logger.info("rewrote {} API links to {}", rewritten, replacement)
 
     problems: list[str] = []
-    for page in PUBLIC.rglob("*.html"):
-        if page.is_relative_to(PUBLIC / API_SUBDIR):
-            continue
+    for page in prose_pages:
         text = page.read_text(encoding="utf-8", errors="replace")
         name = page.relative_to(PUBLIC)
         if API_ORIGIN in text:

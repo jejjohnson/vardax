@@ -19,9 +19,9 @@ Satellite altimeters sample sea-surface height (SSH) along narrow
 ground tracks, a few thousand scattered $(t_k, x_k, y_k, \eta_k)$
 points per day with errors $\sigma_k$, and nothing in between. A
 gridded 4D-Var first interpolates those points onto the model grid
-([`GridPointObs`](api/obs_operators.md)) and then needs a background
+([`GridPointObs`](xref:api#vardax.GridPointObs)) and then needs a background
 covariance $B$ to spread their information. A neural field reads the
-tracks as they are ([`PointObsBatch`](api/protocols.md)), and the
+tracks as they are ([`PointObsBatch`](xref:api#vardax.PointObsBatch)), and the
 quasi-geostrophic equations, imposed at collocation points, carry the
 information along the flow instead of $B$.
 

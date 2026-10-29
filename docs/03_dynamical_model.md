@@ -74,7 +74,7 @@ vardax exposes `forward_adjoint: diffrax.AbstractAdjoint` as a
 constructor slot on `StrongFourDVar`, `WeakFourDVar`,
 `IncrementalFourDVar` and `ReducedBasisFourDVar`. It reaches `diffrax`
 through the forward: the model calls `forward.with_adjoint(adjoint)`
-(the [`SupportsForwardAdjoint`](api/protocols.md) protocol) and rolls
+(the [`SupportsForwardAdjoint`](xref:api#vardax.SupportsForwardAdjoint) protocol) and rolls
 out the forward it returns. A per-step forward has no integrator to hand
 the adjoint to, so passing `forward_adjoint=` with one raises
 `ValueError`; bound its memory with `checkpoint=` instead (below).

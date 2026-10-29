@@ -187,12 +187,12 @@ With the default `lx.CG` covariance solver this $B$ (condition number about $5 \
 Three slots control the gradient:
 
 - **`checkpoint`** rematerialises the rollout in reverse mode (`True`, or a block length `k`), for any per-step forward; the gradient is the same and the memory smaller (chapter 3).
-- **`forward_adjoint`** is a `diffrax.AbstractAdjoint` for a forward that integrates with `diffrax` and implements `with_adjoint(adjoint)` ([`SupportsForwardAdjoint`](api/protocols.md)), for example `dfx.BacksolveAdjoint()` for constant memory over long windows. Any other forward raises `ValueError`.
+- **`forward_adjoint`** is a `diffrax.AbstractAdjoint` for a forward that integrates with `diffrax` and implements `with_adjoint(adjoint)` ([`SupportsForwardAdjoint`](xref:api#vardax.SupportsForwardAdjoint)), for example `dfx.BacksolveAdjoint()` for constant memory over long windows. Any other forward raises `ValueError`.
 - **`minimiser_adjoint`** controls how gradients flow back through the outer minimiser, as for `ThreeDVar` (chapter 5).
 
 ## Large controls: first-order minimisers
 
-`minimiser=` takes an `optimistix.AbstractMinimiser` (the default is `optx.BFGS(rtol=1e-6, atol=1e-6)`; chapter 5 lists the choices) or any [`Minimiser`](api/protocols.md): a callable `minimiser(cost_fn, x0, batch) -> x_star` over a pytree control. BFGS keeps a dense inverse-Hessian estimate, which is not viable when the control is $10^5$ network weights. `OptaxMinimiser` runs a first-order `optax` optimiser instead, in a `jax.lax.while_loop`, and stops at `max_steps`, at a gradient norm below `gtol`, at a step below `atol + rtol·‖x‖`, or after `patience` steps whose cost is worse than the best by more than round-off. (There is no relative cost-change test: next to a large irreducible misfit the cost change rounds to zero in float32 long before $x$ converges.) An optional `polish` optimiser (e.g. `optax.lbfgs()`), with its own tight tolerances, finishes from there.
+`minimiser=` takes an `optimistix.AbstractMinimiser` (the default is `optx.BFGS(rtol=1e-6, atol=1e-6)`; chapter 5 lists the choices) or any [`Minimiser`](xref:api#vardax.Minimiser): a callable `minimiser(cost_fn, x0, batch) -> x_star` over a pytree control. BFGS keeps a dense inverse-Hessian estimate, which is not viable when the control is $10^5$ network weights. `OptaxMinimiser` runs a first-order `optax` optimiser instead, in a `jax.lax.while_loop`, and stops at `max_steps`, at a gradient norm below `gtol`, at a step below `atol + rtol·‖x‖`, or after `patience` steps whose cost is worse than the best by more than round-off. (There is no relative cost-change test: next to a large irreducible misfit the cost change rounds to zero in float32 long before $x$ converges.) An optional `polish` optimiser (e.g. `optax.lbfgs()`), with its own tight tolerances, finishes from there.
 
 ```{code-block} python
 :caption: Minimises the strong-constraint cost [](#eq-strong4dvar-cost) of [](#code-strong4dvar-analysis) again with Adam, then L-BFGS.
@@ -227,7 +227,7 @@ and returns exactly what the default model returns.
 
 ## Parameterized initial states
 
-`parameterization=` takes any [`StateParameterization`](api/protocols.md): the control becomes a pytree $\theta$, the initial state $x_0 = \psi(\theta)$, and its penalty replaces the background term of [](#eq-strong4dvar-cost),
+`parameterization=` takes any [`StateParameterization`](xref:api#vardax.StateParameterization): the control becomes a pytree $\theta$, the initial state $x_0 = \psi(\theta)$, and its penalty replaces the background term of [](#eq-strong4dvar-cost),
 
 $$J(\theta) = \mathrm{pen}(\theta) + \frac{1}{2} \sum_t \lVert y_t - H_t(M_t(\psi(\theta)))\rVert^2_{R_t^{-1}}$$ (eq-param-cost)
 
@@ -455,7 +455,7 @@ For $T = 100$+ assimilation cycles, the forward trajectory dominates
 memory. Four strategies:
 
 1. **`checkpoint=True` (or a block length).** Works with any per-step forward, with 3 to 4 times less gradient memory on Lorenz-96 (chapter 3).
-2. **`dfx.BacksolveAdjoint()`** (via `forward_adjoint=`, for a [`SupportsForwardAdjoint`](api/protocols.md) forward) solves the adjoint ODE backwards in time, with $O(1)$ memory in the trajectory length. Reverse-time stiffness can require an implicit integrator (`dfx.Kvaerno5`, `dfx.ImplicitEuler`).
+2. **`dfx.BacksolveAdjoint()`** (via `forward_adjoint=`, for a [`SupportsForwardAdjoint`](xref:api#vardax.SupportsForwardAdjoint) forward) solves the adjoint ODE backwards in time, with $O(1)$ memory in the trajectory length. Reverse-time stiffness can require an implicit integrator (`dfx.Kvaerno5`, `dfx.ImplicitEuler`).
 3. **`dfx.RecursiveCheckpointAdjoint(checkpoints=N)`** (also via `forward_adjoint=`) stores $N$ checkpoints and recomputes the segments between them, with $O(\sqrt{T})$ memory.
 4. **Shorter windows.** Run multiple `StrongFourDVar` analyses with
    shorter windows and cycle them via `pipekit_cycle.DACycle`. This is

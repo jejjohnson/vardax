@@ -173,7 +173,7 @@ separate slots for the two:
 | Slot | Used by | Default |
 |---|---|---|
 | `checkpoint: bool \| int` | `StrongFourDVar`, `WeakFourDVar`, `IncrementalFourDVar`, `ReducedBasisFourDVar` | `False` (plain reverse mode) |
-| `forward_adjoint: diffrax.AbstractAdjoint` | the same four; needs a forward with `with_adjoint` ([`SupportsForwardAdjoint`](api/protocols.md)) | `None` (the forward's own) |
+| `forward_adjoint: diffrax.AbstractAdjoint` | the same four; needs a forward with `with_adjoint` ([`SupportsForwardAdjoint`](xref:api#vardax.SupportsForwardAdjoint)) | `None` (the forward's own) |
 | `minimiser_adjoint: optimistix.AbstractAdjoint` | `ThreeDVar`, `StrongFourDVar`, `WeakFourDVar`, `ReducedBasisFourDVar` | `ImplicitAdjoint()` |
 | `solver_adjoint: optimistix.AbstractAdjoint` | `FourDVarNet1D`, `FourDVarNet2D` (through the learned inner solver) | `RecursiveCheckpointAdjoint()` |
 
