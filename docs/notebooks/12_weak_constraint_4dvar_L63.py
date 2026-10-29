@@ -15,7 +15,7 @@
 # %% [markdown]
 # # 12 — Weak-Constraint 4DVar with an Imperfect Model
 #
-# Notebook [01](01_model_based_4dvar_L63.py) assumed the model was perfect:
+# Notebook [01](01_model_based_4dvar_L63.ipynb) assumed the model was perfect:
 # the observations could choose *which* Lorenz-63 trajectory, but never bend
 # it. Real models are wrong — missing physics, biased parameters,
 # discretisation error — and a strong-constraint analysis then has nowhere
@@ -68,11 +68,11 @@
 #
 # This is exactly the cost $U(x) = \alpha_{obs}\|m \odot (x - y)\|^2 +
 # \alpha_{prior}\|x - \varphi(x)\|^2$ that the learned-solver notebooks
-# ([03](03_4dvarnet_L63.py), [08](08_classical_4dvar_vs_4dvarnet_L63.py))
+# ([03](03_4dvarnet_L63.ipynb), [08](08_classical_4dvar_vs_4dvarnet_L63.ipynb))
 # minimise, with the reconstruction map $\varphi$ being the one-step ODE
 # flow $\varphi(x)_t = M(x_{t-1})$ instead of a neural autoencoder. In
 # vardax the two parameterisations are two objects:
-# [`WeakFourDVar`](../api/models.md) minimises over $(x_0, \boldsymbol{\eta})$
+# [`WeakFourDVar`](xref:api#vardax.WeakFourDVar) minimises over $(x_0, \boldsymbol{\eta})$
 # with BFGS, and `DynIncrements.bind(ts)` turns the ODE into a `Prior` whose
 # residual is the third term above, so `variational_cost` minimises over
 # $x_{0:T}$ directly. Section 5 checks that they find the same analysis.
@@ -222,7 +222,7 @@ plt.show()
 # %% [markdown]
 # ## 3. Strong-constraint 4DVar with the wrong model
 #
-# First the baseline: [`StrongFourDVar`](../api/models.md) driven by the
+# First the baseline: [`StrongFourDVar`](xref:api#vardax.StrongFourDVar) driven by the
 # biased forward, exactly as in notebook 01. The only freedom is $x_0$, so
 # the minimiser moves the initial state to wherever the biased trajectory
 # passes closest to the observations *on average* over the window. The
@@ -267,7 +267,7 @@ for name, traj in [
 # %% [markdown]
 # ## 4. Weak-constraint 4DVar
 #
-# Now [`WeakFourDVar`](../api/models.md) with the same biased forward and
+# Now [`WeakFourDVar`](xref:api#vardax.WeakFourDVar) with the same biased forward and
 # $Q = q^2 I$. We take $q$ equal to the typical size of the true model
 # error (the standard deviation printed in section 2) — in practice one
 # would estimate it from innovation statistics or from comparing the free
@@ -443,7 +443,7 @@ plt.show()
 # ## 6. The same cost in trajectory space
 #
 # Finally the equivalence promised in the introduction. Bind the time grid
-# to a [`DynIncrements`](../api/costs_priors.md) prior built from the
+# to a [`DynIncrements`](xref:api#vardax.DynIncrements) prior built from the
 # *biased* ODE; the resulting `Prior` maps a trajectory $x$ to
 # $\varphi(x) = (x_0, M(x_0), M(x_1), \ldots, M(x_{T-1}))$, so
 # $\|x - \varphi(x)\|^2 = \sum_{t \ge 1} \|x_t - M(x_{t-1})\|^2$ is the
@@ -545,7 +545,7 @@ plt.show()
 #   to the learned solvers.
 #
 # Chapter [20](../20_uncertainty.md) places additive model error among the
-# other sources of uncertainty; notebook [13](13_neural_closure_L96.py)
+# other sources of uncertainty; notebook [13](13_neural_closure_L96.ipynb)
 # attacks the same $\rho$-style structural error from the other side, by
 # *learning* the missing term in the model instead of estimating its
 # effect window by window.

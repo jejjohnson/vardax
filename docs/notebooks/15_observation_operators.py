@@ -20,11 +20,11 @@
 # state through a retrieval, they come in several kinds with different
 # footprints and error levels. The observation operator $H$ is where
 # that reality enters the likelihood, and this notebook walks through the
-# four operators vardax ships — [`MaskedIdentity`](../api/obs_operators.md),
-# [`LinearObs`](../api/obs_operators.md),
-# [`InterpObs`](../api/obs_operators.md),
-# [`AveragingKernel`](../api/obs_operators.md) — and their composition in
-# [`MultiInstrumentFusion`](../api/obs_operators.md), on a static,
+# four operators vardax ships — [`MaskedIdentity`](xref:api#vardax.MaskedIdentity),
+# [`LinearObs`](xref:api#vardax.LinearObs),
+# [`InterpObs`](xref:api#vardax.InterpObs),
+# [`AveragingKernel`](xref:api#vardax.AveragingKernel) — and their composition in
+# [`MultiInstrumentFusion`](xref:api#vardax.MultiInstrumentFusion), on a static,
 # linear-Gaussian problem where everything has a closed form. Chapter
 # [11](../11_observation_operators.md) is the reference.
 #
@@ -43,7 +43,7 @@
 # $$
 #
 # This is the BLUE of chapter [4](../04_oi_blue.md), computed by
-# [`OptimalInterpolation`](../api/models.md); the two forms of $P^*$ are
+# [`OptimalInterpolation`](xref:api#vardax.OptimalInterpolation); the two forms of $P^*$ are
 # equal by the Woodbury identity. Read the pieces with $H$ in mind:
 #
 # - $H$ maps the state to *what the instrument would measure* if the
@@ -256,7 +256,7 @@ plt.show()
 # recovering to the prior value $\sigma$ a few correlation lengths away.
 # The covariance here is the closed form $B - BH^{\top}(HBH^{\top}+R)^{-1}HB$;
 # the lazy `LaplaceCovariance` adapter of notebook
-# [14](14_posterior_uncertainty_L63.py) builds the same operator by
+# [14](14_posterior_uncertainty_L63.ipynb) builds the same operator by
 # conjugate gradients on $B^{-1} + H^{\top}R^{-1}H$, which is the right
 # tool once $B$ is a structured `gaussx` operator with a closed-form
 # inverse, and the wrong one for a dense, nearly singular $B$ like this
@@ -380,7 +380,7 @@ plt.show()
 # reads the retrieval's prior as atmospheric signal, and the higher the
 # level the more of the reported value is prior. The kernel-aware analysis is unbiased, its RMSE
 # tracks its own posterior standard deviation (a calibrated analysis,
-# in the sense of notebook [14](14_posterior_uncertainty_L63.py)), and
+# in the sense of notebook [14](14_posterior_uncertainty_L63.ipynb)), and
 # both rise to the prior value aloft, where the instrument has no
 # sensitivity and honesty means saying so.
 #

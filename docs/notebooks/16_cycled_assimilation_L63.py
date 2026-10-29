@@ -21,7 +21,7 @@
 # The background is never given — it is yesterday's analysis pushed
 # through the model, and its error is whatever the chaos of the system
 # made of yesterday's analysis error. This notebook runs that loop on
-# Lorenz-63 with the [`pipekit_cycle`](../api/cycle.md) orchestration,
+# Lorenz-63 with the [`pipekit_cycle`](https://jejjohnson.github.io/vardax/reference/cycle/) orchestration,
 # for a single-time analysis every step and for a 4DVar analysis over
 # windows of several steps, and looks at the two questions a cycle
 # raises that a single window cannot: how the error settles to an
@@ -109,11 +109,11 @@
 #
 # ## Where the pieces live
 #
-# [`pipekit_cycle.DACycle`](../api/cycle.md) runs forecast–observe–analyse
+# [`pipekit_cycle.DACycle`](https://jejjohnson.github.io/vardax/reference/cycle/) runs forecast–observe–analyse
 # for a given number of steps; `SmootherCycle` collects a window of
 # forecasts and observations and calls the analysis once per window.
 # vardax models plug in through the `AnalysisStep` protocol via
-# `.as_analysis_step()`, and the [`VarDACycle`](../api/cycle.md) factory
+# `.as_analysis_step()`, and the [`VarDACycle`](xref:api#vardax.VarDACycle) factory
 # wires that up. The adapters shipped with the models hold their
 # background fixed, which is right for a one-off analysis; a cycle needs
 # the background to *be the forecast*, so below we write two small
@@ -151,7 +151,7 @@ from vardax import (
 # cycle with $\sigma_o = 1$. The truth comes from the same Lorenz-63
 # flow the cycle uses, so the only errors are in the initial state and
 # the observations; model error is notebook
-# [12](12_weak_constraint_4dvar_L63.py)'s subject.
+# [12](12_weak_constraint_4dvar_L63.ipynb)'s subject.
 
 # %%
 DT, N_CYCLES = 0.1, 300
@@ -327,7 +327,7 @@ print(f"best sigma_b in the sweep: {sigma_b_grid[best]:.2f} (analysis RMSE {swee
 # Now a window of $W = 5$ observation times. The analysis step receives
 # the window's forecasts and observations, takes the first forecast as
 # the background, minimises the strong-constraint cost over the window
-# with [`StrongFourDVar`](../api/models.md), and returns the analysed
+# with [`StrongFourDVar`](xref:api#vardax.StrongFourDVar), and returns the analysed
 # state at the window's end as the carrier for the next window. Both
 # cycles see exactly the same observations; only the grouping differs.
 
@@ -434,6 +434,6 @@ plt.show()
 # The forward model here was exact. With a biased model the equilibrium
 # argument acquires a model-error term that does not shrink with more
 # observations — chapter [7](../07_weak_4dvar.md) and notebook
-# [12](12_weak_constraint_4dvar_L63.py) — and with a learned forward
+# [12](12_weak_constraint_4dvar_L63.ipynb) — and with a learned forward
 # model the cycle is where the closures of notebook
-# [13](13_neural_closure_L96.py) earn their keep.
+# [13](13_neural_closure_L96.ipynb) earn their keep.

@@ -37,7 +37,7 @@
 # $$
 #
 # The inner problem is the weak-constraint state estimate of notebook
-# [08](08_classical_4dvar_vs_4dvarnet_L63.py): $y$ are the masked, noisy
+# [08](08_classical_4dvar_vs_4dvarnet_L63.ipynb): $y$ are the masked, noisy
 # observations and $\varphi$ is a learned prior whose reconstruction error
 # plays the role of the model-error term. The outer problem asks a different
 # question of the same cost: *not* "which $x$ minimises $U$?" but "which $U$
@@ -120,7 +120,7 @@ from vardax._src.utils.standardize import apply_standardization, compute_scaler_
 # ## 1. Lorenz-63 patches
 #
 # The same preprocessing pipeline as notebook
-# [08](08_classical_4dvar_vs_4dvarnet_L63.py): simulate, cut into windows,
+# [08](08_classical_4dvar_vs_4dvarnet_L63.ipynb): simulate, cut into windows,
 # mask every other step, add noise, standardise, and split into a training
 # set (used by the outer objective) and a held-out set (used only for the
 # final comparison).
@@ -154,7 +154,7 @@ print(f"train {batch_train.input.shape}, test {batch_test.input.shape}")
 # ## 2. A fixed prior
 #
 # The prior $\varphi$ is a bilinear autoencoder pre-trained on clean
-# trajectories (as in notebook [07](07_prior_pretraining_L63.py)) and then
+# trajectories (as in notebook [07](07_prior_pretraining_L63.ipynb)) and then
 # frozen: the only things learned below are the two cost weights. Freezing
 # it is what makes this a *hyper*-parameter problem with two unknowns
 # rather than the full 4DVarNet training of chapter
@@ -371,9 +371,9 @@ plt.show()
 #   gradient descent on `variational_cost`; for large states use
 #   `optimistix` with `ImplicitAdjoint` (chapter
 #   [12](../12_adjoint_methods.md)) or the one-step adjoint of notebook
-#   [02](02_unrolling_vs_fixedpoint_L63.py).
+#   [02](02_unrolling_vs_fixedpoint_L63.ipynb).
 # - The same mechanism learns any other cost hyper-parameter — the inner
 #   step size, the prior's own weights (that is 4DVarNet, chapter
 #   [9](../09_4dvarnet.md)), the ODE parameters of notebook
-#   [09](09_param_estimation_L63.py), or the update rule itself (notebook
-#   [11](11_gradient_learning_L63.py)).
+#   [09](09_param_estimation_L63.ipynb), or the update rule itself (notebook
+#   [11](11_gradient_learning_L63.ipynb)).

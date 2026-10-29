@@ -87,8 +87,8 @@
 #
 # ## Where the pieces live
 #
-# All of this is [`StrongFourDVar`](../api/models.md). The forward model
-# $M_t$ comes from a [`DynTrajectory`](../api/costs_priors.md) ODE prior via
+# All of this is [`StrongFourDVar`](xref:api#vardax.StrongFourDVar). The forward model
+# $M_t$ comes from a [`DynTrajectory`](xref:api#vardax.DynTrajectory) ODE prior via
 # `as_forward_model`, so the same object that serves as a dynamical prior
 # elsewhere drives the rollout here; $B$ and $R$ are `lineax` operators, so
 # correlated errors are a one-line change.
@@ -265,8 +265,8 @@ plt.show()
 # - Any object with `step(state, dt)` can be the model. Here it is the
 #   Lorenz-63 ODE via `DynTrajectory.as_forward_model`; chapter
 #   [19](../19_physical_models.md) covers the ODE priors and notebook
-#   [09](09_param_estimation_L63.py) makes their parameters learnable.
-# - Notebook [08](08_classical_4dvar_vs_4dvarnet_L63.py) contrasts this
+#   [09](09_param_estimation_L63.ipynb) makes their parameters learnable.
+# - Notebook [08](08_classical_4dvar_vs_4dvarnet_L63.ipynb) contrasts this
 #   model-based analysis with the learned 4DVarNet solver, and notebook
-#   [10](10_bilevel_opt_L63.py) learns the cost weights that were set from
+#   [10](10_bilevel_opt_L63.ipynb) learns the cost weights that were set from
 #   known variances here.
