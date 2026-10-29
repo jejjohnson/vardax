@@ -1,8 +1,8 @@
 # API Reference
 
 vardax is JAX-native variational data assimilation: seven peer analysis
-methods — from [Optimal Interpolation](../04_oi_blue.md) through
-[learned 4DVarNet](../09_4dvarnet.md) — plus the observation operators,
+methods — from [Optimal Interpolation](https://jejjohnson.github.io/vardax/oi-blue/) through
+[learned 4DVarNet](https://jejjohnson.github.io/vardax/dvarnet/) — plus the observation operators,
 priors, posterior adapters, and training loops that surround them. The
 reference is organised by area rather than dumped as one flat page:
 

@@ -74,6 +74,10 @@ jlab = [
     "jupyter>=1.0.0",
     "autoroot>=1.0.0",
     "jupytext>=1.16.0",
+    # Converts and executes the tutorials for the MyST build (scripts/build_docs.py).
+    "nbconvert>=7.16.0",
+    "cyclopts>=3.0",
+    "loguru>=0.7.2",
 ]
 examples = [
     "matplotlib>=3.9.0",
@@ -136,7 +140,6 @@ docs = [
     "mkdocs>=1.6.0",
     "mkdocs-material>=9.5.0",
     "mkdocstrings[python]>=0.26.0",
-    "mkdocs-jupyter>=0.25.0",
     "mkdocs-gen-files>=0.5.0",
     "mkdocs-literate-nav>=0.6.1",
     "mkdocs-git-authors-plugin>=0.9.0",
@@ -148,6 +151,11 @@ docs = [
     "ipython>=8.28.0",
     "ipykernel>=6.29.0",
     "jupytext>=1.16.0",
+    # Converts and executes the tutorials for the MyST build (scripts/build_docs.py).
+    "nbconvert>=7.16.0",
+    "cyclopts>=3.0",
+    "loguru>=0.7.2",
+    "ghp-import>=2.1.0",
     # Runtime deps of the executed tutorial notebooks (docs/notebooks/).
     "matplotlib>=3.9.0",
     "xarray>=2024.0",

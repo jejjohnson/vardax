@@ -218,7 +218,7 @@ It prints `dR/dθ at θ = 7: -0.38`; the negative gradient points towards the fo
 This is the parameter-estimation seam: fit $\theta$ (a forcing, a
 drag coefficient, a neural closure's weights) by minimising the
 dynamical residual of observed or analysed trajectories.
-Notebook [09](notebooks/09_param_estimation_L63.py) walks through it on
+Notebook [09](notebooks/09_param_estimation_L63.ipynb) walks through it on
 Lorenz-63, including joint state–parameter estimation and an
 identifiability check.
 

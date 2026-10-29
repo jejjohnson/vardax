@@ -34,10 +34,21 @@ jobs:
       - name: Set up Python 3.12
         run: uv python install 3.12
 
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+
+      - name: Install mystmd
+        run: npm install -g mystmd
+
       - name: Install dependencies
         run: uv sync --group docs
 
-      - name: Build docs (strict, executes notebooks)
+      # Builds the MkDocs API reference and the MyST prose site (executing the
+      # tutorials), assembles them and checks every internal link.
+      - name: Build and verify the documentation site (strict)
         env:
           JAX_PLATFORMS: cpu
-        run: uv run mkdocs build --strict
+          BASE_URL: /${{ github.event.repository.name }}
+        run: uv run --group docs python scripts/build_docs.py

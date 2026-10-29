@@ -118,17 +118,29 @@ nb-clean: ## Remove all .ipynb files from notebooks directory
 
 ##@ Documentation
 .PHONY: docs
-docs: ## Build documentation with mkdocs
+docs: ## Build the full site (MyST prose + MkDocs API, tutorials executed) into public/
 	@printf "$(YELLOW)>>> Building docs...$(RESET)\n"
-	@uv run --group docs mkdocs build
-	@printf "$(GREEN)>>> Docs built in site/$(RESET)\n"
+	@uv run --group docs python scripts/build_docs.py
+	@printf "$(GREEN)>>> Docs built in public/$(RESET)\n"
+
+.PHONY: docs-fast
+docs-fast: ## Build the full site without executing the tutorials
+	@uv run --group docs python scripts/build_docs.py --no-execute
+
+.PHONY: docs-check
+docs-check: ## Validate docs sources without rendering the MyST theme
+	@uv run --group docs python scripts/build_docs.py --check
+
+.PHONY: docs-api
+docs-api: ## Build only the MkDocs API reference into site/
+	@uv run --group docs mkdocs build --strict
 
 .PHONY: docs-serve
-docs-serve: ## Serve documentation locally at http://127.0.0.1:8000
-	@uv run --group docs mkdocs serve
+docs-serve: docs-fast ## Build without executing the tutorials, then serve public/ at http://127.0.0.1:8000
+	@uv run python -m http.server 8000 --directory public
 
 .PHONY: docs-deploy
-docs-deploy: ## Deploy documentation to GitHub Pages
+docs-deploy: docs ## Deploy public/ to the gh-pages branch
 	@printf "$(YELLOW)>>> Deploying docs to GitHub Pages...$(RESET)\n"
-	@uv run --group docs mkdocs gh-deploy --force
+	@uv run --group docs ghp-import --no-jekyll --push --force public
 	@printf "$(GREEN)>>> Deployment complete.$(RESET)\n"
