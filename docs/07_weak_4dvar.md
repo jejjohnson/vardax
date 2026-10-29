@@ -1,34 +1,29 @@
+---
+numbering:
+  enumerator: "7.%s"
+---
+
 # Weak-constraint 4DVar
 
-Strong-constraint 4DVar (chapter 6) treats the forward model as exact.
-For real systems this is wrong — models have biases, missing physics,
-and discretisation error. Over long assimilation windows the trajectory
-drifts away from observations not because the analysis is bad but
-because the model itself is. Weak-constraint 4DVar acknowledges this
-by admitting model error as an additional control variable.
+Strong-constraint 4DVar (chapter 6) treats the forward model as exact. For real systems this is wrong, as models have biases, missing physics and discretisation error. Over long assimilation windows the trajectory drifts away from the observations because the model itself is wrong, even when the analysis is good. Weak-constraint 4DVar admits this model error as an additional control variable.
 
 ## Cost function
 
-The state evolves under a noisy dynamics:
+The state evolves under noisy dynamics,
 
-$$x_t = M_t^\text{free}(x_{t-1}) + \eta_t, \text{ with } \eta_t \sim \mathcal{N}(0, Q_t).$$
+$$x_t = M_t^\text{free}(x_{t-1}) + \eta_t, \text{ with } \eta_t \sim \mathcal{N}(0, Q_t)$$ (eq-weak-model)
 
-The control vector is augmented from $x_0$ to $(x_0, \eta_1, \ldots,
-\eta_T)$. The cost adds a model-error term:
+where $M_t^\text{free}$ is the single model step from $t - 1$ to $t$, $\eta_t$ the model error of that step and $Q_t$ its covariance. The control vector is augmented from $x_0$ to $(x_0, \eta_1, \ldots, \eta_T)$, and the strong cost [](#eq-strong4dvar-cost) gains a model-error term:
 
-$$J(x_0, \boldsymbol{\eta}) = \underbrace{\frac{1}{2} \|x_0 - x_b\|^2_{B^{-1}}}_{\text{background}} + \underbrace{\frac{1}{2} \sum_t \|y_t - H_t(x_t)\|^2_{R_t^{-1}}}_{\text{observations}} + \underbrace{\frac{1}{2} \sum_t \|\eta_t\|^2_{Q_t^{-1}}}_{\text{model error}}.$$
+$$J(x_0, \boldsymbol{\eta}) = \underbrace{\frac{1}{2} \|x_0 - x_b\|^2_{B^{-1}}}_{\text{background}} + \underbrace{\frac{1}{2} \sum_t \|y_t - H_t(x_t)\|^2_{R_t^{-1}}}_{\text{observations}} + \underbrace{\frac{1}{2} \sum_t \|\eta_t\|^2_{Q_t^{-1}}}_{\text{model error}}$$ (eq-weak4dvar-cost)
 
-The trajectory is recovered from $(x_0, \boldsymbol{\eta})$ by stepping
-$x_t = M_t^\text{free}(x_{t-1}) + \eta_t$ recursively.
+where the trajectory $x_t$ is recovered from $(x_0, \boldsymbol{\eta})$ by stepping [](#eq-weak-model) forward from $x_0$.
 
 ## Why the model-error term matters
 
 Two failure modes of strong-constraint 4DVar:
 
-- **Climatological drift.** The free model's climatology differs from
-  reality. Long windows produce $x_T$ far from $y_T$ regardless of
-  $x_0$ — the analysis tries to compensate by moving $x_0$, which
-  damages the early-time fit.
+- **Climatological drift.** The free model's climatology differs from reality. Long windows produce $x_T$ far from $y_T$ regardless of $x_0$, and the analysis tries to compensate by moving $x_0$, which damages the early-time fit.
 - **Missing fast physics.** The model resolves the slow manifold but
   not the fast (cloud microphysics, sub-grid turbulence). Strong 4DVar
   attributes fast-physics errors to $x_0$, which is the wrong place.
@@ -41,6 +36,7 @@ every time without distorting $x_0$.
 The example below has $N = 8$ sites and a window of $T = 6$ times (5 steps).
 The free model decays every site, $M^\text{free}(x) = 0.8 x$, but the truth also gains a constant $0.5$ per step, $x_t = 0.8 x_{t-1} + 0.5$, which the free model misses.
 Every site is observed at every time with $R = 0.01 I$; the background is $x_b = 0$ with $B = I$, and the model-error covariance is $Q = 0.04 I$.
+`WeakFourDVar` minimises [](#eq-weak4dvar-cost), and `StrongFourDVar` minimises [](#eq-strong4dvar-cost) on the same window for comparison.
 
 ```python
 import einx
@@ -137,24 +133,17 @@ It prints `x₀ error: strong 2.81, weak 0.25` and `mean η* 0.46`: the strong a
 The model error covariance $Q$ is a separate input. Three common
 parameterisations:
 
-- **Diagonal** — `lineax.DiagonalLinearOperator(variances)`. White
-  Gaussian model noise. Simple but rarely realistic.
-- **Matérn spatial** — `gaussx.ImplicitKernelOperator(matern, coords)` with a Matérn kernel function.
-  Spatially correlated model error.
-- **Markovian time-correlated** — Ornstein-Uhlenbeck $Q_t$ with
-  correlation timescale $\tau$. The error decorrelates over $\tau$
-  steps, which is physically motivated.
+- **Diagonal**: `lineax.DiagonalLinearOperator(variances)`, white Gaussian model noise. Simple but rarely realistic.
+- **Matérn spatial**: `gaussx.ImplicitKernelOperator(matern, coords)` with a Matérn kernel function, for spatially correlated model error.
+- **Markovian time-correlated**: Ornstein-Uhlenbeck $Q_t$ with correlation timescale $\tau$. The error decorrelates over $\tau$ steps, which is physically motivated.
 
-Choice of $Q$ is the single most impactful tuning choice in
-weak-constraint 4DVar — too tight and the result reverts to strong;
-too loose and the analysis is dominated by observations to the
-exclusion of dynamics.
+The choice of $Q$ is the single most important tuning choice in weak-constraint 4DVar. Too tight, and the result reverts to strong; too loose, and the observations dominate the analysis to the exclusion of the dynamics.
 
 ## Computational cost
 
 The control vector dimension grows with $T$:
 
-$$\dim(\text{control}) = \dim(x_0) + T \cdot \dim(x_t).$$
+$$\dim(\text{control}) = \dim(x_0) + T \cdot \dim(x_t)$$ (eq-weak-control-dim)
 
 For $T = 100$ and a 2D field with $n = 10^4$, this is $\sim 10^6$
 control variables instead of $10^4$. The minimisation is correspondingly
@@ -171,7 +160,7 @@ heavier. Two mitigations:
 
 ## Linear-Gaussian agreement
 
-For $T = 0$, $\eta$ is empty and `WeakFourDVar` reduces to 3DVar; the block continues the one above with the first time only, and `tests/test_linear_gaussian_agreement.py` enforces the agreement for every method:
+For $T = 0$, $\eta$ is empty and [](#eq-weak4dvar-cost) is the 3DVar cost [](#eq-3dvar-cost), whose minimum for linear $H$ is the BLUE [](#eq-blue-mean); this is the Decision D14 invariant of [chapter 4](04_oi_blue.md#validation). The block continues the one above with the first time only:
 
 ```python
 # Shapes: S = 1 window; T = 1 time; N = 8 sites
@@ -196,22 +185,17 @@ print(weak_model_error.shape)
 
 It prints `True` and `(1, 0, 8)`: $\eta$ is empty when $T = 0$.
 
-For $T > 0$ and very tight $Q$ (precision $Q^{-1} \to \infty$), $\eta_t
-\to 0$ and `WeakFourDVar` reduces to `StrongFourDVar`. This is the
-weak-to-strong limit, also testable.
+For $T > 0$ and a very tight $Q$ (precision $Q^{-1} \to \infty$), $\eta_t \to 0$ and [](#eq-weak4dvar-cost) reduces to [](#eq-strong4dvar-cost), so `WeakFourDVar` reduces to `StrongFourDVar`. This weak-to-strong limit can be tested too.
 
 ## Posterior
 
-The posterior is over the augmented control vector $(x_0,
-\boldsymbol{\eta})$. The Laplace approximation gives a Gaussian on
-this space. Marginalising to the state trajectory requires applying
-the linearised forward through the joint posterior — vardax provides
+The posterior is over the augmented control vector $(x_0, \boldsymbol{\eta})$, and the Laplace approximation [](#eq-laplace-cov) of chapter 13 gives a Gaussian on this space, whose precision gains $Q^{-1}$ on each $\eta_t$. `LaplaceCovariance` returns its $x_0$ block:
 
 ```python
 # Shapes: N = 8 sites; T = 6 times
 
 # today (vardax)
-# P* = [(Λ_GN)⁻¹]ₓ₀ₓ₀, Λ_GN the Gauss–Newton precision over (x₀, η)
+# P* = [(Λ_GN)⁻¹]ₓ₀ₓ₀, Λ_GN the Gauss-Newton precision over (x₀, η)
 posterior = vdx.LaplaceCovariance()(
     (initial_star[0], model_error_star[0]), model.as_analysis_step(), batch
 )
@@ -230,17 +214,7 @@ matters.
 
 ## When `WeakFourDVar` is the right answer
 
-Use `WeakFourDVar` when:
-
-- Multi-timestep observations
-- Model is known to have biases (climatological drift, missing physics)
-- Long assimilation windows where strong-constraint analyses produce
-  obvious misfits at later times
-- You have a reasonable model-error covariance $Q_t$ (often from
-  comparing the free model to higher-fidelity runs or to reanalyses)
-
-If model error is small (within obs noise), use `StrongFourDVar`
-(chapter 6) — the extra control variables aren't worth the cost.
+Use `WeakFourDVar` for multi-time observations when the model is known to have biases (the two failure modes above), strong-constraint analyses misfit the later times of a long window, and you have a reasonable model-error covariance $Q_t$ (often from comparing the free model to higher-fidelity runs or to reanalyses). If model error is small (within the observation noise), use `StrongFourDVar` (chapter 6), since the extra control variables are not worth the cost.
 
 If you'd rather replace the parametric prior with a learned one,
 `FourDVarNet` (chapter 9) is the alternative. The learned prior
@@ -249,9 +223,9 @@ explicit augmented control.
 
 ## See also
 
-- Chapter 6 — `StrongFourDVar` (the no-model-error baseline)
-- Chapter 9 — `FourDVarNet` (learned alternative to weak-constraint)
-- Chapter 13 — posterior covariance (augmented-state case)
+- Chapter 6: `StrongFourDVar` (the no-model-error baseline)
+- Chapter 9: `FourDVarNet` (learned alternative to weak-constraint)
+- Chapter 13: posterior covariance (augmented-state case)
 
 ## References
 

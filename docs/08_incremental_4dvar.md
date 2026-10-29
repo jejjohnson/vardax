@@ -1,3 +1,8 @@
+---
+numbering:
+  enumerator: "8.%s"
+---
+
 # Incremental 4DVar with Control-Variable Transform
 
 Operational 4DVar at ECMWF, NCEP, JMA, and UKMO all follow a common
@@ -6,24 +11,15 @@ CG (or Lanczos) inner iterations on a linearised quadratic
 subproblem, with a control-variable transform that preconditions the
 inner solve. `IncrementalFourDVar` packages this pattern.
 
-It is functionally equivalent to `StrongFourDVar` (chapter 6) — same
-problem, same answer — but the specialised inner solver is dramatically
-faster when the prior is structured (Matérn, Kronecker) and the
-window is long.
+It solves the same problem as `StrongFourDVar` (chapter 6) and gives the same answer, but the specialised inner solver is much faster when the prior is structured (Matérn, Kronecker) and the window is long.
 
 ## The outer / inner decomposition
 
-Strong-constraint 4DVar minimises
+Strong-constraint 4DVar minimises [](#eq-strong4dvar-cost). Write $x^{(k)}$ for the outer iterate, starting from $x^{(0)} = x_b$. The background $x_b$ stays fixed across outer loops; only $x^{(k)}$ moves. Linearise around $x^{(k)}$:
 
-$$J(x_0) = \frac{1}{2} \|x_0 - x_b\|^2_{B^{-1}} + \frac{1}{2} \sum_t \|y_t - H_t(M_t(x_0))\|^2_{R_t^{-1}}.$$
+$$M_t(x^{(k)} + \delta x) \approx M_t(x^{(k)}) + M'_t \delta x$$ (eq-tlm-forward)
 
-Write $x^{(k)}$ for the outer iterate, starting from $x^{(0)} = x_b$.
-The background $x_b$ stays fixed across outer loops; only $x^{(k)}$
-moves. Linearise around $x^{(k)}$:
-
-$$M_t(x^{(k)} + \delta x) \approx M_t(x^{(k)}) + M'_t \delta x,$$
-
-$$H_t(z + \delta z) \approx H_t(z) + H'_t \delta z,$$
+$$H_t(z + \delta z) \approx H_t(z) + H'_t \delta z$$ (eq-tlm-obs)
 
 where $M'_t = \partial M_t / \partial x|_{x^{(k)}}$ from
 `jax.linearize` and $H'_t$ is the tangent of $H_t$ at
@@ -31,31 +27,21 @@ $M_t(x^{(k)})$. With the innovation
 $d_t^{(k)} = y_t - H_t(M_t(x^{(k)}))$, the linearised (quadratic)
 cost of an increment $\delta x$ is
 
-$$\delta J(\delta x) = \frac{1}{2} \|x^{(k)} + \delta x - x_b\|^2_{B^{-1}} + \frac{1}{2} \sum_t \|d_t^{(k)} - H'_t M'_t \delta x\|^2_{R_t^{-1}}.$$
+$$\delta J(\delta x) = \frac{1}{2} \|x^{(k)} + \delta x - x_b\|^2_{B^{-1}} + \frac{1}{2} \sum_t \|d_t^{(k)} - H'_t M'_t \delta x\|^2_{R_t^{-1}}$$ (eq-incremental-cost)
 
-The background term measures the *total* departure
-$x^{(k)} + \delta x - x_b$, not $\delta x$ alone. The Gauss-Newton
-Hessian is
+The background term measures the *total* departure $x^{(k)} + \delta x - x_b$, not $\delta x$ alone. The Gauss-Newton Hessian is
 
-$$\mathbf{H}_\text{GN} = B^{-1} + \sum_t (H'_t M'_t)^\top R_t^{-1} (H'_t M'_t),$$
+$$\mathbf{H}_\text{GN} = B^{-1} + \sum_t (H'_t M'_t)^\top R_t^{-1} (H'_t M'_t)$$ (eq-gn-hessian)
 
-and setting $\nabla \delta J = 0$ gives the inner system that the CG /
-Lanczos solver solves for $\delta x^*$:
+which is the 4DVar form of the 3DVar Hessian [](#eq-3dvar-gn-hessian). Setting $\nabla \delta J = 0$ gives the inner system that the CG (or Lanczos) solver solves for $\delta x^*$:
 
-$$\mathbf{H}_\text{GN} \delta x^* = -B^{-1}\left(x^{(k)} - x_b\right) + \sum_t (H'_t M'_t)^\top R_t^{-1} d_t^{(k)} = -\nabla J\left(x^{(k)}\right).$$
+$$\mathbf{H}_\text{GN} \delta x^* = -B^{-1}\left(x^{(k)} - x_b\right) + \sum_t (H'_t M'_t)^\top R_t^{-1} d_t^{(k)} = -\nabla J\left(x^{(k)}\right)$$ (eq-gn-system)
 
-The right-hand side is the negative gradient of the full nonlinear cost
-at the current iterate. On the first outer loop $x^{(0)} = x_b$, so the
-background term vanishes and only the innovation term is left. On later
-loops it does not vanish: dropping it would pull every increment toward
-$x^{(k)}$ instead of $x_b$, and the iteration would no longer converge
-to the 4DVar minimum.
+The right-hand side is the negative gradient [](#eq-strong4dvar-grad) of the full nonlinear cost at the current iterate. On the first outer loop $x^{(0)} = x_b$, so the background term vanishes and only the innovation term is left. On later loops it does not vanish: dropping it would pull every increment toward $x^{(k)}$ instead of $x_b$, and the iteration would no longer converge to the 4DVar minimum.
 
 Outer update: $x^{(k+1)} = x^{(k)} + \delta x^*$. Relinearise.
 
-This pattern converges in a handful of outer iterations (typically
-3–5) regardless of nonlinearity strength, because each outer step
-sees a fresh tangent linearisation.
+This pattern converges in a handful of outer iterations (typically 3 to 5) regardless of the strength of the nonlinearity, because each outer step sees a fresh tangent linearisation.
 
 ## Control-variable transform (CVT)
 
@@ -68,13 +54,13 @@ nested CG solve.
 The CVT changes variables. Let $S$ be a square root of $B$, $S S^\top = B$,
 and write the departure from the background as
 
-$$x_0 - x_b = S \chi .$$
+$$x_0 - x_b = S \chi$$ (eq-cvt)
 
 The background term becomes $\frac{1}{2}\|x_0 - x_b\|^2_{B^{-1}} =
 \frac{1}{2}\|\chi\|^2$, and the inner system at the outer iterate
 $\chi^{(k)}$ becomes
 
-$$\left(I + S^\top G'^\top R^{-1} G' S\right) \delta\chi^* = -\nabla_\chi J\left(\chi^{(k)}\right) = -\chi^{(k)} + S^\top G'^\top R^{-1} d^{(k)},$$
+$$\left(I + S^\top G'^\top R^{-1} G' S\right) \delta\chi^* = -\nabla_\chi J\left(\chi^{(k)}\right) = -\chi^{(k)} + S^\top G'^\top R^{-1} d^{(k)}$$ (eq-cvt-system)
 
 where $G'$ stacks $H'_t M'_t$ over the window. Its eigenvalues are all
 $\ge 1$, close to 1 in directions the observations barely see, and no
@@ -110,7 +96,8 @@ $B$ the two are comparable.
 
 The example below is a $4 \times 5$ grid ($N = 20$ cells) over a window of $T = 4$ times, with a nonlinear forward $M(x) = x + 0.2 \sin(x)$ applied cell by cell.
 $B = B_y \otimes B_x$ is separable, each factor a Gaussian correlation of length scale 1.5 cells (plus a $10^{-1}$ jitter), and the background is $x_b = 0$.
-Every cell is observed through an averaging kernel $H(x) = A (h \odot x + (1 - h) \odot x_a)$ with $A = I$, $h = 0.8$ and $x_a = 0$, and $R = 0.04 I$.
+Every cell is observed through an averaging kernel [](#eq-averaging-kernel) with $A = I$, $h = 0.8$ and $x_a = 0$, and $R = 0.04 I$.
+`IncrementalFourDVar` solves [](#eq-cvt-system) in each outer loop, and `StrongFourDVar` minimises [](#eq-strong4dvar-cost) directly for comparison.
 
 ```python
 import einx
@@ -222,7 +209,7 @@ largest_gap = einx.max("s n ->", jnp.abs(analysis - strong_analysis))  # → ()
 print(f"largest gap to StrongFourDVar {largest_gap:.1e}")
 
 # today (vardax)
-# Gauss–Newton posterior at the analysis, with the model's B and R
+# Gauss-Newton posterior at the analysis, with the model's B and R
 posterior = model.posterior(batch)
 ```
 
@@ -230,17 +217,15 @@ It prints `largest gap to StrongFourDVar 2.0e-03`: three outer loops of at most 
 
 `IncrementalConfig`:
 
-- `n_outer` — number of Gauss-Newton outer iterations (typical: 3)
-- `n_inner` — max CG iterations per outer (typical: 20–50); the inner
-  solve is truncated there
-- `cg_atol`, `cg_rtol` — inner CG convergence tolerances
-- `cvt` — solve over $\chi$, $x_0 = x_b + B^{1/2}\chi$ (default `True`)
-- `covariance_tol` — tolerance of the CG solves that apply $R^{-1}$ (and
-  $B^{-1}$ when `cvt=False`)
+- `n_outer`: number of Gauss-Newton outer iterations (typically 3).
+- `n_inner`: maximum CG iterations per outer iteration (typically 20 to 50); the inner solve is truncated there.
+- `cg_atol`, `cg_rtol`: inner CG convergence tolerances.
+- `cvt`: solve over $\chi$ of [](#eq-cvt) (default `True`).
+- `covariance_tol`: tolerance of the CG solves that apply $R^{-1}$ (and $B^{-1}$ when `cvt=False`).
 
 ## Algorithm
 
-Written out with the control-variable transform, each outer loop linearises the observed trajectory $G(x) = [H_t(M_t(x))]_t$ once and hands the inner system to CG; $x_b$ itself never changes.
+Written out with the control-variable transform, each outer loop linearises the observed trajectory $G(x) = [H_t(M_t(x))]_t$ once and hands the inner system [](#eq-cvt-system) to CG, then maps the control back through [](#eq-cvt).
 The block continues the one above and reproduces `model(batch)`.
 
 ```python
@@ -312,23 +297,15 @@ print(bool(jnp.allclose(analysis_by_hand, analysis[0], atol=1e-4)))
 
 It prints `True`.
 
-With `cvt=False` the inner system is $(B^{-1} + G'^\top R^{-1} G') \delta x = -\nabla J(x^{(k)})$ in state space instead, with $B^{-1}$ applied by a nested CG solve at every Hessian product.
+With `cvt=False` the inner system is [](#eq-gn-system) in state space instead, with $B^{-1}$ applied by a nested CG solve at every Hessian product.
 
 ## Why it's the operational fast path
 
 Three multiplicative speedups over `StrongFourDVar` with `NonlinearCG`:
 
-1. **CVT preconditioning** — CG converges in $O(10)$ iterations
-   instead of $O(\sqrt{\kappa(B)})$ where $\kappa(B)$ is the prior
-   condition number.
-2. **Linearisation reuse** — the tangent linear $M'$ is computed once
-   per outer iteration and reused across all $n_\text{inner}$ inner CG
-   steps. `NonlinearCG` on the full nonlinear cost recomputes the
-   gradient (which requires a full forward + adjoint pass) every step.
-3. **Cheap posterior** — the posterior precision is the same
-   Gauss–Newton operator the inner loop solves with, so
-   `model.posterior(batch)` costs one more linearisation of the rollout
-   at the analysis.
+1. **CVT preconditioning.** CG converges in $O(10)$ iterations instead of $O(\sqrt{\kappa(B)})$, where $\kappa(B)$ is the prior condition number.
+2. **Linearisation reuse.** The tangent linear $M'$ is computed once per outer iteration and reused across all $n_\text{inner}$ inner CG steps, whereas `NonlinearCG` on the full nonlinear cost recomputes the gradient (a full forward and adjoint pass) at every step.
+3. **Cheap posterior.** The posterior precision is the operator the inner loop solves with (see the posterior section below).
 
 For a typical operational problem ($T = 12$ hours, $n = 10^7$ grid
 points, $m = 10^5$ observations), `IncrementalFourDVar` converges in
@@ -336,10 +313,7 @@ minutes; `StrongFourDVar` with `NonlinearCG` takes hours.
 
 ## Linear-Gaussian agreement
 
-For $T = 0$ and linear $H$, `IncrementalFourDVar` reduces to
-`OptimalInterpolation`. The outer iteration converges in one step (no
-relinearisation needed), and the inner CG produces the closed-form
-Kalman update:
+For $T = 0$ and linear $H$, `IncrementalFourDVar` must agree with `OptimalInterpolation` (the Decision D14 invariant, see [chapter 4](04_oi_blue.md#validation)): the outer iteration converges in one step (no relinearisation needed), and the inner CG produces the BLUE [](#eq-blue-mean). The block continues the one above:
 
 ```python
 # Shapes: S = 1 window; T = 1 time; N = 4 cells
@@ -388,25 +362,17 @@ gauss_newton = static_incremental(single_batch)  # → (S, N)
 print(bool(jnp.allclose(closed_form[:, 0], gauss_newton, atol=1e-3)))
 ```
 
-The block continues the one above; it prints `True`.
-
-Part of the Decision D14 invariant.
+It prints `True`.
 
 ## Strong- vs weak-constraint
 
-`IncrementalFourDVar` is strong-constraint by default. For
-weak-constraint incremental 4DVar (the augmented control vector with
-$\eta_t$), use `WeakFourDVar` directly — the incremental machinery for
-the augmented problem is heavier and not always worth the complexity.
+`IncrementalFourDVar` is strong-constraint by default. For weak-constraint incremental 4DVar (the augmented control vector with $\eta_t$), use `WeakFourDVar` directly, since the incremental machinery for the augmented problem is heavier and not always worth the complexity.
 The strong / weak choice is structural; the inner-solver choice
 (general vs incremental) is performance.
 
 ## Posterior covariance
 
-The posterior precision at the analysis is the Gauss–Newton operator
-$B^{-1} + \sum_t (H'_t M'_t)^\top R_t^{-1} (H'_t M'_t)$, the inner
-loop's Hessian. `model.posterior(batch)` relinearises the rollout once at
-the analysis and returns its lazy inverse (chapter 13):
+The posterior precision at the analysis is the inner loop's Gauss-Newton Hessian [](#eq-gn-hessian), and its inverse is the covariance [](#eq-gn-cov) of chapter 13. `model.posterior(batch)` relinearises the rollout once at the analysis and returns that inverse as a lazy operator. The block continues the one above:
 
 ```python
 # Shapes: N = 20 cells
@@ -419,7 +385,7 @@ spread = posterior.cov.mv(jnp.ones(20))  # (N,) → (N,)
 print(posterior.mean.shape, spread.shape, posterior.samples)
 ```
 
-The block continues the one above; it prints `(20,) (20,) None`.
+It prints `(20,) (20,) None`.
 
 Pass `adapter=vardax.GaussNewtonHessian(n_krylov=...)` to set the Krylov
 budget of each covariance mat-vec.
@@ -442,9 +408,9 @@ For most users, `IncrementalFourDVar` is the right default.
 
 ## See also
 
-- Chapter 6 — `StrongFourDVar` (equivalent problem, slower solver)
-- Chapter 12 — adjoint composition (CVT relies on `gaussx` factorisation)
-- Chapter 13 — posterior covariance (reuses GN Hessian)
+- Chapter 6: `StrongFourDVar` (equivalent problem, slower solver)
+- Chapter 12: adjoint composition (CVT relies on `gaussx` factorisation)
+- Chapter 13: posterior covariance (reuses GN Hessian)
 - Design doc: [`design/decisions.md#d11`](design/decisions.md#d11-incrementalfourdvar-as-the-operational-fast-path-of-strongfourdvar)
 
 ## References

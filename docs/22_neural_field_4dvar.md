@@ -1,14 +1,15 @@
+---
+numbering:
+  enumerator: "22.%s"
+---
+
 # 22 · Neural-Field 4D-Var
 
-Strong-constraint 4D-Var ([chapter 6](06_strong_4dvar.md)) controls the
-initial state and reaches every later time by rolling a model forward.
-`SpaceTimeFieldVar` drops the rollout: the whole assimilation window is
-one continuous field
+Strong-constraint 4D-Var [](#eq-strong4dvar-cost) controls the initial state and reaches every later time by rolling a model forward [](#eq-rollout). `SpaceTimeFieldVar` drops the rollout: the whole assimilation window is one continuous field
 
-$$u(t, s) = f_\theta(t, s),$$
+$$u(t, s) = f_\theta(t, s),$$ (eq-neural-field)
 
-a coordinate network whose weights $\theta$ are the control, fitted to
-the observations with the dynamics as a *soft* constraint (Oh 2025).
+where $t$ is time, $s$ the spatial position and $f_\theta$ a coordinate network whose weights $\theta$ are the control, fitted to the observations with the dynamics as a *soft* constraint (Oh 2025).
 The analysis is a function, not a grid: it can be evaluated at any
 $(t, s)$ and differentiated there.
 
@@ -31,8 +32,9 @@ validity flags $m_k$ (zero on padding rows), a PDE operator
 $\mathcal N$ with $\mathcal N[u] = 0$ for the true flow, collocation
 points $c_1, \dots, c_{N_c}$ and weights $\lambda, \alpha \ge 0$,
 
-$$J(\theta) = \underbrace{\frac{1}{2}\sum_k m_k \frac{\left(y_k - f_\theta(t_k, s_k)\right)^2}{\sigma_k^2}}_{\texttt{point\_obs\_cost}} + \underbrace{\frac{\lambda}{2 N_c}\sum_{j=1}^{N_c} \left\lVert \mathcal N[f_\theta](c_j) \right\rVert^2}_{\texttt{ResidualPenalty}} + \underbrace{\frac{\alpha}{2}\lVert\theta\rVert^2}_{\text{weight decay}} .$$
+$$J(\theta) = \underbrace{\frac{1}{2}\sum_k m_k \frac{\left(y_k - f_\theta(t_k, s_k)\right)^2}{\sigma_k^2}}_{\texttt{point\_obs\_cost}} + \underbrace{\frac{\lambda}{2 N_c}\sum_{j=1}^{N_c} \left\lVert \mathcal N[f_\theta](c_j) \right\rVert^2}_{\texttt{ResidualPenalty}} + \underbrace{\frac{\alpha}{2}\lVert\theta\rVert^2}_{\text{weight decay}} .$$ (eq-neural-field-cost)
 
+The first term is the point-observation cost [](#eq-point-obs-cost) with the field $f_\theta$ as the observation operator.
 There is **no background term**. What plays the role of $B$ is the
 network's spectral bias: gradient descent from a random initialisation
 fits smooth, low-frequency functions first (Rahaman et al. 2019), and
@@ -55,7 +57,7 @@ Coordinates put time first, $(t, x, y)$, for the field, the observations
 and the collocation points alike (the convention of the residuals in
 `vardax.examples`):
 
-The block below fits a small SIREN to 64 noisy samples of the decaying Taylor–Green vortex $\psi = \sin x \sin y e^{-2 \nu t}$ with $\nu = 0.1$, which solves the unforced vorticity equation exactly; it runs on a CPU in seconds. A real analysis uses a wider and deeper network, more collocation points and a step budget in the tens of thousands.
+The block below minimises [](#eq-neural-field-cost) for a small SIREN fitted to 64 noisy samples of the decaying Taylor-Green vortex $\psi = \sin x \sin y e^{-2 \nu t}$ with $\nu = 0.1$, which solves the unforced vorticity equation exactly; it runs on a CPU in seconds. A real analysis uses a wider and deeper network, more collocation points and a step budget in the tens of thousands.
 
 ```python
 import einx
@@ -196,7 +198,7 @@ observations with $\sigma = 0.05$ ($N_\text{obs}/(2\sigma^2) = 2\times10^4$).
 
 ### Uncertainty: a deep ensemble
 
-`ana.ensemble(obs, field_init, n_members, key=key)` refits from
+`analysis.ensemble(obs, field_init, n_members, key=key)` refits from
 `n_members` random initialisations (`field_init: key -> field`), each
 with its own collocation draw, under `eqx.filter_vmap`, and returns one
 result whose arrays carry a leading member axis. The spread of the
@@ -204,7 +206,7 @@ members is the deep-ensemble heuristic of Lakshminarayanan et al. (2017):
 small where observations pin the field down, large away from them
 (`tests/test_spacetime_field.py` checks both). A Laplace push-forward
 $J \Sigma_\theta J^\top$ with $J = \partial u/\partial\theta$ and
-$\Sigma_\theta$ a Gauss–Newton inverse in weight space is deferred, as in
+$\Sigma_\theta$ a Gauss-Newton inverse in weight space is deferred, as in
 [design/latent_da.md](design/latent_da.md) §13.
 
 ## 22.4 The linear-Gaussian limit
@@ -212,12 +214,9 @@ $\Sigma_\theta$ a Gauss–Newton inverse in weight space is deferred, as in
 If $f_\theta(t, s) = \phi(t, s)^\top w$ is linear in fixed features and
 $\lambda = 0$, the cost is
 
-$$J(w) = \frac{1}{2} \lVert y - \Phi w \rVert^2_{R^{-1}} + \frac{\alpha}{2}\lVert w \rVert^2, \text{ with } \Phi_{km} = \phi_m(t_k, s_k), R = \mathrm{diag}(\sigma_k^2),$$
+$$J(w) = \frac{1}{2} \lVert y - \Phi w \rVert^2_{R^{-1}} + \frac{\alpha}{2}\lVert w \rVert^2, \text{ with } \Phi_{km} = \phi_m(t_k, s_k), R = \mathrm{diag}(\sigma_k^2),$$ (eq-linear-field-cost)
 
-the 3D-Var cost for the coefficients with $B = \alpha^{-1} I$, $x_b = 0$
-and $H = \Phi$; its minimiser is the OI / BLUE analysis
-$w^\star = \alpha^{-1}\Phi^\top(\alpha^{-1}\Phi\Phi^\top + R)^{-1} y$,
-the posterior mean of Bayesian linear regression. The test suite checks
+which is the 3D-Var cost [](#eq-3dvar-cost) for the coefficients $w$ with $B = \alpha^{-1} I$, $x_b = 0$ and $H = \Phi$. Its minimiser is the BLUE mean [](#eq-blue-mean), $w^\star = \alpha^{-1}\Phi^\top(\alpha^{-1}\Phi\Phi^\top + R)^{-1} y$, the posterior mean of Bayesian linear regression. The test suite checks
 that `SpaceTimeFieldVar` and `OptimalInterpolation` agree there, the same
 correctness gate as Decision D14 for the classical methods.
 
@@ -248,7 +247,7 @@ only $u(t_0, \cdot)$ as a field and roll it out,
 - Oh, Y. (2025). On the effect of neural field reparameterization for
   4DVAR. arXiv:2509.21751.
 - Raissi, M., Perdikaris, P., & Karniadakis, G. E. (2019).
-  Physics-informed neural networks. *J. Comput. Phys.* 378, 686–707.
+  Physics-informed neural networks. *J. Comput. Phys.* 378, 686-707.
 - Rahaman, N., et al. (2019). On the spectral bias of neural networks.
   *ICML*.
 - Lakshminarayanan, B., Pritzel, A., & Blundell, C. (2017). Simple and

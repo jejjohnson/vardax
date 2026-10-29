@@ -1,18 +1,20 @@
+---
+numbering:
+  enumerator: "14.%s"
+---
+
 # Six-Step Inference Cycle
 
-The "six-step cycle" is the research-to-operations methodology vardax
-is engineered around. Across all forward-model tiers — geophysical
-fluids, atmospheric transport, methane radiative transfer — the same
-sequence applies:
+The "six-step cycle" is the research-to-operations methodology vardax is engineered around. Across all forward-model tiers (geophysical fluids, atmospheric transport, methane radiative transfer) the same sequence applies:
 
 1. Physics forward: somax / plumax.
 2. Classical inference: OI / 3DVar / 4DVar (slow, exact).
 3. Neural emulator: trained from Step 1 (fast surrogate).
-4. Emulator-based inference: the same vardax code (100–1000× faster).
+4. Emulator-based inference: the same vardax code (100 to 1000× faster).
 5. Amortized predictor: $y$ to posterior in one pass (sub-second).
 6. Improve: swap any block; the prior step is the oracle.
 
-The crucial property: **Steps 2, 4, and 5 use the same vardax code**.
+The key property is that **Steps 2, 4, and 5 use the same vardax code**.
 The forward model is swapped via the `pipekit_cycle.ForwardModel`
 protocol; the analysis class doesn't know whether $M_t$ is physics or
 an emulator. The amortized predictor satisfies the same
@@ -20,7 +22,7 @@ an emulator. The amortized predictor satisfies the same
 
 This is what makes the cycle a cycle and not a rewrite.
 
-## Step 1 — Physics forward
+## Step 1: Physics forward
 
 Implemented in `somax` (geophysical fluids), `plumax` (atmospheric
 transport / methane), or any user code that satisfies
@@ -79,10 +81,9 @@ It prints `True`.
 
 Vardax does not own this layer.
 
-## Step 2 — Classical inference
+## Step 2: Classical inference
 
-Pick one of the five classical methods from chapters 4–8 based on
-regime:
+Pick one of the five classical methods from chapters 4 to 8 based on regime:
 
 | Regime | Method |
 |---|---|
@@ -95,7 +96,7 @@ regime:
 The result is the **oracle** for Step 4 and Step 5. Slow but exact (or
 as exact as the prior / likelihood allow).
 
-The oracle sees a window of $T = 3$ times, every cell observed, with $y_t = x_t + \sigma \varepsilon_t$, $R = \sigma^2 I$, $\sigma = 0.5$, around a truth $x_0 \sim \mathcal{N}(0, I)$; the background is $x_b = 0$ with $B = I$. The block continues the one above.
+The oracle sees a window of $T = 3$ times, every cell observed, with $y_t = x_t + \sigma \varepsilon_t$, $R = \sigma^2 I$, $\sigma = 0.5$, around a truth $x_0 \sim \mathcal{N}(0, I)$; the background is $x_b = 0$ with $B = I$. The oracle is `IncrementalFourDVar`, which minimises [](#eq-strong4dvar-cost) through the incremental cost [](#eq-incremental-cost), and its posterior is [](#eq-gn-cov). The block continues the one above.
 
 ```python
 import lineax as lx
@@ -144,7 +145,7 @@ oracle = vdx.IncrementalFourDVar(
     obs_cov_op=obs_cov,
     config=incremental_config,
 )
-# x₀* = argmin J(x₀), Gauss–Newton outer loop with CG inner solves
+# x₀* = argmin J(x₀), Gauss-Newton outer loop with CG inner solves
 oracle_analysis = oracle(window)  # (S, T, N) → (S, N)
 # P*_GN at x₀*
 oracle_posterior = oracle.posterior(window)
@@ -153,37 +154,31 @@ print(oracle_analysis.shape, oracle_posterior.mean.shape)
 
 It prints `(1, 6) (6,)`.
 
-## Step 3 — Train a neural emulator
+## Step 3: Train a neural emulator
 
-The forward model is now the bottleneck. Train a surrogate $F_\psi$
-that mimics the physics forward:
+The forward model is now the bottleneck. Train a surrogate $F_\psi$ that mimics the physics forward:
 
-$$F_\psi(x) \approx \text{Forward}(x).$$
+$$F_\psi(x) \approx \text{Forward}(x)$$ (eq-emulator)
 
-Two training-time gates must hold before promotion to Step 4:
+where $F_\psi$ is the emulator with weights $\psi$ and $\text{Forward}$ is the physics forward of Step 1 (here $M$). Two training-time gates must hold before promotion to Step 4.
 
 ### Forward agreement
 
-$$\frac{\|F_\psi(x) - \text{Forward}(x)\|}{\|\text{Forward}(x)\|} < \epsilon_\text{fwd}$$
+$$\frac{\|F_\psi(x) - \text{Forward}(x)\|}{\|\text{Forward}(x)\|} < \epsilon_\text{fwd}$$ (eq-gate-forward)
 
-on held-out states (typically $\epsilon_\text{fwd} = 0.01$). This is
-the obvious gate: does the emulator give the right answer on the
-forward pass?
+on held-out states $x$, where $\epsilon_\text{fwd}$ is the tolerance (typically $0.01$). This is the obvious gate: does the emulator give the right answer on the forward pass?
 
-### Adjoint calibration — the hard gate
+### Adjoint calibration, the hard gate
 
-$$\frac{\|\partial F_\psi / \partial x - \partial \text{Forward} / \partial x\|_\text{op}}{\|\partial \text{Forward} / \partial x\|_\text{op}} < 0.05$$
+$$\frac{\|\partial F_\psi / \partial x - \partial \text{Forward} / \partial x\|_\text{op}}{\|\partial \text{Forward} / \partial x\|_\text{op}} < 0.05$$ (eq-gate-jacobian)
 
-via random-vector probing (estimate the operator norm of the
-difference). A fast forward with a wrong Jacobian gives wrong
-posteriors — the gradient that drives the inner minimisation will be
-mis-directed.
+where $\|\cdot\|_\text{op}$ is the operator norm, estimated by random-vector probing of the Jacobian difference. A fast forward with a wrong Jacobian gives wrong posteriors, because the gradient that drives the inner minimisation is mis-directed.
 
 This gate is **hard**: vardax refuses to promote an emulator that
 fails adjoint calibration, even if the forward agreement is excellent.
 Wrong-direction gradients are silently corrosive.
 
-Here a copy of the physics with $c$ off by 2% stands in for a trained network $F_\psi$, and both gates run on $V = 64$ held-out states. The block continues the one above.
+Here a copy of the physics with $c$ off by 2% stands in for a trained network $F_\psi$, and the block checks [](#eq-gate-forward) and [](#eq-gate-jacobian) on $V = 64$ held-out states. It continues the one above.
 
 ```python
 # Shapes: V = 64 held-out states; N = 6 cells
@@ -222,11 +217,15 @@ It prints `forward error 0.0007`.
 The emulator $F_\psi$ satisfies `pipekit_cycle.ForwardModel`. It's a
 drop-in replacement for `forward` in Step 4.
 
-## Step 4 — Emulator-based inference
+## Step 4: Emulator-based inference
 
-Swap `forward` → `emulator` in the same vardax code:
+Swap `forward` for `emulator` in the same vardax code. The post-promotion gate asks that the Step 4 output agrees with Step 2,
 
-The block continues the one above and ends with the post-promotion gate stated below it.
+$$\frac{|x^*_\text{em} - x^*_\text{phys}|}{\sigma_\text{post,phys}} \le 1$$ (eq-gate-posterior)
+
+cell by cell, where $x^*_\text{em}$ and $x^*_\text{phys}$ are the emulator and physics analyses and $\sigma_\text{post,phys}$ is the physics posterior standard deviation (the square root of the diagonal of [](#eq-gn-cov)). The gate runs on a held-out set of events. If it fails, the emulator is worse than it looked on the per-state agreement test, so retrain with a broader distribution or roll back.
+
+The block continues the one above and ends with [](#eq-gate-posterior).
 
 ```python
 # Shapes: S = 1 window; T = 3 times; N = 6 cells
@@ -249,23 +248,13 @@ vdx.assert_posterior_agreement(
 )
 ```
 
-Validation gate (post-promotion): Step 4 output agrees with Step 2:
+The wall-clock speedup is typically 100 to 1000× over Step 2, depending on the emulator's runtime against the physics forward.
 
-$$\frac{|x^*_\text{em} - x^*_\text{phys}|}{\sigma_\text{post,phys}} \le 1$$
+## Step 5: Amortized predictor
 
-on a held-out set of events. If this fails, the emulator is worse than
-it looked on the per-state agreement test — retrain with broader
-distribution or roll back.
+Train `AmortizedPosterior` (chapter 10) on simulated $(x, y)$ pairs from the physics forward (or the emulator, if Steps 3 and 4 are validated).
 
-The wall-clock speedup is typically 100–1000× over Step 2, depending on
-the emulator's runtime vs. the physics forward.
-
-## Step 5 — Amortized predictor
-
-Train `AmortizedPosterior` (chapter 10) on simulated $(x, y)$ pairs
-from the physics forward (or the emulator, if Step 3+4 are validated):
-
-`ConditionalFlowHead` is still a stub that raises until its `gauss_flows` dependency lands, so the example trains the Gaussian `RegressionHead`, $q_\phi(x_0 \mid y) = \mathcal{N}(\mu_\phi(y), \mathrm{diag}(\sigma^2_\phi(y)))$, on $P = 65536$ simulated pairs by maximum likelihood. With `depth=0` and the `IdentityObsEncoder`, $\mu_\phi$ is affine in $y$, which is exact for a linear-Gaussian problem and close for this weakly nonlinear one. The block continues the one above.
+`ConditionalFlowHead` is still a stub that raises until its `gauss_flows` dependency lands, so the example trains the Gaussian `RegressionHead` [](#eq-gaussian-head), with mean $\mu_\phi(y)$ and diagonal variance $\sigma^2_\phi(y)$, on $P = 65536$ simulated pairs by maximum likelihood [](#eq-mle-loss). With `depth=0` and the `IdentityObsEncoder`, $\mu_\phi$ is affine in $y$, which is exact for a linear-Gaussian problem and close for this weakly nonlinear one. The block continues the one above.
 
 ```python
 import optax
@@ -300,7 +289,7 @@ for _ in range(500):
     # 𝓛(φ) = −mean log q_φ(x₀ | y)
     amort, opt_state, loss = train_step(amort, train_batch, optimizer, opt_state)
 
-# Inference — sub-second
+# Inference, sub-second
 # x̂₀ = μ_φ(y)
 x_map = amort(window)  # (S, T, N) → (S, N)
 # x₀⁽ʲ⁾ ~ q_φ(x₀ | y)
@@ -310,13 +299,7 @@ print(x_map.shape, samples.shape)
 
 It prints `(1, 6) (1, 200, 6)`.
 
-Validation gates (Decision D12):
-
-- **Posterior agreement** with Step 2 within $1\sigma_\text{post}$
-- **Adjoint calibration** $< 5\%$
-- **SBC** rank histograms uniform
-
-The amortized head has no observation operator, so its posterior for the first gate is its mean alone; the gate reads $\sigma_\text{post}$ from the oracle. The adjoint gate probes $\partial x_0^* / \partial y$ of both predictors, and SBC ranks the truth among 20 posterior samples in each of 20 simulated runs. The block continues the one above.
+Decision D12 holds the amortized head to three gates: posterior agreement with Step 2 [](#eq-gate-posterior), the Jacobian gate [](#eq-gate-jacobian) applied to the maps $y \mapsto x_0^*$, and uniform simulation-based calibration (SBC) rank histograms. The amortized head has no observation operator, so its posterior for the first gate is its mean alone, and the gate reads $\sigma_\text{post}$ from the oracle. The Jacobian gate probes $\partial x_0^* / \partial y$ of both predictors, and SBC ranks the truth among 20 posterior samples in each of 20 simulated runs. The block continues the one above.
 
 ```python
 # Shapes: S = 1 window; T = 3 times; N = 6 cells
@@ -381,11 +364,9 @@ print(ranks)
 
 All three gates pass, and it prints the ranks `[17 11 18 11 16 19  9 11  0  8 13 18 20 15 12  8  9 11 11 15]`, each in $[0, 20]$.
 
-`amort.as_analysis_step()` returns a `pipekit_cycle.AnalysisStep` —
-same interface as Step 2 and Step 4. Operational pipelines swap in
-the amortized predictor without touching the orchestration.
+`amort.as_analysis_step()` returns a `pipekit_cycle.AnalysisStep` with the same interface as Step 2 and Step 4, so operational pipelines swap in the amortized predictor without touching the orchestration.
 
-## Step 6 — Improve, repeat
+## Step 6: Improve, repeat
 
 The cycle is a loop. Improvements at any step trigger re-validation
 downstream:
@@ -398,18 +379,13 @@ downstream:
 | Better amortized head (Step 5) | Step 5 vs Step 2 / 4 |
 | New observation operator | Steps 2, 4, 5 |
 
-The validation gates are the contract — they're how you know an
-"improvement" is actually an improvement.
+The validation gates are the contract, since they are how you know an "improvement" is actually an improvement.
 
 ## Why the cycle is the right framing
 
 Three observations from operational DA:
 
-- **Fast inference is dangerous when wrong.** Replacing a 4DVar with a
-  flow predictor that runs in milliseconds is appealing — until the
-  flow's posterior is miscalibrated and the alerting system fires on
-  noise. The gates between steps make "fast" and "correct" both
-  requirements, not just the former.
+- **Fast inference is dangerous when wrong.** Replacing a 4DVar with a flow predictor that runs in milliseconds is appealing, until the flow's posterior is miscalibrated and the alerting system fires on noise. The gates between steps make "fast" and "correct" both requirements, not just the former.
 - **The forward model is the slow part, not the inference.** When
   the forward is a high-resolution ocean / atmosphere / plume model,
   iteration count matters less than per-iteration cost. Replacing the
@@ -441,10 +417,9 @@ validation level.
 
 ## See also
 
-- Chapter 9 — `FourDVarNet` (a hybrid case: classical 4DVar with
-  learned components, validated against classical oracle)
-- Chapter 10 — `AmortizedPosterior` (Step 5 implementation)
-- Chapter 13 — posterior covariance (gate computations)
+- Chapter 9: `FourDVarNet` (a hybrid case: classical 4DVar with learned components, validated against a classical oracle)
+- Chapter 10: `AmortizedPosterior` (Step 5 implementation)
+- Chapter 13: posterior covariance (gate computations)
 - Design doc: [`design/decisions.md#d12`](design/decisions.md#d12-six-step-inference-cycle-as-testing-scaffold)
 
 ## References

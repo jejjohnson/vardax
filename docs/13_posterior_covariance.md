@@ -1,11 +1,11 @@
+---
+numbering:
+  enumerator: "13.%s"
+---
+
 # Posterior Covariance
 
-A MAP estimate $x^*$ is the start of the answer, not the end. Real DA
-needs a posterior — mean, covariance, and provenance — for downstream
-consumers (population models, decision pipelines, alerting systems)
-to propagate uncertainty correctly. This chapter covers the four
-posterior-covariance computations vardax supports and when to use
-which.
+A MAP estimate $x^*$ is the start of the answer, not the end. Real DA needs a posterior (mean, covariance and provenance) for downstream consumers (population models, decision pipelines, alerting systems) to propagate uncertainty correctly. This chapter covers the four posterior-covariance computations vardax supports and when to use which; the method chapters point here for that choice.
 
 ## The `Posterior` container
 
@@ -32,10 +32,7 @@ class Posterior(eqx.Module):
     provenance: dict[str, Any] = eqx.field(default_factory=dict)
 ```
 
-The covariance is an `AbstractLinearOperator` — not materialised. Mat-vec
-$P^* v$, the diagonal $\mathrm{diag}(P^*)$, and posterior samples
-$x^* + (P^*)^{1/2} \xi$ are computed on demand without ever building
-the dense $P^*$.
+The covariance is an `AbstractLinearOperator` and is never materialised. The mat-vec $P^* v$, the diagonal $\mathrm{diag}(P^*)$ and posterior samples $x^* + (P^*)^{1/2} \xi$ are computed on demand without building the dense $P^*$.
 
 `OptimalInterpolation` and `IncrementalFourDVar` produce posteriors as
 part of the analysis call (closed-form / GN-Hessian reuse). The other
@@ -45,11 +42,9 @@ five methods pair with an explicit `PosteriorAdapter`.
 
 ### 1. Closed form (BLUE / OI)
 
-For `OptimalInterpolation`, the posterior is exact:
+For `OptimalInterpolation`, the posterior is exact: $P^*$ is the BLUE covariance [](#eq-blue-cov).
 
-$$P^* = (B^{-1} + H^\top R^{-1} H)^{-1}.$$
-
-The examples on this page share one toy problem. The state has $N = 6$ cells on a ring, and the forward model averages each cell with its right neighbour, $x_{t+1} = A x_t$ with $A = \frac{1}{2}(I + P)$ and $P$ the cyclic shift. The background is $x_b = 0$ with $B = I$, a window has $T = 3$ times, only cells 0 to 2 are observed (mask $m_t$), and $y_t = x_t + \sigma \varepsilon_t$ with $R = \sigma^2 I$, $\sigma = 0.5$. OI analyses the first time of the window on its own, with $H = I$ on the observed cells. The block continues the one above.
+The examples on this page share one toy problem. The state has $N = 6$ cells on a ring, and the forward model averages each cell with its right neighbour, $x_{t+1} = A x_t$ with $A = \frac{1}{2}(I + P)$ and $P$ the cyclic shift. The background is $x_b = 0$ with $B = I$, a window has $T = 3$ times, only cells 0 to 2 are observed (mask $m_t$), and $y_t = x_t + \sigma \varepsilon_t$ with $R = \sigma^2 I$, $\sigma = 0.5$. OI analyses the first time of the window on its own, with $H = I$ on the observed cells, and the block computes the diagonal of [](#eq-blue-cov). It continues the one above.
 
 ```python
 import einx
@@ -142,37 +137,27 @@ operator is lazy: each mat-vec is a CG solve against
 $B^{-1} + H^\top R^{-1} H$ (closed form for diagonal and other
 structured operators), never a dense matrix.
 
-This is the cheapest and most accurate posterior — when applicable.
+This is the cheapest and most accurate posterior, when it applies.
 
 ### 2. Laplace approximation
 
-For `ThreeDVar` and the 4DVar models: at the MAP, approximate the
-posterior as Gaussian with covariance the inverse Hessian of the cost,
-and drop the second-derivative term of the observation misfit (the
-Gauss–Newton approximation). What the observations depend on decides
-the precision.
+For `ThreeDVar` and the 4DVar models, we approximate the posterior at the MAP as a Gaussian whose covariance is the inverse Hessian of the cost, and drop the second-derivative term of the observation misfit (the Gauss-Newton approximation). What the observations depend on decides the precision.
 
-A single analysis time (`ThreeDVar`):
+A single analysis time (`ThreeDVar`) gives
 
-$$P^*_\text{Laplace} = \left(\nabla^2 J(x^*)\right)^{-1} \approx \left(B^{-1} + H'(x^*)^\top R^{-1} H'(x^*)\right)^{-1}.$$
+$$P^*_\text{Laplace} = \left(\nabla^2 J(x^*)\right)^{-1} \approx \left(B^{-1} + H'(x^*)^\top R^{-1} H'(x^*)\right)^{-1}$$ (eq-laplace-cov)
 
-A 4DVar window (`StrongFourDVar`, `IncrementalFourDVar`,
-`ReducedBasisFourDVar` without a basis): the observations at time $t$
-depend on $x_0$ through the model, so with the tangent-linear model
-$M'_{t \leftarrow 0}$ along the analysis trajectory and the mask $m_t$,
+where $J$ is the 3DVar cost [](#eq-3dvar-cost) and $H'(x^*)$ the Jacobian of the observation operator at the MAP, so the bracket is the Gauss-Newton Hessian [](#eq-3dvar-gn-hessian) evaluated at $x^*$.
 
-$$P^*_\text{GN} = \left(B^{-1} + \sum_t (H'_t M'_{t\leftarrow 0})^\top R_t^{-1} (H'_t M'_{t\leftarrow 0})\right)^{-1}.$$
+In a 4DVar window (`StrongFourDVar`, `IncrementalFourDVar`, `ReducedBasisFourDVar` without a basis), the observations at time $t$ depend on $x_0$ through the model, so the covariance is the inverse of the Gauss-Newton Hessian [](#eq-gn-hessian):
 
-Never-observed state components that the dynamics couple to observed
-ones are constrained through $M'$: their posterior variance drops below
-the prior even though no observation touches them.
+$$P^*_\text{GN} = \mathbf{H}_\text{GN}^{-1}$$ (eq-gn-cov)
 
-`WeakFourDVar`: the control is $(x_0, \eta_1, \ldots, \eta_T)$ and the
-precision gains $Q^{-1}$ on each $\eta_t$; the adapter returns the
-$x_0$ block of the inverse, which is the Kalman-smoother covariance of
-$x_0$ in the linear-Gaussian case. Pass `analysis=(x0, eta)`.
+where $\mathbf{H}_\text{GN}$ is evaluated along the analysis trajectory, $M'_t$ is the tangent-linear model from $x_0$ to time $t$ and $H'_t$ includes the mask $m_t$. Never-observed state components that the dynamics couple to observed ones are constrained through $M'_t$, so their posterior variance drops below the prior even though no observation touches them.
 
-The strong 4DVar of the toy window and its Laplace posterior follow; `gaussx.diag` reads the posterior variances off the lazy operator. The block continues the one above.
+For `WeakFourDVar`, the control is $(x_0, \eta_1, \ldots, \eta_T)$ of the weak-constraint cost [](#eq-weak4dvar-cost), and the precision gains $Q_t^{-1}$ on each $\eta_t$. The adapter returns the $x_0$ block of the inverse, which is the Kalman-smoother covariance of $x_0$ in the linear-Gaussian case. Pass `analysis=(x0, eta)`.
+
+The strong 4DVar of the toy window and its Laplace posterior [](#eq-gn-cov) follow; `gaussx.diag` reads the posterior variances off the lazy operator. The block continues the one above.
 
 ```python
 # Shapes: S = 1 window; T = 3 times; N = 6 cells
@@ -207,18 +192,11 @@ by default, `solver=` to change it), and each Krylov iteration is one
 tangent-linear plus one adjoint pass through the rollout. Nothing is
 materialised.
 
-A linear control, `parameterization=LinearParameterization(basis, x_b)`
-or `ReducedBasisFourDVar(basis=...)`, has $x = x_b + \Phi\theta$ and the
-penalty $\frac{1}{2} \theta^\top Q^{-1} \theta$ in place of $B$. The adapters
-then build the precision in coefficient space and map it to the state:
+A linear control, `parameterization=LinearParameterization(basis, x_b)` or `ReducedBasisFourDVar(basis=...)`, has $x = x_b + \Phi\theta$ and the penalty $\frac{1}{2} \theta^\top Q^{-1} \theta$ in place of $B$ (the reduced-basis cost [](#eq-reduced-basis-cost), whose coefficients chapter 6 calls $X$). The adapters then build the precision in coefficient space and map it to the state:
 
-$$P_\theta = \left(Q^{-1} + \Phi^\top G'^\top R^{-1} G' \Phi\right)^{-1}, \text{ and } P_x = \Phi P_\theta \Phi^\top,$$
+$$P_\theta = \left(Q^{-1} + \Phi^\top G'^\top R^{-1} G' \Phi\right)^{-1}, \text{ and } P_x = \Phi P_\theta \Phi^\top$$ (eq-reduced-basis-cov)
 
-with $G'$ the single-time $H'$ or the strong-constraint window map. The
-whitened control $\Phi = L$, $Q = I$ with $B = LL^\top$ gives exactly the
-state-space posterior. Any other parameterization (a
-`NeuralFieldParameterization`, say) and a parameterized `WeakFourDVar`
-raise `ValueError`: their prior is not $B$, and their decode is not affine.
+where $\Phi$ is the basis, $Q$ the prior covariance of the coefficients $\theta$, and $G'$ the single-time $H'$ or the strong-constraint window map $H'_t M'_t$ stacked over $t$. The whitened control $\Phi = L$, $Q = I$ with $B = LL^\top$ gives exactly the state-space posterior. Any other parameterization (a `NeuralFieldParameterization`, say) and a parameterized `WeakFourDVar` raise `ValueError`: their prior is not $B$, and their decode is not affine.
 
 **Gaussian-likelihood only.** For non-Gaussian likelihoods (heavy
 tails, censored, count data), the Laplace approximation is wrong; use
@@ -230,10 +208,7 @@ running multiple MAPs from perturbed starting points.
 
 ### 3. Gauss-Newton Hessian
 
-`GaussNewtonHessian` builds the same $P^*_\text{GN}$ as
-`LaplaceCovariance` and exposes the Krylov budget (`n_krylov`, `tol`):
-
-The block continues the one above.
+`GaussNewtonHessian` builds the same [](#eq-gn-cov) as `LaplaceCovariance` and exposes the Krylov budget (`n_krylov`, `tol`). The block continues the one above.
 
 ```python
 # today (vardax)
@@ -253,20 +228,17 @@ It prints `True`.
 iterate during the analysis; the adapter rebuilds it at the analysis
 it is given, at the cost of one linearisation of the rollout.
 
-Now you pay the Krylov cost — typically 50 tangent-linear+adjoint
-passes. Still much cheaper than full materialisation.
+With `n_krylov=50`, a mat-vec costs up to 50 tangent-linear plus adjoint passes, which is still much cheaper than materialising $P^*_\text{GN}$.
 
 ### 4. Ensemble (`filterax` bridge)
 
-For multimodal posteriors, non-Gaussian likelihoods, or hybrid EnVar
-(Epic 9), build the posterior from an ensemble of analyses:
+For multimodal posteriors, non-Gaussian likelihoods, or hybrid EnVar (Epic 9), build the posterior from an ensemble of analyses:
 
-$$P^*_\text{ens} = \frac{1}{M - 1} \sum_{m=1}^{M} (x^{(m)} - \bar{x})(x^{(m)} - \bar{x})^\top.$$
+$$P^*_\text{ens} = \frac{1}{M - 1} \sum_{m=1}^{M} (x^{(m)} - \bar{x})(x^{(m)} - \bar{x})^\top$$ (eq-ensemble-cov)
 
-Each $x^{(m)}$ is a separate vardax analysis with a perturbed initial
-condition or observation realisation.
+where each member $x^{(m)}$ is a separate vardax analysis with a perturbed initial condition or observation realisation, $M$ is the number of members and $\bar{x}$ their mean.
 
-Here the $M = 8$ members re-run the strong 4DVar above on perturbed observations $y^{(m)} = y + \sigma \varepsilon^{(m)}$, and $\lambda = 1.1$ inflates the sample covariance. `StrongFourDVar` already maps over the leading axis of a batch, so the members run in parallel without a `vmap`. The block continues the one above.
+Here the $M = 8$ members re-run the strong 4DVar above on perturbed observations $y^{(m)} = y + \sigma \varepsilon^{(m)}$, and $\lambda = 1.1$ inflates the sample covariance [](#eq-ensemble-cov). `StrongFourDVar` already maps over the leading axis of a batch, so the members run in parallel without a `vmap`. The block continues the one above.
 
 ```python
 # Shapes: M = 8 members; T = 3 times; N = 6 cells
@@ -299,16 +271,16 @@ anything spatial.
 
 | Method | Default posterior path |
 |---|---|
-| `OptimalInterpolation` | `.posterior(batch)` — exact |
+| `OptimalInterpolation` | `.posterior(batch)`, exact |
 | `ThreeDVar` | `.posterior(batch)` / `LaplaceCovariance()` |
 | `StrongFourDVar` | `.posterior(batch)` / `LaplaceCovariance()` or `GaussNewtonHessian()` |
-| `WeakFourDVar` | `.posterior(batch)` — $x_0$ block of the augmented-control inverse |
-| `IncrementalFourDVar` | `.posterior(batch)` — the inner loop's Gauss–Newton operator, relinearised at the analysis |
+| `WeakFourDVar` | `.posterior(batch)`, the $x_0$ block of the augmented-control inverse |
+| `IncrementalFourDVar` | `.posterior(batch)`, the inner loop's Gauss-Newton operator, relinearised at the analysis |
 | `FourDVarNet1D` / `FourDVarNet2D` | `EnsembleCovariance()` over perturbed inputs (no `obs_op`, so no Laplace adapter); verify calibration via SBC |
-| `AmortizedPosterior` | direct `.sample(batch, key, n)` — flow / score gives samples natively |
+| `AmortizedPosterior` | direct `.sample(batch, key, n)`; a flow or score head gives samples natively |
 | Hybrid `EnVarFourDVar` (Epic 9) | `EnsembleCovariance()` |
 
-## Export — `GaussianMarkLikelihood`
+## Export with `GaussianMarkLikelihood`
 
 Per-event posteriors feed downstream population models (TMTPP,
 hierarchical Bayesian) via a serialisable mark-likelihood:
@@ -329,11 +301,9 @@ print(sorted(record))
 
 It prints `['cov_diag', 'event_metadata', 'mean', 'provenance', 'samples']`. vardax ships no catalog writer; the JSON text goes to whatever store the population layer reads.
 
-The serialised form is consumed by Tier V population models without
-re-running vardax. Decision D10 makes this contract explicit — it's
-how the inference layer hands off to the population layer.
+The serialised form is consumed by Tier V population models without re-running vardax. Decision D10 makes this contract explicit, since it is how the inference layer hands off to the population layer.
 
-## Provenance — auditing the analysis
+## Provenance for auditing the analysis
 
 `Posterior.provenance` is meant to carry at minimum the keys below. Today the adapters record only their name and a few settings (`adapter` and `structure` for `LaplaceCovariance`, plus `n_krylov` for `GaussNewtonHessian`, and `n_members` and `inflation` for `EnsembleCovariance`), so the table is the target contract.
 
@@ -356,24 +326,14 @@ with downstream consumers.
 
 ## Validation gates
 
-Posteriors are only as good as they agree with reality. The six-step
-cycle (chapter 14) enforces three gates:
-
-1. **Posterior agreement** — fast (amortized) MAP within
-   $1\sigma_\text{post}$ of slow (oracle) MAP.
-2. **Adjoint calibration** — fast gradient matches physics gradient to
-   $\le 5\%$ operator norm.
-3. **Simulation-based calibration** — posterior coverage matches
-   nominal coverage (Talts et al. 2018).
-
-The gates ship as `vardax.assert_posterior_agreement`, `vardax.assert_adjoint_calibrated` and `vardax.simulation_based_calibration` (in `vardax._src.utils.validation`), and `tests/test_six_step_validation.py` tests them; failing gates would block promotion of an amortized head to operational use.
+Posteriors are only as good as they agree with reality, so the six-step cycle checks a fast posterior against its oracle with the posterior-agreement gate [](#eq-gate-posterior), the Jacobian gate [](#eq-gate-jacobian) and simulation-based calibration; [chapter 14](14_six_step_cycle.md) states the gates and the functions that implement them.
 
 ## See also
 
-- Chapter 4 — `OptimalInterpolation` (closed-form posterior)
-- Chapter 8 — `IncrementalFourDVar` (GN-Hessian reuse)
-- Chapter 10 — `AmortizedPosterior` (direct sampling)
-- Chapter 14 — six-step cycle (validation methodology)
+- Chapter 4: `OptimalInterpolation` (closed-form posterior)
+- Chapter 8: `IncrementalFourDVar` (GN-Hessian reuse)
+- Chapter 10: `AmortizedPosterior` (direct sampling)
+- Chapter 14: six-step cycle (validation methodology)
 - Design doc: [`design/posterior.md`](design/posterior.md)
 - Design doc: [`design/decisions.md#d10`](design/decisions.md#d10-posterior-export-adapter-pattern)
 

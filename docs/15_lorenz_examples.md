@@ -1,3 +1,8 @@
+---
+numbering:
+  enumerator: "15.%s"
+---
+
 # Lorenz Examples
 
 The Lorenz systems are the canonical small-scale testbeds for DA.
@@ -11,15 +16,15 @@ make each method's behaviour concrete.
 
 ## Lorenz-63
 
-The Lorenz-63 system:
+The Lorenz-63 system is
 
-$$\dot{x} = \sigma(y - x), \dot{y} = x(\rho - z) - y, \dot{z} = xy - \beta z,$$
+$$\dot{x} = \sigma(y - x), \dot{y} = x(\rho - z) - y, \dot{z} = xy - \beta z,$$ (eq-lorenz63)
 
-with canonical $(\sigma, \rho, \beta) = (10, 28, 8/3)$. State
-dimension $n = 3$; dynamics live on the famous two-winged attractor.
+where $(x, y, z)$ is the state and $\sigma$, $\rho$, $\beta$ are its three parameters, here the canonical $(10, 28, 8/3)$.
+The state dimension is $n = 3$, and the dynamics live on the famous two-winged attractor.
 
 The code on this page runs top to bottom as one script; each block continues the one above.
-The keys for every stochastic stage are split once, here.
+The keys for every stochastic stage are split once, here, and the first block integrates [](#eq-lorenz63).
 
 ```python
 import einx
@@ -75,9 +80,9 @@ truth = batch.target[0]  # (S, W, N) → (W, N)
 
 ### `OptimalInterpolation` won't work directly
 
-The Lorenz dynamics are nonlinear; the assumption of static field
-(needed for OI) is violated. OI on the marginal density of the state
-gives a poor reconstruction — but it's a useful baseline:
+OI ([chapter 4](04_oi_blue.md)) assumes a static Gaussian field, which the nonlinear Lorenz dynamics violate.
+So OI with the climatological mean $\bar{x}$ and covariance $C$ of the trajectory as its prior gives a poor reconstruction, but it is a useful baseline.
+The block computes the BLUE mean [](#eq-blue-mean) at each time separately, with $B = C$, $R = I$ and the masked identity [](#eq-masked-identity) as $H$.
 
 ```python
 # Shapes: T = 5,001; W = 101; N = 3
@@ -129,6 +134,7 @@ It prints `OI trajectory RMSE 6.06`.
 ### `StrongFourDVar` is the right tool
 
 The background $x_b$ is the true initial state plus noise of standard deviation $\sigma_b = 2$, and the prior $B = 100 I$ is deliberately weak.
+The block minimises the strong-constraint cost [](#eq-strong4dvar-cost) with the masked identity as $H_t$ and $R = I$, then rolls the analysis out with [](#eq-rollout).
 
 ```python
 # Shapes: W = 101; N = 3
@@ -176,7 +182,7 @@ wings because the static prior doesn't know about the dynamics.
 
 ### `FourDVarNet` for the learned-prior comparison
 
-Train a small AE prior on short patches of the training trajectory.
+Train a small AE prior on short patches of the training trajectory: the network minimises the learned-prior cost [](#eq-4dvarnet-cost) with the update [](#eq-4dvarnet-update), and training minimises the loss [](#eq-4dvarnet-loss).
 Two epochs of `vardax.examples.fit_demo` only show the plumbing; notebook 03 trains it properly.
 
 ```python
@@ -229,11 +235,11 @@ learned priors recover similar information to model-based ones.
 
 The Lorenz-96 system is a one-dimensional periodic version:
 
-$$\dot{X}_k = (X_{k+1} - X_{k-2}) X_{k-1} - X_k + F, \text{ for } k = 0, \ldots, N-1,$$
+$$\dot{X}_k = (X_{k+1} - X_{k-2}) X_{k-1} - X_k + F, \text{ for } k = 0, \ldots, N-1,$$ (eq-lorenz96)
 
-with $N = 40$ and forcing $F = 8$ (chaotic regime). The state is a
-periodic 1D field — closer in structure to atmospheric problems than
-Lorenz-63.
+where $X_k$ is the state at site $k$ of a periodic ring (indices taken modulo $N$) and $F$ is the forcing.
+We use $N = 40$ and $F = 8$, which is the chaotic regime.
+The state is a periodic 1D field, closer in structure to atmospheric problems than Lorenz-63; the next block integrates [](#eq-lorenz96).
 
 ```python
 # Shapes: T = 5,001 saved times; K = 40 sites
@@ -276,13 +282,13 @@ truth_l96 = batch_l96.target[0]  # (S, W, K) → (W, K)
 
 ### `IncrementalFourDVar` with structured Matérn prior
 
-This is the realistic operational scenario: structured spatial prior,
-incremental solver, AK-style or masked observations.
+This is the realistic operational scenario: structured spatial prior, incremental solver ([chapter 8](08_incremental_4dvar.md)), AK-style or masked observations.
 
 The Matérn-3/2 covariance on the periodic grid depends only on the ring distance $d_{ij} = \min(|i - j|, K - |i - j|)$, so it is circulant; here it is a dense $40 \times 40$ matrix.
 `gaussx.Toeplitz` would store it by its first column, but it does not implement `lineax.linearise`, which `IncrementalFourDVar` needs.
 The forward model is one RK4 step written on the page, which forward- and reverse-mode autodiff both see through, as the Gauss-Newton loop needs.
 The background is the true initial state plus noise drawn from the same scale as $B$.
+The block minimises [](#eq-strong4dvar-cost) through the incremental cost [](#eq-incremental-cost) and then builds the Gauss-Newton posterior [](#eq-gn-cov).
 
 ```python
 import equinox as eqx
@@ -360,11 +366,7 @@ print(posterior.mean.shape)
 
 It prints `background error 5.76`, `analysis error 2.98` and `(40,)`, the errors being in $x_0$.
 
-This walkthrough exercises:
-- Periodic Matérn prior as a `lineax` operator
-- CVT preconditioning ($B^{1/2}$ from the Matérn factorisation)
-- GN+CG inner loop
-- Free posterior reuse of the GN Hessian
+This walkthrough exercises the periodic Matérn prior as a `lineax` operator, the CVT [](#eq-cvt) with $B^{1/2}$ from the Matérn factorisation, and the Gauss-Newton and CG loop [](#eq-gn-system), whose Hessian [](#eq-gn-hessian) the posterior reuses for free.
 
 The reconstruction recovers the Lorenz-96 trajectory through gaps,
 with calibrated posterior uncertainty in unobserved regions.
@@ -376,6 +378,7 @@ linear-Gaussian test on the Lorenz-63 attractor by treating the
 trajectory mean as the prior and the empirical covariance as $B$.
 
 The block below runs that check on one time of the Lorenz-63 window for the four classical methods that take this batch.
+With $M(x) = x$ over one time, the BLUE mean [](#eq-blue-mean) and the minimisers of [](#eq-3dvar-cost), [](#eq-strong4dvar-cost) and [](#eq-incremental-cost) are the same point.
 `FourDVarNet` is left out, as in `tests/test_linear_gaussian_agreement.py`, because its learned components must be trained before they can match.
 
 ```python
@@ -467,23 +470,23 @@ The [Tutorials](notebooks/index.md) section renders the end-to-end Lorenz
 notebooks (jupytext percent-format sources under `docs/notebooks/`,
 executed at docs build time):
 
-- [01 — Model-based 4DVar on L63](notebooks/01_model_based_4dvar_L63.ipynb)
-- [02 — Unrolling vs fixed-point on L63](notebooks/02_unrolling_vs_fixedpoint_L63.ipynb) — unrolled vs fixed-point solver comparison
-- [03 — 4DVarNet end-to-end on L63](notebooks/03_4dvarnet_L63.ipynb)
-- [05 — End-to-end L63 pipeline](notebooks/05_end_to_end_L63.ipynb) — including the data utilities
-- [06 — End-to-end L96 pipeline](notebooks/06_end_to_end_L96.ipynb)
-- [07 — Prior pre-training on L63](notebooks/07_prior_pretraining_L63.ipynb) — pre-training the bilinear prior
-- [08 — Classical 4DVar vs 4DVarNet on L63](notebooks/08_classical_4dvar_vs_4dvarnet_L63.ipynb) — side-by-side comparison
-- [09 — Parameter estimation on L63](notebooks/09_param_estimation_L63.ipynb) — learnable ODE parameters via `DynTrajectory`
-- [10 — Bilevel optimisation on L63](notebooks/10_bilevel_opt_L63.ipynb) — learning the cost weights through the inner solve
-- [11 — Learning the gradient update](notebooks/11_gradient_learning_L63.ipynb) — the gradient modulator in isolation
+- [01: Model-based 4DVar on L63](notebooks/01_model_based_4dvar_L63.ipynb)
+- [02: Unrolling vs fixed-point on L63](notebooks/02_unrolling_vs_fixedpoint_L63.ipynb)
+- [03: 4DVarNet end-to-end on L63](notebooks/03_4dvarnet_L63.ipynb)
+- [05: End-to-end L63 pipeline](notebooks/05_end_to_end_L63.ipynb), including the data utilities
+- [06: End-to-end L96 pipeline](notebooks/06_end_to_end_L96.ipynb)
+- [07: Prior pre-training on L63](notebooks/07_prior_pretraining_L63.ipynb), pre-training the bilinear prior
+- [08: Classical 4DVar vs 4DVarNet on L63](notebooks/08_classical_4dvar_vs_4dvarnet_L63.ipynb), side by side
+- [09: Parameter estimation on L63](notebooks/09_param_estimation_L63.ipynb), learnable ODE parameters via `DynTrajectory`
+- [10: Bilevel optimisation on L63](notebooks/10_bilevel_opt_L63.ipynb), learning the cost weights through the inner solve
+- [11: Learning the gradient update](notebooks/11_gradient_learning_L63.ipynb), the gradient modulator in isolation
 
 To open one as a notebook locally: `jupytext --to notebook docs/notebooks/<name>.py`.
 
 ## See also
 
-- Chapter 6 — `StrongFourDVar` (the L63 4DVar walkthrough method)
-- Chapter 8 — `IncrementalFourDVar` (the L96 walkthrough method)
-- Chapter 9 — `FourDVarNet` (the learned-prior comparison)
-- Chapter 16 — SSH example (real-world 2D analogue)
-- Chapter 17 — methane example (real-world multi-instrument analogue)
+- [Chapter 6](06_strong_4dvar.md): `StrongFourDVar`, the L63 4DVar walkthrough method
+- [Chapter 8](08_incremental_4dvar.md): `IncrementalFourDVar`, the L96 walkthrough method
+- [Chapter 9](09_4dvarnet.md): `FourDVarNet`, the learned-prior comparison
+- [Chapter 16](16_ssh_example.md): SSH example, the real-world 2D analogue
+- [Chapter 17](17_methane_example.md): methane example, the real-world multi-instrument analogue

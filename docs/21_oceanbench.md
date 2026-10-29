@@ -1,3 +1,8 @@
+---
+numbering:
+  enumerator: "21.%s"
+---
+
 # OceanBench: SSH Applications
 
 Ported and condensed from the `mfourdvar` OceanBench notes
@@ -10,58 +15,34 @@ motivated this library.
 > from its raw form to an ML-ready state and from model outputs to
 > interpretable quantities."
 
-Chapter [16](16_ssh_example.md) walks through *one* SSH
-reconstruction end-to-end; this chapter is the surrounding benchmark
-context — where the data come from, how the experiment ladder is
-structured, and which OceanBench task each vardax component serves.
+Chapter [16](16_ssh_example.md) walks through *one* SSH reconstruction end-to-end; this chapter is the surrounding benchmark context: where the data come from, how the experiment ladder is structured, and which OceanBench task each vardax component serves.
 
 ## Why a benchmark framework
 
-The ML method is the smallest part of an operational chain. The parts
-that dominate the effort are getting raw ocean data into an ML-ready
-form, evaluating a proposed tool against operationally meaningful
-metrics, and inserting it into an operational pipeline —
-reproducibly, so that non-experts in operations can contribute a
-method without rebuilding the plumbing. OceanBench standardises that
-chain (raw observations / simulations / reanalyses → ML-ready patches
-→ method → interpretable metrics); vardax slots in as the *method*
-box, with `pipekit` supplying the pipeline substrate
-([design/pipekit_composition.md](design/pipekit_composition.md)).
+The ML method is the smallest part of an operational chain. The parts that dominate the effort are getting raw ocean data into an ML-ready form, evaluating a proposed tool against operationally meaningful metrics, and inserting it into an operational pipeline, all reproducibly, so that non-experts in operations can contribute a method without rebuilding the plumbing. OceanBench standardises that chain, which goes from raw observations, simulations and reanalyses to ML-ready patches, then to a method, and then to interpretable metrics; vardax slots in as the *method* box, with `pipekit` supplying the pipeline substrate ([design/pipekit_composition.md](design/pipekit_composition.md)).
 
 ## Data
 
 Three families of product, all reachable through the Copernicus
 Marine Data Store:
 
-- **Observations** — along-track satellite altimetry (NADIR
-  pencil-beam tracks; SWOT wide-swath), plus in-situ profiles.
-  Sparse, gappy, noisy: the `y` of every cost in this library.
-- **Reanalysis** — GLORYS12V1, the CMEMS global eddy-resolving
-  reanalysis at $1/12^\circ$ with 50 vertical levels (1993–2020),
-  assimilating along-track altimetry, SST, sea ice, and in-situ
-  T/S profiles. Reanalyses blend model and observations, which makes
-  them the standard training target for learned methods.
-- **Free-run simulation** — NEMO runs without assimilation; the
-  ground truth generator for observing-system simulation experiments
-  (OSSE), where "truth" must be known exactly.
+- **Observations**: along-track satellite altimetry (NADIR pencil-beam tracks; SWOT wide-swath), plus in-situ profiles. Sparse, gappy, noisy: the $y$ of the observation model [](#eq-obs-model) and of every cost in this library.
+- **Reanalysis**: GLORYS12V1, the CMEMS global eddy-resolving reanalysis at $1/12^\circ$ with 50 vertical levels (1993 to 2020), assimilating along-track altimetry, SST, sea ice, and in-situ T/S profiles. Reanalyses blend model and observations, which makes them the standard training target for learned methods.
+- **Free-run simulation**: NEMO runs without assimilation; the ground truth generator for observing-system simulation experiments (OSSE), where "truth" must be known exactly.
 
-Two pragmatic ladders recur throughout: **regions** (Gulf Stream →
-Mediterranean → North Atlantic → global) and **frequency** (daily maps
-before hourly), each solving a drastically simpler problem before
-scaling up — with transfer learning carrying weights up the rungs.
+Two pragmatic ladders recur throughout: **regions** (Gulf Stream, then Mediterranean, then North Atlantic, then global) and **frequency** (daily maps before hourly), each solving a drastically simpler problem before scaling up, with transfer learning carrying weights up the rungs.
 
 ## The experiment ladder
 
 **OSSE** (observing-system *simulation* experiments) sample synthetic
 observations from a known simulated truth, so reconstruction error is
-exactly measurable. The editions add data sources incrementally —
-ablate to learn which source carries the signal:
+exactly measurable. The editions add data sources incrementally; ablate them to learn which source carries the signal:
 
 | Edition | Observations | What it tests |
 |---|---|---|
 | OSSE NADIR | simulated NADIR altimetry tracks (from a NEMO run) | baseline sparse-track interpolation |
 | OSSE SWOT | NADIR + SWOT swaths | higher spatial resolution, lower temporal; much higher data volume |
-| OSSE NADIR + SWOT + SST | + sea-surface temperature | multivariate synergy — SSH and SST are dynamically coupled, and SST is abundant with few gaps |
+| OSSE NADIR + SWOT + SST | + sea-surface temperature | multivariate synergy: SSH and SST are dynamically coupled, and SST is abundant with few gaps |
 
 **OSE** (observing-system experiments) then rerun the winning
 configuration on *real* NADIR altimetry, where truth is unknown and
@@ -71,13 +52,9 @@ evaluation falls back to withheld tracks and physical diagnostics.
 
 ### SSH interpolation
 
-Fill the gaps between altimeter tracks to produce daily gap-free SSH
-maps — the first OceanBench edition, and the task chapter
-[16](16_ssh_example.md) implements three ways (OI baseline,
-`IncrementalFourDVar`, learned `FourDVarNet`). The learned
-configuration in brief:
+Fill the gaps between altimeter tracks to produce daily gap-free SSH maps. This is the first OceanBench edition, and the task chapter [16](16_ssh_example.md) implements three ways (OI baseline, `IncrementalFourDVar`, learned `FourDVarNet`). The learned configuration in brief:
 
-The block below runs an untrained model on a toy SSH field, $\eta(t, y, x) = \sin(x - 0.2 t) \cos(y)$ on $16 \times 16$ cells, observed along diagonal ground tracks; a real configuration uses $128 \times 128$ patches, `latent_dim=32`, `hidden_dim=48` and 15 solver steps, and is trained before use (chapter [16](16_ssh_example.md)).
+The block below runs an untrained model on a toy SSH field, $\eta(t, y, x) = \sin(x - 0.2 t) \cos(y)$ on $16 \times 16$ cells, observed along diagonal ground tracks through the masked identity [](#eq-masked-identity); the model unrolls the update [](#eq-4dvarnet-update) on the cost [](#eq-4dvarnet-cost). A real configuration uses $128 \times 128$ patches, `latent_dim=32`, `hidden_dim=48` and 15 solver steps, and is trained before use (chapter [16](16_ssh_example.md)).
 
 ```python
 import einx
@@ -133,10 +110,7 @@ print(f"observed fraction {observed_fraction:.3f}, maps {ssh_maps.shape}")
 
 It prints `observed fraction 0.125, maps (1, 5, 16, 16)`.
 
-Real altimetry products carry `NaN` in the gaps rather than zeros —
-strip them with the NaN-safe observation costs
-([`obs_cost_2d(..., nan_to_num=True)`](api/costs_priors.md)) or a
-masking preprocessing step, per chapter [20](20_uncertainty.md).
+Real altimetry products carry `NaN` in the gaps rather than zeros, so strip them with the NaN-safe observation costs ([`obs_cost_2d(..., nan_to_num=True)`](api/costs_priors.md)) or a masking preprocessing step, per chapter [20](20_uncertainty.md).
 
 ### SSH forecasting
 
@@ -149,13 +123,7 @@ windows, and the analysis methods correct it as observations arrive.
 
 ### SSH surrogates
 
-Learn the flow map itself — emulate the simulation at 1 / 6 / 12 /
-24-hour steps from free-run data. Surrogates are the component-level
-answer to non-differentiable GCMs (chapter
-[19](19_physical_models.md)): once trained, a surrogate is a
-differentiable `ForwardModel`, usable as the forward operator of
-[`StrongFourDVar`](06_strong_4dvar.md) or wrapped as a dynamical
-prior.
+Learn the flow map itself, that is, emulate the simulation at 1 / 6 / 12 / 24-hour steps from free-run data. Surrogates are the component-level answer to non-differentiable GCMs (chapter [19](19_physical_models.md)): once trained, a surrogate is a differentiable `ForwardModel`, usable as the forward operator of [`StrongFourDVar`](06_strong_4dvar.md) or wrapped as a dynamical prior.
 
 ## Status
 

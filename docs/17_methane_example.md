@@ -1,3 +1,8 @@
+---
+numbering:
+  enumerator: "17.%s"
+---
+
 # Methane Single-Overpass Example
 
 Methane source attribution from satellite XCH₄ observations is the
@@ -6,10 +11,7 @@ observations from TROPOMI, EMIT, and (sometimes) GHGSat over a
 suspected emission event. The question: what was the source rate $Q$
 at the facility, and how uncertain is the answer?
 
-This chapter walks an end-to-end methane inversion using
-`IncrementalFourDVar` + multi-instrument fusion + averaging-kernel
-operators. The forward model comes from `plumax` (Tier I Gaussian
-plume); the inference is vardax.
+This chapter walks an end-to-end methane inversion using `IncrementalFourDVar` ([chapter 8](08_incremental_4dvar.md)) with multi-instrument fusion and averaging-kernel operators ([chapter 11](11_observation_operators.md)). The forward model comes from `plumax` (Tier I Gaussian plume); the inference is vardax.
 
 ## Problem setup
 
@@ -18,8 +20,7 @@ plume); the inference is vardax.
 - **Observations**: per-instrument XCH₄ retrievals (TROPOMI L2, EMIT
   L2, GHGSat L2) within a 50 km radius / 2 hour window of the event
   geometry.
-- **Met forcing**: ERA5 or WRF wind, PBL height, stability — supplied
-  as static metadata (not a control variable).
+- **Met forcing**: ERA5 or WRF wind, PBL height and stability, supplied as static metadata (not a control variable).
 - **Goal**: posterior on $(Q, x_0, y_0, H_\text{eff})$, exported as a
   mark-likelihood for downstream population models.
 
@@ -79,6 +80,8 @@ plume); the inference is vardax.
 ```
 
 ## Sketch
+
+The block builds one averaging-kernel operator [](#eq-averaging-kernel) per instrument, stacks them as in the fusion cost [](#eq-fusion-cost), minimises the strong-constraint cost [](#eq-strong4dvar-cost) with a single observation time and $H \circ M$ as the observation operator, and returns the Gauss-Newton posterior [](#eq-gn-cov).
 
 ```python
 import jax.numpy as jnp
@@ -208,16 +211,14 @@ catalog.write_posterior(event.id, mark_record)
 
 ## What this exercises in vardax
 
-- **`IncrementalFourDVar`** (chapter 8) — operational 4DVar with CVT
-- **`AveragingKernel`** (chapter 11) — first-class day-one operator (D9)
-- **`MultiInstrumentFusion`** — likelihood-level composition without
-  pre-regridding
-- **`GaussNewtonHessian` posterior** — free from the last outer iteration
-- **`GaussianMarkLikelihood` export** — hand-off to Tier V population
-  models (D10)
-- **`lineax` diagonal prior and block-diagonal obs cov** — the per-instrument blocks are diagonal, so $R$ is one `DiagonalLinearOperator`
+- **`IncrementalFourDVar`** (chapter 8): operational 4DVar with the CVT [](#eq-cvt)
+- **`AveragingKernel`** (chapter 11): first-class day-one operator (D9)
+- **`MultiInstrumentFusion`**: likelihood-level composition without pre-regridding
+- **`GaussNewtonHessian` posterior**: free from the last outer iteration
+- **`GaussianMarkLikelihood` export**: hand-off to Tier V population models (D10)
+- **`lineax` diagonal prior and block-diagonal obs cov**: the per-instrument blocks are diagonal, so $R$ is one `DiagonalLinearOperator`
 - **`plumax.tier1.GaussianPlume`** as `pipekit_cycle.ForwardModel` (D8)
-- **GeoCatalog query → inference → write loop** — operational pattern
+- **GeoCatalog query, inference and write loop**: the operational pattern
 
 ## Six-step cycle for methane
 
@@ -232,10 +233,7 @@ The example above is Step 2 (classical inference). The full cycle:
 | 5 (amortized) | `AmortizedPosterior(encoder, head=ConditionalFlowHead)` trained on simulated $(Q, y)$ pairs |
 | 6 (improve) | Swap any block; previous step is the oracle for validation |
 
-The same `vardax.models.*` classes appear at Steps 2 and 4 — only the
-`forward` slot changes. At Step 5, `AmortizedPosterior` replaces them
-entirely, validated against Step 2's output via the gates in chapter
-14.
+At Step 5, `AmortizedPosterior` replaces the Step 2 classes entirely, validated against Step 2's output with the posterior gate [](#eq-gate-posterior) of chapter 14.
 
 ## When to upgrade tiers
 
@@ -248,14 +246,11 @@ entirely, validated against Step 2's output via the gates in chapter
 | III | Eulerian finite-volume PDE | Long-range transport, regional inversion |
 | IV | Coupled transport + RTM | L1 radiance inversion, multi-instrument |
 
-The vardax inference code is **the same across tiers** — only the
-`forward` slot changes. The cost of upgrading from Tier I to Tier III
-is in `plumax`, not in vardax.
+The vardax inference code is **the same across tiers** (and across Steps 2 and 4 of the cycle): only the `forward` slot changes. The cost of upgrading from Tier I to Tier III is in `plumax`, not in vardax.
 
 ## Multi-event aggregation
 
-For population-level analysis (annual emissions from a basin, persistent
-super-emitters), aggregate per-event posteriors:
+For population-level analysis (annual emissions from a basin, persistent super-emitters), aggregate the per-event Gauss-Newton posteriors [](#eq-gn-cov):
 
 ```python
 # Shapes: E events; P = 4 source parameters
@@ -280,16 +275,14 @@ marks = [
 population_model = TMTPP(marks)
 ```
 
-Decision D10's mark-likelihood serialisation is the contract that
-makes this work. Vardax doesn't own the population model — that's
-downstream — but it produces the standardised input.
+Decision D10's mark-likelihood serialisation is the contract that makes this work. Vardax doesn't own the population model, which is downstream, but it produces the standardised input.
 
 ## See also
 
-- Chapter 8 — `IncrementalFourDVar` (the analysis method)
-- Chapter 11 — observation operators (AK + multi-instrument)
-- Chapter 13 — posterior covariance (GN-Hessian reuse)
-- Chapter 14 — six-step cycle (research-to-operations)
+- [Chapter 8](08_incremental_4dvar.md): `IncrementalFourDVar` (the analysis method)
+- [Chapter 11](11_observation_operators.md): observation operators (AK + multi-instrument)
+- [Chapter 13](13_posterior_covariance.md): posterior covariance (GN-Hessian reuse)
+- [Chapter 14](14_six_step_cycle.md): six-step cycle (research-to-operations)
 - Design doc: [`design/examples/use_cases.md`](design/examples/use_cases.md)
 - Design doc: [`design/decisions.md#d9`](design/decisions.md#d9-averaging-kernel-multi-instrument-as-first-class)
 - Design doc: [`design/decisions.md#d10`](design/decisions.md#d10-posterior-export-adapter-pattern)

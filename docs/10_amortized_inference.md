@@ -1,8 +1,11 @@
+---
+numbering:
+  enumerator: "10.%s"
+---
+
 # Amortized Inference
 
-The six methods covered so far (chapters 4–9) all solve a fresh
-minimisation per event. A new observation triggers a new analysis —
-fine for retrospective work, too slow for real-time. Amortized
+The six methods covered so far (chapters 4 to 9) all solve a fresh minimisation per event. A new observation triggers a new analysis, which is fine for retrospective work but too slow for real-time. Amortized
 inference learns a function $q_\phi(x \mid y)$ that maps observations
 directly to posteriors, in a single forward pass.
 
@@ -12,24 +15,21 @@ between research and operations.
 
 ## Formulation
 
-Learn a conditional density $q_\phi(x \mid y)$ that approximates the
-exact Bayesian posterior $p(x \mid y) \propto p(y \mid x) p(x)$:
+Learn a conditional density $q_\phi(x \mid y)$ that approximates the exact Bayesian posterior [](#eq-bayes):
 
-$$\phi^* = \underset{\phi}{\arg\min} \mathbb{E}_{y \sim p(y)} \mathrm{KL}\left(q_\phi(\cdot \mid y) \| p(\cdot \mid y)\right).$$
+$$\phi^* = \underset{\phi}{\arg\min} \mathbb{E}_{y \sim p(y)} \mathrm{KL}\left(q_\phi(\cdot \mid y) \| p(\cdot \mid y)\right)$$ (eq-amortized-objective)
+
+where $\phi$ are the network parameters and the expectation runs over the observations the model will see.
 
 When the prior and forward model are samplable (which they are when
 supplied by `somax` or `plumax`), the training distribution comes from
 **simulation**:
 
 1. Draw $x \sim p(x)$ from the prior.
-2. Simulate $y \mid x = H(M(x)) + \varepsilon$ from the forward and
-   noise model.
+2. Simulate $y = H(M(x)) + \varepsilon$, the observation model [](#eq-obs-model) applied to the forecast $M(x)$.
 3. Train $q_\phi$ to recover $x$ from $y$ on these synthetic pairs.
 
-This is "simulation-based inference" (Cranmer et al. 2020). The
-training distribution is fully controlled — every $(x, y)$ pair has
-known ground truth — but the deployment distribution must match for
-$q_\phi$ to be calibrated.
+This is "simulation-based inference" (Cranmer et al. 2020). The training distribution is fully controlled (every $(x, y)$ pair has known ground truth), but the deployment distribution must match for $q_\phi$ to be calibrated.
 
 ## Three head variants
 
@@ -41,11 +41,13 @@ vardax `AmortizedPosterior` exposes three head choices via the
 Learn an invertible map $f_\phi$ from a base Gaussian to the
 posterior, conditioned on the observation context:
 
-$$x = f_\phi(z; c_\psi(y)), \text{ with } z \sim \mathcal{N}(0, I).$$
+$$x = f_\phi(z; c_\psi(y)), \text{ with } z \sim \mathcal{N}(0, I)$$ (eq-flow-sample)
 
-Density:
+where $c_\psi(y)$ is the context vector from an observation encoder with parameters $\psi$. The change of variables gives the density
 
-$$\log q_\phi(x \mid y) = \log p_z\left(f_\phi^{-1}(x; c_\psi(y))\right) - \log \left| \det \partial f_\phi / \partial z \right|.$$
+$$\log q_\phi(x \mid y) = \log p_z\left(f_\phi^{-1}(x; c_\psi(y))\right) - \log \left| \det \partial f_\phi / \partial z \right|$$ (eq-flow-logdensity)
+
+where $p_z$ is the base Gaussian density and the Jacobian is taken at $z = f_\phi^{-1}(x; c_\psi(y))$.
 
 Exact density, exact samples. Use `gauss_flows` for the flow
 implementation. Good for moderate-dimensional state (up to $\sim 10^4$).
@@ -55,48 +57,46 @@ Higher-dimensional flows are open research.
 
 Learn the score of a noise-perturbed posterior at noise scale $t$:
 
-$$s_\phi(x, t \mid y) \approx \nabla_x \log p_t(x \mid y).$$
+$$s_\phi(x, t \mid y) \approx \nabla_x \log p_t(x \mid y)$$ (eq-score)
 
-Sampling via reverse SDE:
+where $p_t$ is the posterior perturbed by noise up to scale $t$. Sampling runs the reverse SDE
 
-$$d x = \left[f(x, t) - g(t)^2 s_\phi(x, t \mid y) \right] d t + g(t) d \bar{w}.$$
+$$d x = \left[f(x, t) - g(t)^2 s_\phi(x, t \mid y) \right] d t + g(t) d \bar{w}$$ (eq-reverse-sde)
 
-No exact density (sampling-only). High capacity for multimodal
-posteriors — the diffusion process can represent disconnected
-components, which flows struggle with. Scales to higher state
-dimensions than flows.
+backwards in $t$, where $f$ and $g$ are the drift and diffusion of the forward noising process and $\bar{w}$ is a reverse-time Wiener process.
+
+No exact density (sampling-only). High capacity for multimodal posteriors, since the diffusion process can represent disconnected components, which flows struggle with. Scales to higher state dimensions than flows.
 
 ### Direct regression (`head_type="regression"`)
 
 Predict Gaussian posterior parameters directly:
 
-$$q_\phi(x \mid y) = \mathcal{N}\left(x; \mu_\phi(y), \Sigma_\phi(y)\right).$$
+$$q_\phi(x \mid y) = \mathcal{N}\left(x; \mu_\phi(y), \Sigma_\phi(y)\right)$$ (eq-gaussian-head)
 
-Cheapest by far. Restricted to unimodal Gaussian posteriors. Useful
-when the posterior is known to be Gaussian (e.g., as a learned
-replacement for the Laplace approximation around a `IncrementalFourDVar`
-MAP).
+where $\mu_\phi$ and $\Sigma_\phi$ are the network's predicted posterior mean and covariance.
+
+Cheapest by far. Restricted to unimodal Gaussian posteriors. Useful when the posterior is known to be Gaussian (e.g., as a learned replacement for the Laplace approximation [](#eq-laplace-cov) around an `IncrementalFourDVar` MAP).
 
 ## Training objective
 
-For flow and regression heads — maximum likelihood on simulated pairs:
+Flow and regression heads use maximum likelihood on simulated pairs:
 
-$$\mathcal{L}_\text{MLE}(\phi) = -\mathbb{E}_{(x, y) \sim p_\text{sim}} \log q_\phi(x \mid y).$$
+$$\mathcal{L}_\text{MLE}(\phi) = -\mathbb{E}_{(x, y) \sim p_\text{sim}} \log q_\phi(x \mid y)$$ (eq-mle-loss)
 
-For score heads — denoising score matching:
+where $p_\text{sim}$ is the joint distribution of the simulated pairs. Score heads use denoising score matching:
 
-$$\mathcal{L}_\text{DSM}(\phi) = \mathbb{E}_{t, x, y, \varepsilon} \left\| s_\phi(x_t, t \mid y) - \nabla_{x_t} \log p_t(x_t \mid x) \right\|^2,$$
+$$\mathcal{L}_\text{DSM}(\phi) = \mathbb{E}_{t, x, y, \varepsilon} \left\| s_\phi(x_t, t \mid y) - \nabla_{x_t} \log p_t(x_t \mid x) \right\|^2$$ (eq-dsm-loss)
 
-with $x_t = x + \sigma(t)\varepsilon$.
+where $x_t = x + \sigma(t)\varepsilon$ is the noised state, $\varepsilon \sim \mathcal{N}(0, I)$, and $\sigma(t)$ is the noise scale at $t$.
 
-Both reduce to a standard training step over simulated minibatches: `amortized_train_step` is chapter 9's `train_step` with the negative log-likelihood in place of the reconstruction loss.
+Both reduce to a standard training step over simulated minibatches: `amortized_train_step` is chapter 9's `train_step` with the negative log-likelihood [](#eq-mle-loss) in place of the reconstruction loss [](#eq-4dvarnet-loss).
 
 ## Implementation in vardax
 
 Only the regression head ships today: `ConditionalFlowHead` and `ScoreDiffusionHead` are stubs that raise `NotImplementedError` when constructed, so the example uses `RegressionHead`.
 The toy problem has a state of $T = 1$ time and $N = 4$ cells with prior $p(x) = \mathcal{N}(0, I)$ and observations $y = x + \sigma \varepsilon$, $\sigma = 0.5$, fully observed.
-Its exact posterior is $\mathcal{N}(y / (1 + \sigma^2), \sigma^2 / (1 + \sigma^2) I)$, which the trained head should recover.
-Each training step draws $S = 64$ fresh simulated pairs, and `amortized_train_step` minimises $\mathcal{L}_\text{MLE}$.
+Its exact posterior is $\mathcal{N}(y / (1 + \sigma^2), \sigma^2 / (1 + \sigma^2) I)$, the BLUE [](#eq-blue-mean) and [](#eq-blue-cov) with $B = I$, $H = I$ and $R = \sigma^2 I$, which the trained head should recover.
+Each training step draws $S = 64$ fresh simulated pairs, the head is the Gaussian head [](#eq-gaussian-head) with diagonal covariance, and `amortized_train_step` minimises [](#eq-mle-loss).
 
 ```python
 import equinox as eqx
@@ -179,7 +179,7 @@ print(samples.shape, log_density.shape, f"max mean error {float(mean_error):.2f}
 
 It prints `final NLL 2.48` and `(64, 200, 1, 4) (64,) max mean error 0.37`; the exact posterior's NLL is $2 (\log(2 \pi \cdot 0.2) + 1) \approx 2.46$.
 
-## Validation — the hard gates
+## Validation: the hard gates
 
 Amortized inference is dangerous when miscalibrated. A well-trained
 flow with a tight $q_\phi$ that's centred wrong gives confident wrong
@@ -192,9 +192,11 @@ The amortized MAP must fall within $1\sigma_\text{post}$ of an
 oracle MAP from a slower method (`StrongFourDVar` /
 `IncrementalFourDVar`):
 
-$$\frac{|x^*_\text{amort} - x^*_\text{oracle}|}{\sigma_\text{post, oracle}} \le 1.$$
+$$\frac{|x^*_\text{amort} - x^*_\text{oracle}|}{\sigma_\text{post, oracle}} \le 1$$ (eq-amortized-gate-mean)
 
-For the toy problem the oracle is `ThreeDVar` with $B = I$ and $R = \sigma^2 I$, whose Laplace posterior is exact here because the problem is linear-Gaussian.
+where $\sigma_\text{post, oracle}$ is the oracle's posterior standard deviation, cell by cell. This is the posterior gate [](#eq-gate-posterior) of chapter 14 applied to the amortized map.
+
+For the toy problem the oracle is `ThreeDVar` with $B = I$ and $R = \sigma^2 I$, whose Laplace posterior [](#eq-laplace-cov) is exact here because the problem is linear-Gaussian; the block checks [](#eq-amortized-gate-mean) on four windows.
 `assert_posterior_agreement` reads only the mean of the fast posterior, so the amortized MAP goes in a `Posterior` without a covariance.
 The block continues the one above.
 
@@ -244,12 +246,9 @@ It prints `posterior agreement passed`.
 The amortized model's gradient with respect to observations must match
 the physics-based gradient:
 
-$$\frac{\|\partial x^*_\text{amort} / \partial y - \partial x^*_\text{oracle} / \partial y\|_\text{op}}{\|\partial x^*_\text{oracle} / \partial y\|_\text{op}} < 0.05.$$
+$$\frac{\|\partial x^*_\text{amort} / \partial y - \partial x^*_\text{oracle} / \partial y\|_\text{op}}{\|\partial x^*_\text{oracle} / \partial y\|_\text{op}} < 0.05$$ (eq-amortized-gate-jacobian)
 
-This is measured by random-vector probing — randomised tangent
-linearisation tests for operator agreement. Without this gate, the
-amortized model may match the oracle MAP on the training distribution
-but extrapolate badly when the observation distribution shifts.
+where $\|\cdot\|_\text{op}$ is the operator norm. This is the Jacobian gate [](#eq-gate-jacobian) of chapter 14 applied to the amortized map, with $y$ as the input. It is measured by random-vector probing (randomised tangent-linear tests for operator agreement). Without this gate, the amortized model may match the oracle MAP on the training distribution but extrapolate badly when the observation distribution shifts.
 
 ### 3. Simulation-based calibration (SBC)
 
@@ -320,16 +319,16 @@ All three gates ship in `vardax._src.utils.validation`, re-exported as `assert_p
 
 | Regime | Amortized helps? |
 |---|---|
-| Single retrospective analysis | No — solver-based is fine |
-| Real-time alerts | Yes — sub-second |
-| Many independent events (catalog reprocessing) | Yes — amortise training cost |
-| Same forward, varying observations | Yes — train once, infer N times |
-| Each event has a different forward | No — would need to retrain |
-| Posterior shape is multimodal | Yes — flow / score heads can represent it; Laplace can't |
+| Single retrospective analysis | No, solver-based is fine |
+| Real-time alerts | Yes, sub-second |
+| Many independent events (catalog reprocessing) | Yes, amortise training cost |
+| Same forward, varying observations | Yes, train once, infer N times |
+| Each event has a different forward | No, would need to retrain |
+| Posterior shape is multimodal | Yes, flow / score heads can represent it; Laplace can't |
 
 ## Trade-offs vs solver-based methods
 
-| Aspect | Solver-based (chapters 4–9) | Amortized (this chapter) |
+| Aspect | Solver-based (chapters 4 to 9) | Amortized (this chapter) |
 |---|---|---|
 | Cost per event | High (iterative solve) | Low (single forward pass) |
 | Training cost | None / low (only `FourDVarNet`) | High (head + encoder) |
@@ -346,9 +345,9 @@ real-time work. The six-step cycle (chapter 14) formalises this.
 
 ## See also
 
-- Chapter 9 — `FourDVarNet` (learned solver, same training machinery)
-- Chapter 13 — posterior covariance (UQ for amortized samples)
-- Chapter 14 — six-step cycle (the methodology that frames amortization)
+- Chapter 9: `FourDVarNet` (learned solver, same training machinery)
+- Chapter 13: posterior covariance (UQ for amortized samples)
+- Chapter 14: six-step cycle (the methodology that frames amortization)
 - Design doc: [`design/decisions.md#d12`](design/decisions.md#d12-six-step-inference-cycle-as-testing-scaffold)
 
 ## References

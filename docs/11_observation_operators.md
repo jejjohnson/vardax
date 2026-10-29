@@ -1,18 +1,19 @@
+---
+numbering:
+  enumerator: "11.%s"
+---
+
 # Observation Operators
 
-Chapter 2 introduced the observation model — the likelihood
-$p(y \mid x) = \mathcal{N}(H(x), R)$ and the `ObservationOperator`
-protocol. This chapter goes deeper into the operator family vardax
-ships: masked identity, linear projection, averaging kernel, and
-multi-instrument fusion.
+Chapter 2 introduced the observation model [](#eq-obs-model), its cost [](#eq-obs-cost) and the `ObservationOperator` protocol, and it defines each operator family. This chapter is the catalogue of the operators vardax ships (masked identity, linear projection, averaging kernel, multi-instrument fusion and scattered point observations) and of their implementation details.
 
-All four satisfy `pipekit_cycle.ObservationOperator` (the first three directly; multi-instrument fusion via its `.to_observation_operator()` adapter — chapter 2), which `tests/test_pipekit_protocols.py` checks. All four expose `__call__(x)` and `linearize(x)`; the adjoint test at the end of this chapter checks the tangent-linear contract.
+The first four satisfy `pipekit_cycle.ObservationOperator` (the first three directly; multi-instrument fusion via its `.to_observation_operator()` adapter, see chapter 2), which `tests/test_pipekit_protocols.py` checks. These four expose `__call__(x)` and `linearize(x)`; the adjoint test at the end of this chapter checks the tangent-linear contract.
 
 The Python blocks on this page run in order, each continuing the ones above it.
 
 ## Masked identity
 
-$$H(x) = m \odot x, \text{ with } m \in \{0, 1\}^n.$$
+The masked identity [](#eq-masked-identity) observes the state where $m_i = 1$. The block computes it and its tangent.
 
 ```python
 import jax
@@ -37,16 +38,11 @@ print(type(tangent).__name__, bool(jnp.allclose(tangent.mv(mask), mask)))
 
 It prints `JacobianLinearOperator True`: the tangent is the identity, so masked residuals come from the cost, which multiplies by $m$.
 
-Use case: SSH altimetry along-track gaps, SST with cloud masks,
-sparse in-situ samples on a grid.
-
-The mask can be soft ($m_i \in [0, 1]$) for fuzzy observations — the
-operator still works, but the obs-error covariance interpretation
-changes (a soft mask implicitly inflates $R$ where $m$ is small).
+The mask can be soft ($m_i \in [0, 1]$) for fuzzy observations. The operator still works, but the obs-error covariance interpretation changes (a soft mask implicitly inflates $R$ where $m$ is small).
 
 ## Linear projection
 
-$$H(x) = H_\text{mat} \cdot x.$$
+The linear projection [](#eq-linear-obs) applies a stored matrix $H_\text{mat}$. The block builds it from a footprint in which each of $M = 3$ receptors averages two neighbouring cells.
 
 ```python
 import lineax as lx
@@ -69,44 +65,17 @@ It prints `(3,) True`.
 
 Use cases:
 
-- **Lagrangian footprint** — particle simulator produces a footprint
-  matrix mapping source field to receptor observation. The matrix is
-  often sparse (only cells with non-zero footprint contribute) — lineax has no sparse operator, so wrap the sparse product in a `lineax.FunctionLinearOperator`.
-- **Spectral filtering** — observe specific frequency bands. Store
-  $H_\text{mat} = F^{-1} S F$ as a composition of `lineax`
-  operators.
-- **Spatial interpolation** — bilinear / bicubic projection from grid
-  to observation points. The interpolation matrix is sparse.
-
-The matrix is stored as `AbstractLinearOperator` so structure
-(sparsity, low-rank, Kronecker) can be exploited without dense
-materialisation.
+- **Lagrangian footprint**: a particle simulator produces a footprint matrix mapping the source field to receptor observations. The matrix is often sparse (only cells with non-zero footprint contribute), and lineax has no sparse operator, so wrap the sparse product in a `lineax.FunctionLinearOperator`.
+- **Spectral filtering**: observe specific frequency bands. Store $H_\text{mat} = F^{-1} S F$ as a composition of `lineax` operators.
+- **Spatial interpolation**: bilinear or bicubic projection from the grid to observation points. The interpolation matrix is sparse.
 
 ## Averaging kernel
 
-The averaging kernel is the right model for RTM-derived L2 satellite
-products. Chapter 2 introduced it; here we go deeper into structure
-and validation.
-
-### The math, restated
-
-$$\hat{y} = A (h \odot x + (1 - h) \odot x_a).$$
-
-The kernel matrix $A$ smooths the model state through the retrieval's
-sensitivity profile. The weighting vector $h$ tells you how much of
-the L2 signal comes from the atmosphere ($h \to 1$ in the lower
-troposphere for column CH₄) versus the retrieval prior ($h \to 0$ in
-the stratosphere). The fallback prior $x_a$ is what the retrieval
-assumes outside the observed information content.
-
-Tangent-linear: $H'(x) = A \cdot \mathrm{diag}(h)$. The structure of
-$H'$ is the structure of $A$ — sparse, Kronecker, low-rank, etc. —
-inherited cleanly.
+The averaging kernel [](#eq-averaging-kernel) is the right model for RTM-derived L2 satellite products; chapter 2 defines it and its symbols, and this section covers its construction and structure. For column CH₄ the weighting $h$ tends to 1 in the lower troposphere, where the signal comes from the atmosphere, and to 0 in the stratosphere, where the retrieval prior $x_a$ takes over. The tangent-linear map $H'(x) = A \cdot \mathrm{diag}(h)$ inherits the structure of $A$ (sparse, Kronecker, low-rank).
 
 ### Constructing from L2 metadata
 
-L2 products typically include the averaging-kernel matrix, prior, and
-weighting as sidecar metadata in the netCDF / HDF5 file:
+L2 products typically include the averaging-kernel matrix, prior, and weighting as sidecar metadata in the netCDF / HDF5 file, and the block builds [](#eq-averaging-kernel) from them:
 
 ```python
 import xarray as xr
@@ -155,8 +124,7 @@ It prints `[1.993     1.979     1.962     1.9390001]`: each row of $A$ sums to o
 
 ### Structured kernels
 
-For separable kernels (e.g. independent vertical and horizontal
-smoothing), use Kronecker structure:
+For separable kernels (e.g. independent vertical and horizontal smoothing), use Kronecker structure; the block applies [](#eq-averaging-kernel) with $A = A_v \otimes A_h$:
 
 ```python
 import gaussx as gx
@@ -188,9 +156,7 @@ print(bool(jnp.allclose(smoothed, dense_kernel @ (0.8 * state), atol=1e-6)))
 
 It prints `True`.
 
-Kronecker structure means $A$ never materialised; mat-vec
-$\mathrm{vec}(A \cdot X)$ becomes two small mat-vecs instead of one
-giant one.
+With Kronecker structure $A$ is never materialised, and the mat-vec $\mathrm{vec}(A \cdot X)$ becomes two small mat-vecs instead of one giant one.
 
 For low-rank kernels (information content $\le$ rank), use low-rank
 operators:
@@ -215,16 +181,11 @@ print(low_rank_kernel.mv(state).shape)
 
 It prints `(6,)`.
 
-Both saves memory and respects the underlying retrieval physics
-(retrievals with low DOF should have low-rank $A$).
+Both save memory and respect the underlying retrieval physics (retrievals with low DOF should have low-rank $A$).
 
 ### Why skipping the AK is wrong
 
-Treating an L2 retrieval as $y = x + \varepsilon$ (instead of
-$y = A(h \cdot x + (1-h) x_a) + \varepsilon$) gives systematically
-biased posteriors when $x_a \ne x_b$. The retrieval folds in
-information from $x_a$ that we then attribute to the data. The MAP is
-pulled toward $x_a$.
+Chapter 2 explains why treating an L2 retrieval as $y = x + \varepsilon$ instead of [](#eq-averaging-kernel) biases the posterior when $x_a \ne x_b$. The retrieval folds in information from $x_a$ that we then attribute to the data, so the MAP is pulled toward $x_a$.
 
 The bias is largest when:
 
@@ -232,13 +193,11 @@ The bias is largest when:
 - $x_a$ differs from $x_b$ (e.g. inventory prior vs. climatology)
 - Long inversion windows compound the bias
 
-The fix is to always use `AveragingKernel`. The cost is one extra
-matrix mat-vec per observation — negligible compared to forward-model
-cost.
+The fix is to always use `AveragingKernel`. The cost is one extra mat-vec per observation, which is negligible next to the forward-model cost.
 
 ## Multi-instrument fusion
 
-For multi-satellite inversions, each instrument gets an `InstrumentSpec` with its own operator, mask and $R_i$. The toy below has a coarse TROPOMI-like instrument behind an averaging kernel and a fine EMIT-like one on the grid. `MultiInstrumentFusion` returns the per-instrument predictions; no shipped cost consumes them yet, so the block sums the per-instrument terms itself.
+For multi-satellite inversions, each instrument gets an `InstrumentSpec` with its own operator, mask and $R_i$. The toy below has a coarse TROPOMI-like instrument behind an averaging kernel and a fine EMIT-like one on the grid. `MultiInstrumentFusion` returns the per-instrument predictions; no shipped cost consumes them yet, so the block sums the terms of the fusion cost [](#eq-fusion-cost) itself, with $\alpha_i = 1$.
 
 ```python
 from jaxtyping import Array, Float
@@ -303,23 +262,13 @@ print(f"J_obs at the truth {float(fused_obs_cost(state, observations)):.2f}")
 
 It prints `{'TROPOMI': (3,), 'EMIT': (6,)}` and `J_obs at the truth 6.44`.
 
-The fusion happens at the **likelihood level**: each instrument
-contributes a term to $J_\text{obs}$, with its own $H_i$, $m_i$, $R_i$.
-No pre-regridding to a common grid. No assumption of independent vs.
-correlated cross-instrument errors (the default is independent;
-correlated errors require block-non-diagonal $R$).
-
-Each `InstrumentSpec` carries its own quality mask $m_i$, which zero-weights bad pixels in that instrument's term; `Batch*` has no per-pixel instrument index.
+Because the fusion happens at the likelihood level [](#eq-fusion-cost), nothing is regridded to a common grid. Cross-instrument errors default to independent; correlated errors need a block-non-diagonal $R$. The quality mask $m_i$ lives in each `InstrumentSpec`, since `Batch*` has no per-pixel instrument index.
 
 ### Cross-instrument bias
 
-Real instruments disagree systematically. TROPOMI and GHGSat differ by
-$\sim 5$–$20$ ppb on methane retrievals due to spectral calibration,
-retrieval algorithm differences, and footprint effects. Pretending
-they agree biases the joint analysis.
+Real instruments disagree systematically. TROPOMI and GHGSat differ by about 5 to 20 ppb on methane retrievals due to spectral calibration, retrieval algorithm differences, and footprint effects. Pretending they agree biases the joint analysis.
 
-For joint inversion with bias estimation (Epic 9), introduce a
-per-instrument bias state $b_i$:
+For joint inversion with bias estimation (Epic 9), introduce a per-instrument bias state $b_i$, which shifts each prediction to $H_i(x) + b_i$ and adds a Gaussian prior cost on $b_i$:
 
 ```python
 import equinox as eqx
@@ -355,9 +304,7 @@ print(f"J_b = {float(biased.bias_cost(bias)):.3f}")
 
 It prints `J_b = 0.125`.
 
-`b_i` becomes a joint state variable; the analysis solves for $(x,
-\boldsymbol{b})$ together. The bias prior tames the
-underdeterminacy. Hierarchical priors per (instrument, basin, season)
+The bias $b_i$ becomes a joint state variable, and the analysis solves for $(x, \boldsymbol{b})$ together. The bias prior tames the underdeterminacy. Hierarchical priors per (instrument, basin, season)
 are the operational pattern.
 
 This is not yet shipped in vardax; the design is documented for Epic 9.
@@ -381,7 +328,9 @@ fixed count $n_\text{obs}$ so shapes stay static under `jit`:
 
 The observation cost is
 
-$$J_o = \frac{1}{2} \sum_i m_i \frac{\left(y_i - \mathcal H(x)(s_i, t_i)\right)^2}{\sigma_i^2}.$$
+$$J_o = \frac{1}{2} \sum_i m_i \frac{\left(y_i - \mathcal H(x)(s_i, t_i)\right)^2}{\sigma_i^2}$$ (eq-point-obs-cost)
+
+where $\mathcal H(x)(s_i, t_i)$ is the state evaluated at the coordinates $s_i$ and time $t_i$ of observation $i$, and the other symbols are the fields in the table.
 
 Padding rows contribute exactly zero value **and** zero gradient.
 `point_obs_cost` masks the whitened residual with `jnp.where` *before*
@@ -414,7 +363,7 @@ together with a `NeuralFieldParameterization`, which evaluates the field
 at the observation coordinates without a grid. A leading batch axis on
 the batch's arrays is optional.
 
-The toy below has a decaying forward model $M(x) = x / 2$ on $N = 8$ cells, four observations spread over three window steps and one padding row.
+The toy below has a decaying forward model $M(x) = x / 2$ on $N = 8$ cells, four observations spread over three window steps and one padding row. `StrongFourDVar` minimises the strong-constraint cost [](#eq-strong4dvar-cost) with [](#eq-point-obs-cost) as its observation term.
 
 ```python
 # Shapes: N = 8 grid cells; M = 5 point observations, one of them padding;
@@ -481,11 +430,7 @@ batches too (`tests/test_point_observations.py`).
 
 ## Adjoint test
 
-Every observation operator's `linearize()` must pass the adjoint test:
-
-$$\langle H' u, v \rangle = \langle u, (H')^\top v \rangle, \text{ for all } u, v.$$
-
-Implementation:
+Every observation operator's `linearize()` must pass the adjoint test [](#eq-adjoint-test) of chapter 2. The block checks it on ten random probe pairs $(u, v)$ for each operator on this page:
 
 ```python
 from typing import Any
@@ -539,13 +484,12 @@ print(passed)
 
 It prints `{'MaskedIdentity': True, 'LinearObs': True, 'AveragingKernel': True, 'TROPOMI': True}`.
 
-The repository runs it in `tests/test_obs_operators.py` (averaging kernel), `tests/test_interp_obs.py` and `tests/test_callable_obs.py`. Failure means the gradient computation through that operator
-is wrong; any 4DVar built on it will take wrong steps.
+The repository runs it in `tests/test_obs_operators.py` (averaging kernel), `tests/test_interp_obs.py` and `tests/test_callable_obs.py`.
 
 ## See also
 
-- Chapter 2 — observation model + ObservationOperator protocol
-- Chapter 8 — incremental 4DVar uses `linearize()` for tangent-linear obs
-- Chapter 17 — methane example exercises multi-instrument fusion
+- Chapter 2: observation model and the `ObservationOperator` protocol
+- Chapter 8: incremental 4DVar uses `linearize()` for tangent-linear obs
+- Chapter 17: the methane example exercises multi-instrument fusion
 - Design doc: [`design/api/observation_operators.md`](design/api/observation_operators.md)
 - Design doc: [`design/decisions.md#d9`](design/decisions.md#d9-averaging-kernel-multi-instrument-as-first-class)

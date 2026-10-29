@@ -1,3 +1,8 @@
+---
+numbering:
+  enumerator: "16.%s"
+---
+
 # SSH Reconstruction Example
 
 Sea surface height (SSH) reconstruction from satellite altimetry is the
@@ -50,10 +55,9 @@ batch = vdx.Batch1D(
 )
 ```
 
-## Approach 1 — `OptimalInterpolation`
+## Approach 1: `OptimalInterpolation`
 
-The classical baseline. Linear $H$ (masked identity), Gaussian
-Matérn prior, Gaussian diagonal obs error — closed-form fast path.
+The classical baseline is OI ([chapter 4](04_oi_blue.md)) with the masked identity [](#eq-masked-identity) as $H$, a separable Matérn prior and a diagonal $R$, so the block computes the BLUE mean [](#eq-blue-mean) and covariance [](#eq-blue-cov) in closed form.
 
 ```python
 import gaussx as gx
@@ -135,11 +139,10 @@ What this gives you: the standard OceanBench DUACS baseline. Smoothed
 through the prior length scale. Easy to interpret, easy to validate.
 Misses mesoscale features that are shorter than the correlation length.
 
-## Approach 2 — `IncrementalFourDVar` with shallow-water dynamics
+## Approach 2: `IncrementalFourDVar` with shallow-water dynamics
 
-Add a `somax.ShallowWaterModel` as the dynamics. Multi-time
-observations now constrain the trajectory through the physics — gaps
-get filled by dynamical propagation rather than just smoothing.
+Add a `somax.ShallowWaterModel` as the dynamics. Multi-time observations now constrain the trajectory through the physics, so gaps get filled by dynamical propagation rather than just smoothing.
+The block minimises the strong-constraint cost [](#eq-strong4dvar-cost) with incremental 4DVar ([chapter 8](08_incremental_4dvar.md)) and builds the Gauss-Newton posterior [](#eq-gn-cov).
 
 ```python
 import somax
@@ -173,15 +176,11 @@ posterior_inc = incremental.posterior(batch)
 # the posterior reflects model + observation uncertainty.
 ```
 
-What this gives you: physically-consistent reconstruction. The
-incremental machinery scales to operational grids
-(~$10^6$–$10^7$ cells) thanks to the CVT-preconditioned CG.
+What this gives you: physically-consistent reconstruction. The incremental machinery scales to operational grids ($10^6$ to $10^7$ cells) thanks to the CVT-preconditioned CG [](#eq-cvt-system).
 
-## Approach 3 — `FourDVarNet` with learned prior
+## Approach 3: `FourDVarNet` with learned prior
 
-Train a `FourDVarNet` on (observed, truth) patches. The learned prior
-$\varphi_\theta$ captures the SSH manifold; the learned grad modulator
-$\Phi_\phi$ accelerates inner iterations.
+Train a `FourDVarNet` ([chapter 9](09_4dvarnet.md)) on (observed, truth) patches. The learned prior $\varphi_\theta$ of the cost [](#eq-4dvarnet-cost) captures the SSH manifold, and the learned gradient modulator $\Phi_\phi$ of the update [](#eq-4dvarnet-update) accelerates the inner iterations; the training step in the block minimises the loss [](#eq-4dvarnet-loss).
 
 ```python
 import optax
@@ -273,10 +272,7 @@ initial_da_state = pc.DAState(t=0.0, cycle_count=0)
 final_analysis, final_da_state = ssh_cycle(initial_state, initial_da_state)
 ```
 
-The `analysis_step` slot accepts any of the three methods — swap
-`OptimalInterpolation` for `IncrementalFourDVar` for `FourDVarNet` by
-changing one slot. Nothing in the cycling, data loading, or output
-serialisation changes.
+The `analysis_step` slot accepts any of the three methods, so swapping `OptimalInterpolation` for `IncrementalFourDVar` or `FourDVarNet` changes one slot. Nothing in the cycling, data loading, or output serialisation changes.
 
 ## Persistence
 
@@ -314,10 +310,10 @@ are reconstructed from numerical parameters).
 
 ## See also
 
-- Chapter 4 — `OptimalInterpolation` (BLUE / OI)
-- Chapter 8 — `IncrementalFourDVar` (operational fast path)
-- Chapter 9 — `FourDVarNet` (learned variant)
-- Chapter 14 — six-step cycle (the methodology that ties this together)
+- [Chapter 4](04_oi_blue.md): `OptimalInterpolation` (BLUE / OI)
+- [Chapter 8](08_incremental_4dvar.md): `IncrementalFourDVar` (operational fast path)
+- [Chapter 9](09_4dvarnet.md): `FourDVarNet` (learned variant)
+- [Chapter 14](14_six_step_cycle.md): six-step cycle (the methodology that ties this together)
 
 ## References
 
