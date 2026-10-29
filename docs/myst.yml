@@ -44,6 +44,7 @@ project:
             - file: 08_incremental_4dvar.md
             - file: 09_4dvarnet.md
             - file: 10_amortized_inference.md
+            - file: 23_reduced_order.md
         - title: Cross-cutting
           children:
             - file: 11_observation_operators.md

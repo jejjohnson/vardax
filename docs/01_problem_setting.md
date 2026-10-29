@@ -55,7 +55,7 @@ problem above:
 | **`FourDVarNet`** | Learned prior + learned grad modulator | Learned inner iteration |
 | **`AmortizedPosterior`** | Direct $q_\phi(x \mid y)$ head | Single forward pass |
 
-`ReducedBasisFourDVar` is `StrongFourDVar` with the control moved into a reduced basis, $x_0 = x_b + \Phi X$ (see [chapter 6](06_strong_4dvar.md#reduced-basis-4dvar)). It was called `Incremental4DVar` before 0.1.11; that name is deprecated.
+`ReducedBasisFourDVar` is `StrongFourDVar` with the control moved into a reduced basis, $x_0 = x_b + \Phi X$ (see [chapter 23](23_reduced_order.md)). It was called `Incremental4DVar` before 0.1.11; that name is deprecated.
 
 They are siblings, not subclasses, and each one is appropriate to a different regime.
 

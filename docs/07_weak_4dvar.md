@@ -261,6 +261,7 @@ explicit augmented control.
 - Chapter 6: `StrongFourDVar` (the no-model-error baseline)
 - Chapter 9: `FourDVarNet` (learned alternative to weak-constraint)
 - Chapter 13: posterior covariance (augmented-state case)
+- Chapter 23: reduced weak-constraint 4DVar, a model error in a basis ([](#eq-reduced-weak4dvar-cost))
 
 ## References
 

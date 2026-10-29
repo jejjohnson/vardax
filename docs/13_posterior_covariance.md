@@ -209,7 +209,7 @@ by default, `solver=` to change it), and each Krylov iteration is one
 tangent-linear plus one adjoint pass through the rollout. Nothing is
 materialised.
 
-A linear control, `parameterization=LinearParameterization(basis, x_b)` or `ReducedBasisFourDVar(basis=...)`, has $x = x_b + \Phi\theta$ and the penalty $\frac{1}{2} \theta^\top Q^{-1} \theta$ in place of $B$ (the reduced-basis cost [](#eq-reduced-basis-cost), whose coefficients chapter 6 calls $X$). The adapters then build the precision in coefficient space and map it to the state:
+A linear control, `parameterization=LinearParameterization(basis, x_b)` or `ReducedBasisFourDVar(basis=...)`, has $x = x_b + \Phi\theta$ and the penalty $\frac{1}{2} \theta^\top Q^{-1} \theta$ in place of $B$ (the reduced-basis cost [](#eq-reduced-basis-cost), whose coefficients chapter [23](23_reduced_order.md) calls $u$). The adapters then build the precision in coefficient space and map it to the state:
 
 $$P_\theta = \left(Q^{-1} + \Phi^\top G'^\top R^{-1} G' \Phi\right)^{-1}, \text{ and } P_x = \Phi P_\theta \Phi^\top$$ (eq-reduced-basis-cov)
 
