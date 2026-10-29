@@ -5,7 +5,7 @@
 This directory contains documentation for the vardax library, in two
 layers:
 
-- **Mathematical reference** (this directory, 21 chapters) — the
+- **Mathematical reference** (this directory, 23 chapters) — the
   equations, algorithms, and pseudocode behind every analysis method.
 - **Design docs** ([`design/`](design/)) — architecture, API
   contracts, ecosystem boundaries, decision log.
@@ -68,6 +68,11 @@ layers:
 21. [OceanBench SSH Applications](21_oceanbench.md) — the benchmark
     context: data products, OSSE/OSE ladder, interpolation /
     forecasting / surrogate tasks
+
+### Extensions (chapters 22 and 23)
+
+22. [Neural-Field 4DVar](22_neural_field_4dvar.md): the state as a neural field, fitted to point observations with a physics residual
+23. [Reduced-Order Variational DA](23_reduced_order.md): reduced 3DVar, strong, incremental and weak-constraint 4DVar, the control in a basis
 
 ### Reference
 

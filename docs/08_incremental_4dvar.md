@@ -501,6 +501,7 @@ For most users, `IncrementalFourDVar` is the right default.
 - Chapter 12: adjoint composition (CVT relies on `gaussx` factorisation)
 - Chapter 13: posterior covariance (reuses GN Hessian)
 - Design doc: [`design/decisions.md#d11`](design/decisions.md#d11-incrementalfourdvar-as-the-operational-fast-path-of-strongfourdvar)
+- Chapter 23: reduced incremental 4DVar, the inner problem in a basis ([](#eq-reduced-incremental-system))
 
 ## References
 

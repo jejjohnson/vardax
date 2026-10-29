@@ -64,6 +64,10 @@ def _blocks(page: pathlib.Path) -> list[tuple[int, str]]:
     text = page.read_text()
     blocks = []
     for match in PYTHON_BLOCK.finditer(text):
+        # A code-sketch block marked `# proposed (...)` calls names that do not
+        # ship yet on purpose; the issue it cites tracks them.
+        if "# proposed (" in match.group(2):
+            continue
         options = match.group(1).count("\n")
         line = text.count("\n", 0, match.start()) + 2 + options
         blocks.append((line, match.group(2)))

@@ -257,6 +257,7 @@ vardax does not retry or fall back automatically, because a failed minimisation 
 - Chapter 6: `StrongFourDVar` (add dynamics)
 - Chapter 8: `IncrementalFourDVar` (specialised GN+CG inner loop)
 - Chapter 13: posterior covariance (Laplace and beyond)
+- Chapter 23: reduced 3DVar, the control in a basis ([](#eq-reduced-3dvar-cost))
 
 ## References
 
