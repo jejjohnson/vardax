@@ -53,7 +53,7 @@
 # $$
 #
 # This is the bilevel problem of notebook
-# [10](10_bilevel_opt_L63.py) with the *update rule* as the outer variable
+# [10](10_bilevel_opt_L63.ipynb) with the *update rule* as the outer variable
 # instead of the cost weights, and it is trained the same way: unroll $K$
 # steps, back-propagate the reconstruction error through all of them. In
 # vardax $g_\phi$ is the `ConvLSTMGradMod1D` *gradient modulator* — see the
@@ -109,10 +109,10 @@ from vardax._src.utils.standardize import apply_standardization, compute_scaler_
 # %% [markdown]
 # ## 1. Lorenz-63 patches and a frozen prior
 #
-# The data pipeline of notebook [08](08_classical_4dvar_vs_4dvarnet_L63.py):
+# The data pipeline of notebook [08](08_classical_4dvar_vs_4dvarnet_L63.ipynb):
 # Lorenz-63 windows split in time, masked every other step, noisy, and
 # standardised. The prior is a bilinear autoencoder pre-trained on clean
-# training windows, as in notebook [07](07_prior_pretraining_L63.py), and
+# training windows, as in notebook [07](07_prior_pretraining_L63.ipynb), and
 # then treated as a constant.
 
 # %%
@@ -349,6 +349,6 @@ plt.show()
 # - `solve_4dvarnet_1d` / `solver_step_1d` expose the solver as plain
 #   functions, so partial training is a matter of which argument you
 #   differentiate.
-# - `FourDVarNet1D` (notebook [03](03_4dvarnet_L63.py)) trains the prior and
+# - `FourDVarNet1D` (notebook [03](03_4dvarnet_L63.ipynb)) trains the prior and
 #   the modulator jointly; chapter [9](../09_4dvarnet.md) gives the full
 #   picture and the adjoint options for long unrolls.
