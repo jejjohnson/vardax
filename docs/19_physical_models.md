@@ -100,36 +100,46 @@ The increment form tolerates model error accumulating over the window
 propagation used by
 [`strong_variational_cost`](api/costs_priors.md).
 
-The example below rolls Lorenz-96 [](#eq-lorenz96) out on a ring of $N = 8$ sites over $T = 11$ times and scores both the rollout and a perturbed copy of it with the increment residual [](#eq-residual-one-step).
+The example below runs on a ring of $N = 8$ sites over $T = 11$ times.
 
-```python
+```{code-block} python
+:caption: Rolls Lorenz-96 [](#eq-lorenz96) out with [](#eq-rollout) and scores the rollout and a perturbed copy with the increment residual [](#eq-residual-one-step).
+:label: code-physical-l96-residual
 import jax
 import jax.numpy as jnp
 import vardax as vdx
 
 # Shapes: T = 11 times; N = 8 ring sites
 
-key_initial, key_perturb = jax.random.split(jax.random.PRNGKey(0))
+key = jax.random.PRNGKey(0)
+key_initial, key_perturb = jax.random.split(key)
 
 # today (vardax)
 # f(t, x) = (x_{i+1} − x_{i−2}) x_{i−1} − x_i + F, with F = 8
 rhs = vdx.Lorenz96(forcing=8.0)
 # t₀, …, t₁₀ on [0, 0.5]
 times = jnp.linspace(0.0, 0.5, 11)  # (T,)
-# x₀ = F + ε, ε ~ 𝒩(0, I)
-initial_state = 8.0 + jax.random.normal(key_initial, (8,))  # (N,)
+# ε ~ 𝒩(0, I)
+initial_noise = jax.random.normal(key_initial, (8,))  # (N,)
+# x₀ = F + ε
+initial_state = 8.0 + initial_noise  # (N,)
 
 # today (vardax)
 rollout = vdx.DynTrajectory(model=rhs)
+# today (vardax)
 # u_t = φ_t(x₀)
 trajectory = rollout(initial_state, times)  # (N,) → (T, N)
 
 # today (vardax)
 prior = vdx.DynIncrements(model=rhs)
+# today (vardax)
 # R(u) = Σₜ ‖u_{t+1} − φ_Δt(u_t)‖²
 consistent_residual = prior.loss(trajectory, times)  # → ()
-# ũ = u + 0.1 δ, δ ~ 𝒩(0, I)
-perturbed = trajectory + 0.1 * jax.random.normal(key_perturb, (11, 8))  # (T, N)
+# δ ~ 𝒩(0, I)
+perturbation = jax.random.normal(key_perturb, (11, 8))  # (T, N)
+# ũ = u + 0.1 δ
+perturbed = trajectory + 0.1 * perturbation  # (T, N)
+# today (vardax)
 # R(ũ)
 perturbed_residual = prior.loss(perturbed, times)  # → ()
 print(f"R(u) = {consistent_residual:.1e}, R(ũ) = {perturbed_residual:.2f}")
@@ -147,9 +157,11 @@ fixed-step solvers, and `RecursiveCheckpointAdjoint` for reverse-mode memory con
 The ODE parameters $\theta$ thread through every call as `params`
 (diffrax `args`), and gradients flow through the solve:
 
-`Lorenz96` holds its forcing as a field and ignores `args`, so a learnable forcing needs a right-hand side that reads $\theta$ from `args`. The block continues the one above and differentiates [](#eq-residual-one-step) in $\theta = F$.
+`Lorenz96` holds its forcing as a field and ignores `args`, so a learnable forcing needs a right-hand side that reads $\theta$ from `args`.
 
-```python
+```{code-block} python
+:caption: Differentiates the increment residual [](#eq-residual-one-step) in the forcing $\theta = F$ of a learnable Lorenz-96 right-hand side.
+:label: code-physical-learnable-forcing
 from jaxtyping import Array, Float
 
 # Shapes: T = 11 times; N = 8 ring sites
@@ -159,20 +171,38 @@ from jaxtyping import Array, Float
 def lorenz96_rhs(
     time: Float[Array, ""], state: Float[Array, " n"], forcing: Float[Array, ""]
 ) -> Float[Array, " n"]:
+    # x_{i+1}
+    state_ahead = jnp.roll(state, -1)
+    # x_{i−2}
+    state_two_behind = jnp.roll(state, 2)
+    # x_{i−1}
+    state_behind = jnp.roll(state, 1)
+    # x_{i+1} − x_{i−2}
+    difference = state_ahead - state_two_behind
+    # (x_{i+1} − x_{i−2}) x_{i−1}
+    advection = difference * state_behind
+    # (x_{i+1} − x_{i−2}) x_{i−1} − x_i
+    damped = advection - state
     # dx_i/dt = (x_{i+1} − x_{i−2}) x_{i−1} − x_i + θ, with θ = F from args
-    return (
-        (jnp.roll(state, -1) - jnp.roll(state, 2)) * jnp.roll(state, 1)
-        - state
-        + forcing
-    )
+    return damped + forcing
 
 
 # today (vardax)
 learnable_prior = vdx.DynIncrements(model=lorenz96_rhs)
+
+
+# user
+def residual_in_forcing(forcing: Float[Array, ""]) -> Float[Array, ""]:
+    # today (vardax)
+    # R(u; θ) = Σₜ ‖u_{t+1} − φ_Δt(u_t; θ)‖²
+    return learnable_prior.loss(trajectory, times, params=forcing)
+
+
+# ∂R(u; θ)/∂θ
+residual_gradient = jax.grad(residual_in_forcing)
+trial_forcing = jnp.float32(7.0)  # → ()
 # ∂R(u; θ)/∂θ at θ = 7, for the trajectory generated with F = 8
-forcing_gradient = jax.grad(  # → ()
-    lambda forcing: learnable_prior.loss(trajectory, times, params=forcing)
-)(jnp.float32(7.0))
+forcing_gradient = residual_gradient(trial_forcing)  # → ()
 print(f"dR/dθ at θ = 7: {forcing_gradient:.2f}")
 ```
 
@@ -190,9 +220,9 @@ identifiability check.
 The same object plugs into all three integration points of the
 library:
 
-The block continues the ones above; its second seam evaluates the 4DVarNet-style cost [](#eq-4dvarnet-cost) with the bound residual as the prior.
-
-```python
+```{code-block} python
+:caption: Uses one dynamical prior as a temporal residual [](#eq-residual-one-step), as the prior term of the 4DVarNet-style cost [](#eq-4dvarnet-cost), and as a forward model.
+:label: code-physical-three-seams
 import einx
 
 # Shapes: S = 1 sample; T = 11 times; N = 8 ring sites
@@ -203,23 +233,24 @@ import einx
 temporal_residual = prior.loss(perturbed, times)  # → ()
 
 # 2. Prior: bind the time grid and drop it into the weak-constraint cost
+trajectory_window = einx.id("t n -> 1 t n", trajectory)  # (T, N) → (S, T, N)
+# m = 1 everywhere
+full_mask = jnp.ones((1, 11, 8))  # (S, T, N)
 # today (vardax)
-batch = vdx.Batch1D(
-    input=einx.id("t n -> 1 t n", trajectory),  # (T, N) → (S, T, N)
-    mask=jnp.ones((1, 11, 8)),
-)
+batch = vdx.Batch1D(input=trajectory_window, mask=full_mask)
 # today (vardax)
 # φ(ũ) = [ũ₀, φ_Δt(ũ₀), …, φ_Δt(ũ_{T−2})]
 bound_prior = prior.bind(times)
+batched_prior = jax.vmap(bound_prior)
+perturbed_window = einx.id("t n -> 1 t n", perturbed)  # (T, N) → (S, T, N)
 # today (vardax)
 # U(x) = α_o mean((m ⊙ (x − y))²) + α_p mean((x − φ(x))²)
-weak_cost = vdx.variational_cost(  # → ()
-    einx.id("t n -> 1 t n", perturbed), batch, jax.vmap(bound_prior)
-)
+weak_cost = vdx.variational_cost(perturbed_window, batch, batched_prior)  # → ()
 
 # 3. pipekit ForwardModel, to drive strong 4DVar or a DA cycle
 # today (vardax)
 forward_model = prior.as_forward_model(dt=0.05)
+# today (vardax)
 # x₁ = φ_Δt(x₀), with Δt = 0.05
 next_state = forward_model.step(initial_state, forward_model.dt)  # (N,) → (N,)
 print(f"{temporal_residual:.2f} {weak_cost:.4f} {next_state.shape}")

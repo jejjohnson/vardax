@@ -96,9 +96,12 @@ Both reduce to a standard training step over simulated minibatches: `amortized_t
 Only the regression head ships today: `ConditionalFlowHead` and `ScoreDiffusionHead` are stubs that raise `NotImplementedError` when constructed, so the example uses `RegressionHead`.
 The toy problem has a state of $T = 1$ time and $N = 4$ cells with prior $p(x) = \mathcal{N}(0, I)$ and observations $y = x + \sigma \varepsilon$, $\sigma = 0.5$, fully observed.
 Its exact posterior is $\mathcal{N}(y / (1 + \sigma^2), \sigma^2 / (1 + \sigma^2) I)$, the BLUE [](#eq-blue-mean) and [](#eq-blue-cov) with $B = I$, $H = I$ and $R = \sigma^2 I$, which the trained head should recover.
-Each training step draws $S = 64$ fresh simulated pairs, the head is the Gaussian head [](#eq-gaussian-head) with diagonal covariance, and `amortized_train_step` minimises [](#eq-mle-loss).
+Each training step draws $S = 64$ fresh simulated pairs, and the head is the Gaussian head [](#eq-gaussian-head) with diagonal covariance.
 
-```python
+```{code-block} python
+:caption: Trains the Gaussian head [](#eq-gaussian-head) by minimising [](#eq-mle-loss) on simulated pairs and compares its mean with the exact posterior mean [](#eq-blue-mean).
+:label: code-amortized-regression-head
+import einx
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -118,21 +121,27 @@ obs_std = 0.5  # σ
 def sample_train_pair(
     key: PRNGKeyArray,
 ) -> tuple[Float[Array, "t n"], Float[Array, "t n"]]:
+    """Draw one simulated pair (x, y) from the prior and the observation model."""
     key_state, key_noise = jax.random.split(key)
     # x ~ p(x) = 𝒩(0, I)
     state = jax.random.normal(key_state, (1, 4))  # (T, N)
-    # y = x + σ ε, ε ~ 𝒩(0, I)
-    obs = state + obs_std * jax.random.normal(key_noise, (1, 4))  # (T, N)
+    # ε ~ 𝒩(0, I)
+    noise = jax.random.normal(key_noise, (1, 4))  # (T, N)
+    # y = x + σ ε
+    obs = state + obs_std * noise  # (T, N)
     return state, obs
 
 
 # user
 @eqx.filter_jit
 def simulate_batch(key: PRNGKeyArray) -> vdx.Batch1D:
+    """Draw S simulated pairs as a fully observed batch."""
     pair_keys = jax.random.split(key, 64)
     states, obs = jax.vmap(sample_train_pair)(pair_keys)  # (S, T, N)
+    # m = 1 everywhere
+    all_observed = jnp.ones_like(obs)  # (S, T, N)
     # today (vardax)
-    return vdx.Batch1D(input=obs, mask=jnp.ones_like(obs), target=states)
+    return vdx.Batch1D(input=obs, mask=all_observed, target=states)
 
 
 # today (vardax)
@@ -142,15 +151,17 @@ encoder = vdx.MLPObsEncoder(input_size=4, context_dim=16, key=key_encoder)
 # q_φ(x | y) = 𝒩(μ_φ(c), diag σ²_φ(c))
 head = vdx.RegressionHead(context_dim=16, state_shape=(1, 4), key=key_head)
 # today (vardax)
-model = vdx.AmortizedPosterior(
-    encoder=encoder,
-    head=head,
-    config=vdx.AmortizedConfig(head_type="regression", n_samples=64),
-)
+config = vdx.AmortizedConfig(head_type="regression", n_samples=64)
+# today (vardax)
+# x ↦ q_φ(x | y), one encoder pass and one head pass
+model = vdx.AmortizedPosterior(encoder=encoder, head=head, config=config)
 
 # today (optax)
 optimizer = optax.adam(3e-3)
-opt_state = optimizer.init(eqx.filter(model, eqx.is_array))
+# the trainable leaves φ
+params = eqx.filter(model, eqx.is_array)
+# today (optax)
+opt_state = optimizer.init(params)
 for batch_key in jax.random.split(key_train, 1000):
     batch = simulate_batch(batch_key)
     # today (vardax)
@@ -173,7 +184,12 @@ samples = model.sample(test_batch, key_samples, n=200)  # → (S, 200, T, N)
 log_density = model.log_prob(test_batch.target, test_batch)  # → (S,)
 # E[x | y] = y / (1 + σ²)
 exact_mean = test_batch.input / (1 + obs_std**2)  # (S, T, N)
-mean_error = jnp.max(jnp.abs(x_map - exact_mean))  # → ()
+# x* − E[x | y]
+mean_gap = x_map - exact_mean  # (S, T, N)
+# |x* − E[x | y]|
+abs_mean_gap = jnp.abs(mean_gap)  # (S, T, N)
+# max |x* − E[x | y]|
+mean_error = einx.max("s t n ->", abs_mean_gap)  # → ()
 print(samples.shape, log_density.shape, f"max mean error {float(mean_error):.2f}")
 ```
 
@@ -196,11 +212,13 @@ $$\frac{|x^*_\text{amort} - x^*_\text{oracle}|}{\sigma_\text{post, oracle}} \le 
 
 where $\sigma_\text{post, oracle}$ is the oracle's posterior standard deviation, cell by cell. This is the posterior gate [](#eq-gate-posterior) of chapter 14 applied to the amortized map.
 
-For the toy problem the oracle is `ThreeDVar` with $B = I$ and $R = \sigma^2 I$, whose Laplace posterior [](#eq-laplace-cov) is exact here because the problem is linear-Gaussian; the block checks [](#eq-amortized-gate-mean) on four windows.
+For the toy problem the oracle is `ThreeDVar` with $B = I$ and $R = \sigma^2 I$, whose Laplace posterior [](#eq-laplace-cov) is exact here because the problem is linear-Gaussian.
 `assert_posterior_agreement` reads only the mean of the fast posterior, so the amortized MAP goes in a `Posterior` without a covariance.
 The block continues the one above.
 
-```python
+```{code-block} python
+:caption: Checks the posterior-agreement gate [](#eq-amortized-gate-mean) for the amortized MAP against a 3DVar oracle with the Laplace posterior [](#eq-laplace-cov), on four windows.
+:label: code-amortized-posterior-gate
 import lineax as lx
 
 # Shapes: S = 1 window; T = 1 time; N = 4 grid cells
@@ -210,10 +228,11 @@ state_structure = jax.ShapeDtypeStruct((1, 4), jnp.float32)
 # B = I
 prior_cov = lx.IdentityLinearOperator(state_structure)  # (T N, T N) op
 # R = σ² I; tagged PSD so the default CG solve accepts it
-obs_cov = lx.TaggedLinearOperator(  # (T N, T N) op
+obs_cov = lx.TaggedLinearOperator(  # (T N, T N) PSD op
     jnp.float32(obs_std**2) * prior_cov, lx.positive_semidefinite_tag
 )
 # today (vardax)
+# J(x) = ½ ‖x‖²_{B⁻¹} + ½ ‖y − x‖²_{R⁻¹}
 oracle = vdx.ThreeDVar(
     obs_op=vdx.MaskedIdentity(),
     prior_mean=jnp.zeros((1, 4)),
@@ -223,16 +242,18 @@ oracle = vdx.ThreeDVar(
 
 val_batch = simulate_batch(key_val)
 for window_index in range(4):
+    window_obs = val_batch.input[window_index : window_index + 1]  # (S, T, N)
+    window_mask = val_batch.mask[window_index : window_index + 1]  # (S, T, N)
     # today (vardax)
-    window = vdx.Batch1D(
-        input=val_batch.input[window_index : window_index + 1],
-        mask=val_batch.mask[window_index : window_index + 1],
-    )
+    window = vdx.Batch1D(input=window_obs, mask=window_mask)
     # today (vardax)
     # P* = (B⁻¹ + Hᵀ R⁻¹ H)⁻¹ at the 3DVar MAP
     p_oracle = oracle.posterior(window)
     # today (vardax)
-    p_amort = vdx.Posterior(mean=model(window)[0])
+    # x*_amort = μ_φ(y)
+    amortized_map = model(window)  # → (S, T, N)
+    # today (vardax)
+    p_amort = vdx.Posterior(mean=amortized_map[0])
     # today (vardax)
     # |x*_amort − x*_oracle| / σ_oracle ≤ 1, cell by cell
     vdx.assert_posterior_agreement(p_amort, p_oracle, tolerance_sigma=1.0)
@@ -250,6 +271,7 @@ $$\frac{\|\partial x^*_\text{amort} / \partial y - \partial x^*_\text{oracle} / 
 
 where $\|\cdot\|_\text{op}$ is the operator norm. This is the Jacobian gate [](#eq-gate-jacobian) of chapter 14 applied to the amortized map, with $y$ as the input. It is measured by random-vector probing (randomised tangent-linear tests for operator agreement). Without this gate, the amortized model may match the oracle MAP on the training distribution but extrapolate badly when the observation distribution shifts.
 
+(sec-amortized-sbc)=
 ### 3. Simulation-based calibration (SBC)
 
 Per Talts et al. (2018): sample $x^{(j)}$ from the prior, simulate
@@ -262,8 +284,9 @@ under-confident posteriors.
 With 19 samples per run the rank takes 20 values, grouped here into 5 bins of 4; a calibrated head gives about 20 runs per bin.
 The block continues the one above.
 
-```python
-import einx
+```{code-block} python
+:caption: Runs the simulation-based calibration gate of [](#sec-amortized-sbc) on the amortized posterior and tests the rank histogram for uniformity with a χ² test.
+:label: code-amortized-sbc
 import jax.scipy.stats as jstats
 
 # Shapes: T = 1 time; N = 4 grid cells; J = 19 posterior samples per run
@@ -274,24 +297,32 @@ import jax.scipy.stats as jstats
 def sample_posterior(
     obs: Float[Array, "t n"], key: PRNGKeyArray, n: int
 ) -> Float[Array, "j t n"]:
+    """Draw n samples from q_φ(x | y) for one fully observed window."""
+    obs_window = einx.id("t n -> 1 t n", obs)  # (T, N) → (1, T, N)
+    # m = 1 everywhere
+    all_observed = jnp.ones_like(obs_window)  # (1, T, N)
     # today (vardax)
-    window = vdx.Batch1D(
-        input=einx.id("t n -> 1 t n", obs), mask=jnp.ones((1, *obs.shape))
-    )
+    window = vdx.Batch1D(input=obs_window, mask=all_observed)
+    # today (vardax)
     # xⱼ ~ q_φ(x | y)
-    return model.sample(window, key, n)[0]  # (1, J, T, N) → (J, T, N)
+    window_samples = model.sample(window, key, n)  # → (1, J, T, N)
+    return window_samples[0]  # (1, J, T, N) → (J, T, N)
 
 
 # user
 def sample_prior(key: PRNGKeyArray) -> Float[Array, "t n"]:
+    """Draw x from the prior p(x)."""
     # x ~ 𝒩(0, I)
-    return jax.random.normal(key, (1, 4))
+    return jax.random.normal(key, (1, 4))  # (T, N)
 
 
 # user
 def simulate_obs(state: Float[Array, "t n"], key: PRNGKeyArray) -> Float[Array, "t n"]:
+    """Simulate y from x through the observation model."""
+    # ε ~ 𝒩(0, I)
+    noise = jax.random.normal(key, (1, 4))  # (T, N)
     # y = x + σ ε
-    return state + obs_std * jax.random.normal(key, (1, 4))
+    return state + obs_std * noise  # (T, N)
 
 
 # today (vardax)
@@ -304,9 +335,15 @@ ranks = vdx.simulation_based_calibration(  # → (100,)
     n_runs=100,
     n_samples=19,
 )
-bin_counts = jnp.bincount(ranks // 4, length=5)  # (100,) → (5,)
+# b = ⌊rank / 4⌋, five bins of four ranks
+rank_bins = ranks // 4  # (100,)
+# n_b, the runs in bin b
+bin_counts = jnp.bincount(rank_bins, length=5)  # (100,) → (5,)
+# (n_b − 20)²
+squared_excess = (bin_counts - 20) ** 2  # (5,)
 # χ² = Σ_b (n_b − 20)² / 20
-chi_square = jnp.sum((bin_counts - 20) ** 2) / 20  # → ()
+chi_square = einx.sum("b ->", squared_excess) / 20  # → ()
+# p = P(χ²₄ ≥ χ²)
 p_value = jstats.chi2.sf(chi_square, 4)  # → ()
 print(bin_counts.tolist(), f"chi2 p = {float(p_value):.3f}")
 ```

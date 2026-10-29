@@ -76,9 +76,11 @@ no $O(n^3)$ factorisations.
 
 ## Implementation in vardax
 
-The example is a toy along-track problem: $N = 20$ cells every 10 km on one track, $M = 5$ samples, a Matérn-3/2 prior $B$ with length scale $\ell = 50$ km and standard deviation $\sigma_b = 0.1$ m around a zero climatology, and $R = \sigma_o^2 I$ with $\sigma_o = 0.02$ m. The truth is a smooth sine wave and the observations add noise to it. The state has shape $(T, N)$ with $T = 1$, as `posterior` expects. The block computes the analysis [](#eq-blue-mean) and the posterior covariance [](#eq-blue-cov), and reads two marginal standard deviations off $P^*$.
+The example is a toy along-track problem: $N = 20$ cells every 10 km on one track, $M = 5$ samples, a Matérn-3/2 prior $B$ with length scale $\ell = 50$ km and standard deviation $\sigma_b = 0.1$ m around a zero climatology, and $R = \sigma_o^2 I$ with $\sigma_o = 0.02$ m. The truth is a smooth sine wave and the observations add noise to it. The state has shape $(T, N)$ with $T = 1$, as `posterior` expects.
 
-```python
+```{code-block} python
+:caption: Computes the OI analysis [](#eq-blue-mean) and posterior covariance [](#eq-blue-cov) of a toy along-track problem and reads two marginal standard deviations off P*.
+:label: code-oi-blue-along-track
 import einx
 import gaussx as gx
 import jax
@@ -88,6 +90,7 @@ import vardax as vdx
 from jaxtyping import Array, Float
 
 # Shapes: S = 1 sample; T = 1 time; N = 20 grid cells; M = 5 along-track samples
+# D = 1 coordinate
 
 key_noise = jax.random.PRNGKey(0)
 # ℓ = 50 km, σ_b = 0.1 m, σ_o = 0.02 m
@@ -97,8 +100,10 @@ state_structure = jax.ShapeDtypeStruct((1, 20), jnp.float32)
 
 # user
 def matern32(cell: Float[Array, " d"], other: Float[Array, " d"]) -> Float[Array, ""]:
+    # (sᵢ − sⱼ)²
+    squared_difference = (cell - other) ** 2  # (D,)
     # ‖sᵢ − sⱼ‖², with a floor so the gradient at r = 0 is finite
-    squared_gap = einx.sum("d -> ", (cell - other) ** 2) + 1e-12  # → ()
+    squared_gap = einx.sum("d -> ", squared_difference) + 1e-12  # → ()
     # √3 r, with r = ‖sᵢ − sⱼ‖ / ℓ
     scaled_gap = jnp.sqrt(3.0 * squared_gap) / length_scale  # → ()
     # k(r) = σ_b² (1 + √3 r) exp(−√3 r)
@@ -118,7 +123,8 @@ def apply_prior_cov(state: Float[Array, "t n"]) -> Float[Array, "t n"]:
 
 
 # sᵢ, cell centres every 10 km along one track
-coords = einx.id("n -> n 1", jnp.linspace(0.0, 190.0, 20))  # (N, 1)
+positions = jnp.linspace(0.0, 190.0, 20)  # (N,)
+coords = einx.id("n -> n 1", positions)  # (N,) → (N, D)
 # rows of I at the sampled cells
 along_track = jnp.eye(20)[jnp.array([1, 5, 9, 13, 17])]  # (M, N)
 
@@ -134,9 +140,11 @@ prior_cov = lx.FunctionLinearOperator(  # (T N, T N) PSD op
 along_track_op = lx.FunctionLinearOperator(  # (T M, T N) op
     sample_track, state_structure
 )
+# σ_o², one per sample
+obs_var = jnp.full((1, 5), obs_std**2)  # (T, M)
 # today (lineax)
 # R = σ_o² I
-obs_cov = lx.DiagonalLinearOperator(jnp.full((1, 5), obs_std**2))  # (T M, T M) op
+obs_cov = lx.DiagonalLinearOperator(obs_var)  # (T M, T M) op
 
 # x_b = 0, a climatology
 climatology_ssh = jnp.zeros((1, 20))  # (T, N)
@@ -146,11 +154,17 @@ track_position = einx.id("n 1 -> 1 n", coords)  # (N, 1) → (T, N)
 truth = prior_std * jnp.sin(2.0 * jnp.pi * track_position / 200.0)  # (T, N)
 # y = H x_true + σ_o ε, ε ~ 𝒩(0, I)
 noise = obs_std * jax.random.normal(key_noise, (1, 5))  # (T, M)
-obs = sample_track(truth) + noise  # (T, M)
+# user
+# H x_true
+track_truth = sample_track(truth)  # (T, N) → (T, M)
+obs = track_truth + noise  # (T, M)
 
 # today (vardax)
+# H x, a linear observation operator
+along_track_obs = vdx.LinearObs(operator=along_track_op)
+# today (vardax)
 model = vdx.OptimalInterpolation(
-    obs_op=vdx.LinearObs(operator=along_track_op),
+    obs_op=along_track_obs,
     prior_mean=climatology_ssh,
     prior_cov_op=prior_cov,
     obs_cov_op=obs_cov,
@@ -177,8 +191,10 @@ gap_column = posterior.cov.mv(gap_cell)  # (T, N) → (T, N)
 observed_var = einx.dot("t n, t n ->", observed_cell, observed_column)  # → ()
 gap_var = einx.dot("t n, t n ->", gap_cell, gap_column)  # → ()
 
-background_error = jnp.linalg.norm(climatology_ssh - truth)
-analysis_error = jnp.linalg.norm(x_star[0] - truth)
+# ‖x_b − x_true‖
+background_error = jnp.linalg.norm(climatology_ssh - truth)  # → ()
+# ‖x* − x_true‖
+analysis_error = jnp.linalg.norm(x_star[0] - truth)  # → ()
 print(f"background error {background_error:.3f}, analysis error {analysis_error:.3f}")
 print(f"posterior std {observed_var**0.5:.3f} observed, {gap_var**0.5:.3f} in a gap")
 ```
@@ -194,9 +210,11 @@ ever materialised.
 
 `OptimalInterpolation` is the canonical baseline. Every more
 sophisticated method must agree with it in the linear-Gaussian limit
-(Decision D14 invariant). `tests/test_linear_gaussian_agreement.py` enforces this for `ThreeDVar`, `StrongFourDVar`, `WeakFourDVar` and `IncrementalFourDVar`. The block below continues the one above and checks the first two against the BLUE: `ThreeDVar` minimises [](#eq-3dvar-cost) and `StrongFourDVar` minimises [](#eq-strong4dvar-cost) with $M_t$ the identity and a single time. It prints `True` twice. Both use a direct `cov_solver` and 500 minimiser steps, because the smooth prior makes $B^{-1}$ ill-conditioned and BFGS needs about 260 steps here.
+(Decision D14 invariant). `tests/test_linear_gaussian_agreement.py` enforces this for `ThreeDVar`, `StrongFourDVar`, `WeakFourDVar` and `IncrementalFourDVar`. The block below checks the first two against the BLUE, with $M_t$ the identity and a single time for `StrongFourDVar`. It prints `True` twice. Both use a direct `cov_solver` and 500 minimiser steps, because the smooth prior makes $B^{-1}$ ill-conditioned and BFGS needs about 260 steps here.
 
-```python
+```{code-block} python
+:caption: Checks that ThreeDVar minimising [](#eq-3dvar-cost) and StrongFourDVar minimising [](#eq-strong4dvar-cost) both reach the BLUE [](#eq-blue-mean).
+:label: code-oi-blue-agreement
 import equinox as eqx
 
 # Shapes: S = 1 sample; T = 1 time; N = 20 grid cells; M = 5 along-track samples
@@ -223,23 +241,38 @@ three_dvar = vdx.ThreeDVar(
     max_steps=500,
 )
 # StrongFourDVar steps (N,) states, so B, H and R act on one time
+cell_structure = jax.ShapeDtypeStruct((20,), jnp.float32)
 # today (lineax)
+# B on (N,) states
 cell_cov = lx.FunctionLinearOperator(  # (N, N) PSD op
-    kernel_op.mv, jax.ShapeDtypeStruct((20,), jnp.float32), lx.positive_semidefinite_tag
+    kernel_op.mv, cell_structure, lx.positive_semidefinite_tag
 )
+# today (lineax)
+along_track_matrix = lx.MatrixLinearOperator(along_track)  # (M, N) op
 # today (vardax)
+# H x on (N,) states
+cell_obs = vdx.LinearObs(operator=along_track_matrix)
+# σ_o², one per sample
+cell_obs_var = jnp.full(5, obs_std**2)  # (M,)
+# today (lineax)
+# R = σ_o² I on (M,) observations
+cell_obs_cov = lx.DiagonalLinearOperator(cell_obs_var)  # (M, M) op
+# today (vardax)
+# J(x₀) = ½ ‖x₀ − x_b‖²_{B⁻¹} + ½ ‖y − H x₀‖²_{R⁻¹}, with M₀ = I
 strong_4dvar = vdx.StrongFourDVar(
     forward=StaticForward(),
-    # today (vardax)
-    obs_op=vdx.LinearObs(operator=lx.MatrixLinearOperator(along_track)),
+    obs_op=cell_obs,
     prior_mean=climatology_ssh[0],
     prior_cov_op=cell_cov,
-    obs_cov_op=lx.DiagonalLinearOperator(jnp.full(5, obs_std**2)),
+    obs_cov_op=cell_obs_cov,
     cov_solver=lx.AutoLinearSolver(well_posed=True),
     max_steps=500,
 )
+# x* = argminₓ J(x), by 3DVar
 iterative_3d = three_dvar(batch)  # → (S, T, N)
+# x₀* = argmin J(x₀), by strong 4DVar
 iterative_4d = strong_4dvar(batch)  # → (S, N)
+
 print(bool(jnp.allclose(x_star, iterative_3d, atol=1e-3)))
 print(bool(jnp.allclose(x_star[:, 0], iterative_4d, atol=1e-3)))
 ```

@@ -54,9 +54,11 @@ evaluation falls back to withheld tracks and physical diagnostics.
 
 Fill the gaps between altimeter tracks to produce daily gap-free SSH maps. This is the first OceanBench edition, and the task chapter [16](16_ssh_example.md) implements three ways (OI baseline, `IncrementalFourDVar`, learned `FourDVarNet`). The learned configuration in brief:
 
-The block below runs an untrained model on a toy SSH field, $\eta(t, y, x) = \sin(x - 0.2 t) \cos(y)$ on $16 \times 16$ cells, observed along diagonal ground tracks through the masked identity [](#eq-masked-identity); the model unrolls the update [](#eq-4dvarnet-update) on the cost [](#eq-4dvarnet-cost). A real configuration uses $128 \times 128$ patches, `latent_dim=32`, `hidden_dim=48` and 15 solver steps, and is trained before use (chapter [16](16_ssh_example.md)).
+The toy SSH field is $\eta(t, y, x) = \sin(x - 0.2 t) \cos(y)$ on $16 \times 16$ cells, observed along diagonal ground tracks. A real configuration uses $128 \times 128$ patches, `latent_dim=32`, `hidden_dim=48` and 15 solver steps, and is trained before use (chapter [16](16_ssh_example.md)).
 
-```python
+```{code-block} python
+:caption: Runs an untrained 4DVarNet, the update [](#eq-4dvarnet-update) on the cost [](#eq-4dvarnet-cost), on a toy SSH field observed along tracks through the masked identity [](#eq-masked-identity).
+:label: code-oceanbench-ssh-interpolation
 import einx
 import jax
 import jax.numpy as jnp
@@ -64,27 +66,46 @@ import vardax as vdx
 
 # Shapes: B = 1 patch; T = 5 days; H = W = 16 lat-lon cells
 
-key_model, key_noise = jax.random.split(jax.random.PRNGKey(0))
+key = jax.random.PRNGKey(0)
+key_model, key_noise = jax.random.split(key)
 cells = jnp.arange(16)  # (H,)
 grid = jnp.linspace(0.0, 2.0 * jnp.pi, 16)  # (H,)
 days = jnp.arange(5)  # (T,)
 
+# 0.2 t
+drift = 0.2 * days  # (T,)
 # x − 0.2 t
-phase = einx.subtract("w, t -> t w", grid, 0.2 * days)  # (T, W)
+phase = einx.subtract("w, t -> t w", grid, drift)  # (T, W)
+# sin(x − 0.2 t)
+zonal_wave = jnp.sin(phase)  # (T, W)
+# cos(y)
+meridional_wave = jnp.cos(grid)  # (H,)
 # η(t, y, x) = sin(x − 0.2 t) cos(y), a toy SSH field drifting west
 ssh_truth = einx.multiply(  # (T, H, W)
-    "t w, h -> t h w", jnp.sin(phase), jnp.cos(grid)
+    "t w, h -> t h w", zonal_wave, meridional_wave
 )
+# i + j
+diagonal_index = einx.add("h, w -> h w", cells, cells)  # (H, W)
+# 3t
+track_shift = 3 * days  # (T,)
 # i + j − 3t, the along-track coordinate of a diagonal ground track
 track_coord = einx.subtract(  # (T, H, W)
-    "h w, t -> t h w", einx.add("h, w -> h w", cells, cells), 3 * days
+    "h w, t -> t h w", diagonal_index, track_shift
 )
-# m = 1 where i + j − 3t ≡ 0 (mod 8), 0 in the gaps
-track_mask = (track_coord % 8 == 0).astype(jnp.float32)  # (T, H, W)
+# (i + j − 3t) mod 8
+track_phase = track_coord % 8  # (T, H, W)
+# i + j − 3t ≡ 0 (mod 8)
+on_track = track_phase == 0  # (T, H, W)
+# m = 1 on track, 0 in the gaps
+track_mask = on_track.astype(jnp.float32)  # (T, H, W)
+# ε ~ 𝒩(0, I)
+noise = jax.random.normal(key_noise, (5, 16, 16))  # (T, H, W)
+# 0.02 ε
+scaled_noise = 0.02 * noise  # (T, H, W)
+# η + 0.02 ε
+noisy_ssh = ssh_truth + scaled_noise  # (T, H, W)
 # y = m ⊙ (η + 0.02 ε), zero-filled gaps
-ssh_tracks = track_mask * (  # (T, H, W)
-    ssh_truth + 0.02 * jax.random.normal(key_noise, (5, 16, 16))
-)
+ssh_tracks = track_mask * noisy_ssh  # (T, H, W)
 
 # today (vardax)
 model = vdx.FourDVarNet2D(
@@ -96,14 +117,19 @@ model = vdx.FourDVarNet2D(
     n_solver_steps=3,
     key=key_model,
 )
+tracks_patch = einx.id("t h w -> 1 t h w", ssh_tracks)  # (T, H, W) → (B, T, H, W)
+mask_patch = einx.id("t h w -> 1 t h w", track_mask)  # (T, H, W) → (B, T, H, W)
+truth_patch = einx.id("t h w -> 1 t h w", ssh_truth)  # (T, H, W) → (B, T, H, W)
 # today (vardax)
 batch = vdx.Batch2D(
-    input=einx.id("t h w -> 1 t h w", ssh_tracks),  # (T, H, W) → (B, T, H, W)
-    mask=einx.id("t h w -> 1 t h w", track_mask),  # 1 on-track, 0 in gaps
-    target=einx.id("t h w -> 1 t h w", ssh_truth),  # OSSE only
+    input=tracks_patch,
+    mask=mask_patch,  # 1 on-track, 0 in gaps
+    target=truth_patch,  # OSSE only
 )
+# today (vardax)
 # x* = argminₓ U(x), unrolled by the learned solver
 ssh_maps = model(batch)  # → (B, T, H, W)
+# (1/(T H W)) Σ m
 observed_fraction = einx.mean("t h w ->", track_mask)  # → ()
 print(f"observed fraction {observed_fraction:.3f}, maps {ssh_maps.shape}")
 ```

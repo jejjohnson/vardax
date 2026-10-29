@@ -73,14 +73,37 @@ through two upstream libraries:
 
 Both are exposed as constructor slots on the Layer 2 classes:
 
-```python
-model = StrongFourDVar(
+```{code-block} python
+:caption: Builds a `StrongFourDVar` for the cost [](#eq-strong4dvar-cost) with an averaging-kernel operator [](#eq-averaging-kernel) and both adjoint slots set.
+:label: code-design-vision-strong4dvar
+import diffrax as dfx
+import optimistix as optx
+import vardax as vdx
+
+# Shapes: N = state size; D = observations per time
+
+# today* (vardax)
+# ŷ = A(h ⊙ x + (1 − h) ⊙ x_a)
+obs_op = vdx.AveragingKernel(...)  # (N,) → (D,)
+# today* (optimistix); GaussNewton is a least-squares solver, not an AbstractMinimiser
+minimiser = optx.GaussNewton(rtol=1e-5, atol=1e-5)
+# today (optimistix)
+# dx₀*/dθ = −(∇²J)⁻¹ ∇²ₓθ J
+minimiser_adjoint = optx.ImplicitAdjoint()
+# today (diffrax)
+# dλ/dt = −(∂f/∂x)ᵀ λ, integrated backwards
+forward_adjoint = dfx.BacksolveAdjoint()
+# today (vardax); somax_model is not pinned (somax)
+# x₀* = argmin J(x₀), J = ½‖x₀ − x_b‖²_{B⁻¹} + ½ Σₜ ‖yₜ − Hₜ(Mₜ(x₀))‖²_{Rₜ⁻¹}
+model = vdx.StrongFourDVar(
     forward=somax_model,
-    obs_op=AveragingKernel(...),
-    prior_mean=x_b, prior_cov_op=B_op, obs_cov_op=R_op,
-    minimiser=optimistix.GaussNewton(rtol=1e-5, atol=1e-5),
-    minimiser_adjoint=optimistix.ImplicitAdjoint(),
-    forward_adjoint=diffrax.BacksolveAdjoint(),
+    obs_op=obs_op,
+    prior_mean=background,
+    prior_cov_op=background_cov,
+    obs_cov_op=obs_cov,
+    minimiser=minimiser,
+    minimiser_adjoint=minimiser_adjoint,
+    forward_adjoint=forward_adjoint,
 )
 ```
 

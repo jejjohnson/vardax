@@ -128,7 +128,9 @@ It runs $K-1$ inner iterations under `jax.lax.stop_gradient`, then a single diff
 
 The example builds a `FourDVarNet1D` for $S = 2$ windows of $T = 4$ times and $N = 8$ cells, fed with standard-normal observations $y$, and runs its $K = 15$ learned solver steps $\Phi_\theta$ (the update [](#eq-4dvarnet-update)) under `OneStepAdjoint`. The PRNG keys for the whole page are split here.
 
-```python
+```{code-block} python
+:caption: Runs the learned solver steps of [](#eq-4dvarnet-update) under `OneStepAdjoint` on two toy windows.
+:label: code-adjoints-one-step
 import jax
 import jax.numpy as jnp
 import vardax as vdx
@@ -189,9 +191,11 @@ They are independent.
   the model raises `ValueError` at construction rather than ignoring the
   slot.
 
-A typical operational 4DVar configuration has a `diffrax`-backed forward. The forward below integrates $dx/dt = -\kappa x$ with $\kappa = 0.1$ over one step $\Delta t = 1$ with `diffrax`, and implements `with_adjoint` by storing the adjoint it is handed. The window has $T = 4$ times of all $N = 8$ cells, observed with $R = \sigma^2 I$, $\sigma = 0.1$, around a truth $x_0 \sim \mathcal{N}(0, I)$; the background is $x_b = 0$ with $B = I$. The block minimises [](#eq-strong4dvar-cost), with the gradient [](#eq-strong4dvar-grad) pulled back by the adjoint ODE [](#eq-adjoint-ode) inside every `diffeqsolve`. It continues the one above.
+A typical operational 4DVar configuration has a `diffrax`-backed forward. The forward below integrates $dx/dt = -\kappa x$ with $\kappa = 0.1$ over one step $\Delta t = 1$ with `diffrax`, and implements `with_adjoint` by storing the adjoint it is handed. The window has $T = 4$ times of all $N = 8$ cells, observed with $R = \sigma^2 I$, $\sigma = 0.1$, around a truth $x_0 \sim \mathcal{N}(0, I)$; the background is $x_b = 0$ with $B = I$. The block continues the one above.
 
-```python
+```{code-block} python
+:caption: Minimises the strong-constraint cost [](#eq-strong4dvar-cost) with its gradient [](#eq-strong4dvar-grad) pulled back by the adjoint ODE [](#eq-adjoint-ode) inside every `diffeqsolve`.
+:label: code-adjoints-backsolve
 import diffrax as dfx
 import einx
 import equinox as eqx
@@ -235,24 +239,29 @@ class DiffraxDecay(eqx.Module):
 state_structure = jax.ShapeDtypeStruct((8,), jnp.float32)
 # B = I
 prior_cov = lx.IdentityLinearOperator(state_structure)  # (N, N) op
-# R = σ² I, σ = 0.1; tagged PSD so the default CG solve accepts it
+# R = σ² I, σ = 0.1
+scaled_identity = jnp.float32(0.01) * prior_cov  # (N, N) op
+# tagged PSD so the default CG solve accepts it
 obs_cov = lx.TaggedLinearOperator(  # (N, N) op
-    jnp.float32(0.01) * prior_cov, lx.positive_semidefinite_tag
+    scaled_identity, lx.positive_semidefinite_tag
 )
 # x_b = 0
 background = jnp.zeros(8)  # (N,)
 # x₀ ~ 𝒩(0, I)
 truth = jax.random.normal(key_truth, (8,))  # (N,)
-# e^{−κ t}, t = 0 … T − 1
-decay_factors = jnp.exp(-0.1 * jnp.arange(4.0))  # (T,)
-# yₜ = e^{−κ t} x₀ + σ εₜ
+# t = 0 … T − 1
+observation_times = jnp.arange(4.0)  # (T,)
+# e^{−κ t}
+decay_factors = jnp.exp(-0.1 * observation_times)  # (T,)
+# xₜ = e^{−κ t} x₀
 truth_trajectory = einx.multiply("t, n -> t n", decay_factors, truth)  # (T, N)
-window_obs = truth_trajectory + 0.1 * jax.random.normal(key_noise, (4, 8))
+# εₜ ~ 𝒩(0, I)
+obs_noise = jax.random.normal(key_noise, (4, 8))  # (T, N)
+# yₜ = xₜ + σ εₜ
+window_obs = truth_trajectory + 0.1 * obs_noise  # (T, N)
+window_input = einx.id("t n -> 1 t n", window_obs)  # (T, N) → (S, T, N)
 # today (vardax)
-window = vdx.Batch1D(
-    input=einx.id("t n -> 1 t n", window_obs),  # (T, N) → (S, T, N)
-    mask=jnp.ones((1, 4, 8)),
-)
+window = vdx.Batch1D(input=window_input, mask=jnp.ones((1, 4, 8)))
 
 # today (vardax)
 # x₀* = argmin J(x₀), backsolve adjoint through every diffeqsolve
@@ -266,18 +275,24 @@ strong_backsolve = vdx.StrongFourDVar(
     minimiser_adjoint=optx.ImplicitAdjoint(),
     forward_adjoint=dfx.BacksolveAdjoint(),
 )
-analysis = strong_backsolve(window)  # → (S, N)
+analysis = strong_backsolve(window)  # (S, T, N) → (S, N)
 
-background_error = jnp.linalg.norm(background - truth)
-analysis_error = jnp.linalg.norm(analysis[0] - truth)
+# ‖x_b − x₀‖
+background_misfit = background - truth  # (N,)
+background_error = jnp.linalg.norm(background_misfit)  # → ()
+# ‖x₀* − x₀‖
+analysis_misfit = analysis[0] - truth  # (N,)
+analysis_error = jnp.linalg.norm(analysis_misfit)  # → ()
 print(f"background error {background_error:.2f}, analysis error {analysis_error:.2f}")
 ```
 
 It prints `background error 2.31, analysis error 0.13`.
 
-With a per-step forward (an RK4 stepper, a learned emulator), bound the rollout memory with `checkpoint=` instead. Here the same decay is one classical RK4 step per $\Delta t$, and `checkpoint=2` rematerialises the rollout in blocks of two steps while reverse mode computes [](#eq-strong4dvar-grad). The block continues the one above.
+With a per-step forward (an RK4 stepper, a learned emulator), bound the rollout memory with `checkpoint=` instead. Here the same decay is one classical RK4 step per $\Delta t$, and `checkpoint=2` rematerialises the rollout in blocks of two steps. The block continues the one above.
 
-```python
+```{code-block} python
+:caption: Minimises [](#eq-strong4dvar-cost) with an RK4 forward and a checkpointed rollout for the reverse-mode gradient [](#eq-strong4dvar-grad).
+:label: code-adjoints-checkpoint
 # Shapes: S = 1 window; T = 4 times; N = 8 state cells
 
 
@@ -302,6 +317,7 @@ class RK4Decay(eqx.Module):
 
 
 # today (vardax)
+# x₀* = argmin J(x₀), rollout rematerialised in blocks of two steps
 strong_checkpointed = vdx.StrongFourDVar(
     forward=RK4Decay(),
     obs_op=vdx.MaskedIdentity(),
@@ -310,7 +326,7 @@ strong_checkpointed = vdx.StrongFourDVar(
     obs_cov_op=obs_cov,
     checkpoint=2,
 )
-checkpointed_analysis = strong_checkpointed(window)  # → (S, N)
+checkpointed_analysis = strong_checkpointed(window)  # (S, T, N) → (S, N)
 # the RK4 forward reaches the diffrax analysis
 print(bool(jnp.allclose(checkpointed_analysis, analysis, atol=1e-3)))
 ```
@@ -319,7 +335,9 @@ It prints `True`.
 
 In a typical 4DVarNet training configuration the learned solver has no dynamics rollout, so its memory is set by `solver_adjoint`. The training loss is the mean squared reconstruction error $L(\theta)$ against a target $x$, here the observations themselves (a stand-in for the 4DVarNet loss [](#eq-4dvarnet-loss)); its gradient flows through the solver by `OneStepAdjoint`. The block continues the ones above.
 
-```python
+```{code-block} python
+:caption: Differentiates a reconstruction loss standing in for [](#eq-4dvarnet-loss) through the `OneStepAdjoint` solver.
+:label: code-adjoints-training-gradient
 # Shapes: S = 2 windows; T = 4 times; N = 8 state cells
 
 
@@ -327,27 +345,36 @@ In a typical 4DVarNet training configuration the learned solver has no dynamics 
 def reconstruction_loss(network: vdx.FourDVarNet1D) -> Float[Array, ""]:
     # x* = Φ_θᴷ(y)
     estimate = network(batch)  # (S, T, N)
+    # x* − x
+    misfit = estimate - obs  # (S, T, N)
+    # (x* − x)²
+    squared_misfit = misfit**2  # (S, T, N)
     # L(θ) = mean ‖x* − x‖²
-    return einx.mean("[s t n]", (estimate - obs) ** 2)  # → ()
+    loss = einx.mean("[s t n]", squared_misfit)  # (S, T, N) → ()
+    return loss
 
 
 # today (equinox)
+loss_grad_fn = eqx.filter_grad(reconstruction_loss)
 # ∇_θ L, O(1) training memory through the solver
-loss_gradient = eqx.filter_grad(reconstruction_loss)(model)
-gradient_leaves = jax.tree.leaves(eqx.filter(loss_gradient, eqx.is_array))
-print(len(gradient_leaves), all(bool(jnp.isfinite(g).all()) for g in gradient_leaves))
+loss_gradient = loss_grad_fn(model)
+# today (equinox)
+gradient_arrays = eqx.filter(loss_gradient, eqx.is_array)
+gradient_leaves = jax.tree.leaves(gradient_arrays)
+is_finite = [bool(jnp.isfinite(leaf).all()) for leaf in gradient_leaves]
+print(len(gradient_leaves), all(is_finite))
 ```
 
 It prints `12 True`: twelve parameter arrays, each with a finite gradient.
 
 ## Validation: do they agree?
 
-All adjoint choices should produce the same gradient (up to floating-point tolerance) for converged problems. The check below computes the gradient [](#eq-strong4dvar-grad) of the window cost [](#eq-strong4dvar-cost), with $B = R = I$, $H_t = I$ and the decay dynamics above, under each of the four `diffrax` adjoints; `ForwardMode` needs forward-mode autodiff, so it goes through `jax.jacfwd`. The block continues the ones above.
+All adjoint choices should produce the same gradient (up to floating-point tolerance) for converged problems. The check below uses $B = R = I$, $H_t = I$ and the decay dynamics above under each of the four `diffrax` adjoints; `ForwardMode` needs forward-mode autodiff, so it goes through `jax.jacfwd`. The block continues the ones above.
 
-```python
+```{code-block} python
+:caption: Computes the gradient [](#eq-strong4dvar-grad) of the window cost [](#eq-strong4dvar-cost) under each of the four `diffrax` adjoints and compares them.
+:label: code-adjoints-agreement
 # Shapes: T = 4 times; N = 8 state cells
-
-observation_times = jnp.arange(4.0)  # (T,)
 
 
 # user
@@ -363,9 +390,12 @@ def window_cost(
     initial_state: Float[Array, " n"], adjoint: dfx.AbstractAdjoint
 ) -> Float[Array, ""]:
     # today (diffrax)
+    # dx/dt = f(x)
+    decay_term = dfx.ODETerm(decay_field)
+    # today (diffrax)
     # x(t) for t = 0 … T − 1, from x(0) = x₀
     solution = dfx.diffeqsolve(
-        dfx.ODETerm(decay_field),
+        decay_term,
         dfx.Tsit5(),
         t0=0.0,
         t1=3.0,
@@ -379,10 +409,11 @@ def window_cost(
     # dₜ = yₜ − x(t)
     misfit = window_obs - solution.ys  # (T, N)
     # ½ δxᵀ δx
-    background_term = 0.5 * einx.dot("n, n ->", increment, increment)
+    background_term = 0.5 * einx.dot("n, n ->", increment, increment)  # → ()
     # ½ Σₜ dₜᵀ dₜ
-    obs_term = 0.5 * einx.dot("t n, t n ->", misfit, misfit)
-    return background_term + obs_term  # → ()
+    obs_term = 0.5 * einx.dot("t n, t n ->", misfit, misfit)  # → ()
+    # J(x₀) = ½ δxᵀ δx + ½ Σₜ dₜᵀ dₜ
+    return background_term + obs_term
 
 
 # user
@@ -390,9 +421,11 @@ def cost_gradient(adjoint: dfx.AbstractAdjoint) -> Float[Array, " n"]:
     def cost(state: Float[Array, " n"]) -> Float[Array, ""]:
         return window_cost(state, adjoint)
 
-    # ∇J(x_b), forward mode for ForwardMode and reverse mode otherwise
+    # forward mode for ForwardMode and reverse mode otherwise
     differentiate = jax.jacfwd if isinstance(adjoint, dfx.ForwardMode) else jax.grad
-    return differentiate(cost)(background)  # (N,)
+    gradient_fn = differentiate(cost)
+    # ∇J(x_b)
+    return gradient_fn(background)  # (N,)
 
 
 # today (diffrax)
@@ -426,7 +459,9 @@ The same concepts recur at every layer, so the stack shares one declarative voca
 
 The spec `TruncatedAdjoint(k=3)` maps to `KStepAdjoint(k=3)`, which keeps the last three of the solver's $K$ steps of [](#eq-4dvarnet-update) differentiable. The block continues the first one on the page.
 
-```python
+```{code-block} python
+:caption: Maps the `TruncatedAdjoint(k=3)` spec to `KStepAdjoint(k=3)` and runs the solver steps of [](#eq-4dvarnet-update) with it.
+:label: code-adjoints-truncated
 import pipekit_cycle as pkc
 
 # Shapes: S = 2 windows; T = 4 times; N = 8 state cells
@@ -444,7 +479,9 @@ truncated_model = vdx.FourDVarNet1D(
     solver_adjoint=truncated_adjoint,
     key=key_net,
 )
-print(truncated_adjoint, truncated_model(batch).shape)
+# x* = Φ_θᴷ(y), the last three steps differentiable
+truncated_reconstruction = truncated_model(batch)  # (S, T, N) → (S, T, N)
+print(truncated_adjoint, truncated_reconstruction.shape)
 ```
 
 It prints `KStepAdjoint(k=3) (2, 4, 8)`.

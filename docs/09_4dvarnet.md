@@ -80,9 +80,11 @@ known to be a contraction.
 
 The example below trains a small `FourDVarNet2D` on $S = 4$ windows of $T = 3$ frames on an $8 \times 8$ grid, for a few optimiser steps only.
 The truth is a travelling wave $x_\text{true}(s, t, y, x) = \sin(0.8 y + 0.3 t + \varphi_s)$ with a random phase $\varphi_s$ per window, about half the cells are observed with mask $m$, and the observations are $m \odot x_\text{true}$.
-The model's cost is $J(x) = \|m \odot (x - y)\|^2 + \lambda \|x - \varphi_\theta(x)\|^2$, which is [](#eq-4dvarnet-cost) with $H(x) = m \odot x$, $R = I$ and no factor ½; the solver runs [](#eq-4dvarnet-update) with the modulator output scaled by a step size $\alpha$, and `train_step` minimises the reconstruction loss [](#eq-4dvarnet-loss).
+The model's cost is $J(x) = \|m \odot (x - y)\|^2 + \lambda \|x - \varphi_\theta(x)\|^2$, which is [](#eq-4dvarnet-cost) with $H(x) = m \odot x$, $R = I$ and no factor ½, and the solver runs [](#eq-4dvarnet-update) with the modulator output scaled by a step size $\alpha$.
 
-```python
+```{code-block} python
+:caption: Trains a FourDVarNet2D, whose solver iterates [](#eq-4dvarnet-update) on the cost [](#eq-4dvarnet-cost), by minimising the reconstruction loss [](#eq-4dvarnet-loss) on travelling-wave windows.
+:label: code-4dvarnet-training
 import einx
 import equinox as eqx
 import jax
@@ -98,14 +100,19 @@ rows = jnp.arange(8.0)  # (Y,)
 times = jnp.arange(3.0)  # (T,)
 # φₛ ~ U(0, 2π), one phase per window
 phase = jax.random.uniform(key_phase, (4,), maxval=2 * jnp.pi)  # (S,)
+# 0.8 y
+row_phase = 0.8 * rows  # (Y,)
+# 0.3 t
+time_phase = 0.3 * times  # (T,)
 # 0.8 y + 0.3 t + φₛ
-wave_phase = einx.add("y, t, s -> s t y", 0.8 * rows, 0.3 * times, phase)
+wave_phase = einx.add("y, t, s -> s t y", row_phase, time_phase, phase)  # (S, T, Y)
 # x_true(s, t, y) = sin(0.8 y + 0.3 t + φₛ)
 wave = jnp.sin(wave_phase)  # (S, T, Y)
 # the wave is constant along x
 target = einx.id("s t y -> s t y x", wave, x=8)  # (S, T, Y) → (S, T, Y, X)
 # m ~ Bernoulli(0.5)
-mask = jax.random.bernoulli(key_mask, 0.5, (4, 3, 8, 8)).astype(jnp.float32)
+observed = jax.random.bernoulli(key_mask, 0.5, (4, 3, 8, 8))  # (S, T, Y, X)
+mask = observed.astype(jnp.float32)  # (S, T, Y, X)
 # y = m ⊙ x_true
 obs = mask * target  # (S, T, Y, X)
 
@@ -128,7 +135,10 @@ model = vdx.FourDVarNet2D(
 
 # today (optax)
 optimizer = optax.adam(1e-3)
-opt_state = optimizer.init(eqx.filter(model, eqx.is_array))
+# the trainable leaves (θ, ϕ)
+params = eqx.filter(model, eqx.is_array)
+# today (optax)
+opt_state = optimizer.init(params)
 losses = []
 for _ in range(20):
     # today (vardax)
@@ -180,10 +190,12 @@ Notebook [11](notebooks/11_gradient_learning_L63.ipynb) trains a `ConvLSTMGradMo
 `IdentityPrior` with a fixed-step modulator and many solver steps is the classical baseline, useful for checking agreement with the linear-Gaussian limit (Decision D14 invariant).
 With `IdentityPrior` the prior cost $\|x - \varphi(x)\|^2$ is zero, and a modulator that passes the gradient through unchanged turns the solver into fixed-step gradient descent on $J(x) = \|m \odot (x - y)\|^2$.
 No such modulator ships, so the block defines one and hands it to `solve_4dvarnet_1d`; with step $\alpha = 0.05$ and $K = 200$ steps it converges to $m \odot y$.
-The block runs [](#eq-4dvarnet-update) with $\Phi(\nabla J, h) = \nabla J$ and compares it with the BLUE mean [](#eq-blue-mean) from `OptimalInterpolation`, which with $x_b = 0$, $B = I$ and $R = \sigma^2 I$ gives the same field in the limit $\sigma \to 0$; here $\sigma = 0.01$ on $N = 8$ cells, about 60% of them observed.
+`OptimalInterpolation` with $x_b = 0$, $B = I$ and $R = \sigma^2 I$ gives the same field in the limit $\sigma \to 0$; here $\sigma = 0.01$ on $N = 8$ cells, about 60% of them observed.
 The block continues the one above.
 
-```python
+```{code-block} python
+:caption: Runs [](#eq-4dvarnet-update) with Φ(∇J, h) = ∇J and an identity prior, and checks it against the BLUE mean [](#eq-blue-mean).
+:label: code-4dvarnet-oi-agreement
 from typing import Any
 
 import lineax as lx
@@ -197,15 +209,18 @@ state_structure = jax.ShapeDtypeStruct((1, 8), jnp.float32)
 # B = I
 prior_cov = lx.IdentityLinearOperator(state_structure)  # (T N, T N) op
 # R = σ² I, σ = 0.01; tagged PSD so the default CG solve accepts it
-obs_cov = lx.TaggedLinearOperator(  # (T N, T N) op
+obs_cov = lx.TaggedLinearOperator(  # (T N, T N) PSD op
     jnp.float32(1e-4) * prior_cov, lx.positive_semidefinite_tag
 )
 # x_true ~ 𝒩(0, I)
 truth = jax.random.normal(key_truth, (1, 1, 8))  # (S, T, N)
 # m ~ Bernoulli(0.6)
-cell_mask = jax.random.bernoulli(key_cells, 0.6, (1, 1, 8)).astype(jnp.float32)
+observed_cells = jax.random.bernoulli(key_cells, 0.6, (1, 1, 8))  # (S, T, N)
+cell_mask = observed_cells.astype(jnp.float32)  # (S, T, N)
+# y = m ⊙ x_true
+line_obs = cell_mask * truth  # (S, T, N)
 # today (vardax)
-line_batch = vdx.Batch1D(input=cell_mask * truth, mask=cell_mask)
+line_batch = vdx.Batch1D(input=line_obs, mask=cell_mask)
 
 
 # user
@@ -220,22 +235,29 @@ class FixedStepGradMod(eqx.Module):
 
 
 # today (vardax)
+# φ(x) = x, so ‖x − φ(x)‖² = 0
+identity_prior = vdx.IdentityPrior()
+# user
+grad_mod = FixedStepGradMod()
+# today (vardax)
 # x_{k+1} = x_k − α ∇J(x_k), with J(x) = ‖m ⊙ (x − y)‖²
 descent = vdx.solve_4dvarnet_1d(  # → (S, T, N)
     line_batch,
-    vdx.IdentityPrior(),
-    FixedStepGradMod(),
+    identity_prior,
+    grad_mod,
     n_steps=200,
     hidden_dim=1,
     alpha=0.05,
 )
 # today (vardax)
+# p(x) = 𝒩(0, B), p(y | x) = 𝒩(m ⊙ x, R)
 optimal_interpolation = vdx.OptimalInterpolation(
     obs_op=vdx.MaskedIdentity(),
     prior_mean=jnp.zeros((1, 8)),
     prior_cov_op=prior_cov,
     obs_cov_op=obs_cov,
 )
+# today (vardax)
 # x_a = x_b + B Hᵀ (H B Hᵀ + R)⁻¹ (y − H x_b)
 closed_form = optimal_interpolation(line_batch)  # → (S, T, N)
 print(bool(jnp.allclose(descent, closed_form, atol=1e-2)))
@@ -266,11 +288,16 @@ Don't use `FourDVarNet` when:
 The Laplace approximation of the learned cost is assembled by hand instead: with residuals $r(x) = (m \odot (x - y), \sqrt{\lambda} (x - \varphi_\theta(x)))$ and Jacobian $J_r$ at the analysis $x^*$, the Gauss-Newton Hessian is $\nabla^2 J \approx 2 J_r^\top J_r$ and the Laplace covariance [](#eq-laplace-cov) is $P^* = (\nabla^2 J)^{-1}$, applied by a CG solve.
 The block continues the first one on this page, for its first window, with $\lambda = 1$.
 
-```python
+```{code-block} python
+:caption: Applies the Laplace covariance [](#eq-laplace-cov) of the learned cost [](#eq-4dvarnet-cost), with a Gauss-Newton Hessian built by hand, to one field.
+:label: code-4dvarnet-laplace
 # Shapes: S = 1 sample; T = 3 times; Y = 8 rows; X = 8 columns
 
+first_obs = obs[:1]  # (S, T, Y, X)
+first_mask = mask[:1]  # (S, T, Y, X)
 # today (vardax)
-one_window = vdx.Batch2D(input=obs[:1], mask=mask[:1])
+one_window = vdx.Batch2D(input=first_obs, mask=first_mask)
+# today (vardax)
 # x* = x_K
 analysis = model(one_window)  # → (S, T, Y, X)
 
@@ -279,10 +306,16 @@ analysis = model(one_window)  # → (S, T, Y, X)
 def residuals(
     state: Float[Array, "s t y x"],
 ) -> tuple[Float[Array, "s t y x"], Float[Array, "s t y x"]]:
+    """The residuals r(x) = (m ⊙ (x − y), √λ (x − φ_θ(x))), λ = 1."""
+    # x − y
+    misfit = state - one_window.input  # (S, T, Y, X)
     # r_o = m ⊙ (x − y)
-    obs_residual = one_window.mask * (state - one_window.input)
+    obs_residual = one_window.mask * misfit  # (S, T, Y, X)
+    # today (vardax)
+    # φ_θ(x)
+    reconstruction = model.prior(state)  # (S, T, Y, X)
     # r_p = √λ (x − φ_θ(x)), λ = 1
-    prior_residual = state - model.prior(state)
+    prior_residual = state - reconstruction  # (S, T, Y, X)
     return obs_residual, prior_residual
 
 
@@ -294,22 +327,27 @@ residual_vjp = jax.linear_transpose(residual_jvp, analysis)
 
 # user
 def precision_mv(direction: Float[Array, "s t y x"]) -> Float[Array, "s t y x"]:
+    """The Gauss-Newton Hessian product ∇²J δx ≈ 2 J_rᵀ J_r δx."""
+    # J_r δx
+    residual_direction = residual_jvp(direction)
+    # J_rᵀ J_r δx
+    (pulled_back,) = residual_vjp(residual_direction)  # (S, T, Y, X)
     # ∇²J δx ≈ 2 J_rᵀ J_r δx
-    (pulled_back,) = residual_vjp(residual_jvp(direction))
-    return 2.0 * pulled_back
+    return 2.0 * pulled_back  # (S, T, Y, X)
 
 
-posterior_precision = lx.FunctionLinearOperator(  # (S T Y X, S T Y X) op
-    precision_mv,
-    jax.ShapeDtypeStruct(analysis.shape, analysis.dtype),
-    lx.positive_semidefinite_tag,
+analysis_structure = jax.ShapeDtypeStruct(analysis.shape, analysis.dtype)
+# ∇²J ≈ 2 J_rᵀ J_r
+posterior_precision = lx.FunctionLinearOperator(  # (S T Y X, S T Y X) PSD op
+    precision_mv, analysis_structure, lx.positive_semidefinite_tag
 )
+# 1
+ones = jnp.ones_like(analysis)  # (S, T, Y, X)
+precision_solver = lx.CG(rtol=1e-5, atol=1e-5, max_steps=500)
 # today (lineax)
 # P* 1 = (∇²J)⁻¹ 1, one matrix-free solve
 spread = lx.linear_solve(  # (S, T, Y, X) → (S, T, Y, X)
-    posterior_precision,
-    jnp.ones_like(analysis),
-    solver=lx.CG(rtol=1e-5, atol=1e-5, max_steps=500),
+    posterior_precision, ones, solver=precision_solver
 )
 print(spread.value.shape, int(spread.stats["num_steps"]))
 ```

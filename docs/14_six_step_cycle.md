@@ -30,7 +30,9 @@ transport / methane), or any user code that satisfies
 
 This chapter runs the cycle on a toy that stands in for somax. The state has $N = 6$ cells on a ring, and the physics forward averages each cell with its right neighbour and damps the result, $M(x) = A x - c (A x)^3$ with $A = \frac{1}{2}(I + P)$, $P$ the cyclic shift and $c = 0.02$. The PRNG keys for the whole chapter are split here.
 
-```python
+```{code-block} python
+:caption: Defines the toy physics forward M of the rollout [](#eq-rollout) and checks it satisfies the `ForwardModel` protocol.
+:label: code-cycle-physics
 from typing import Any
 
 import einx
@@ -38,14 +40,23 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import vardax as vdx
-from jaxtyping import Array, Float
+from jaxtyping import Array, Float, PRNGKeyArray
 
 # Shapes: N = 6 cells
 
 key = jax.random.PRNGKey(0)
-keys = jax.random.split(key, 10)
-key_truth, key_noise, key_val, key_probe_emulator, key_prior = keys[:5]
-key_sim, key_head, key_sample, key_probe_amortized, key_sbc = keys[5:]
+(
+    key_truth,
+    key_noise,
+    key_val,
+    key_probe_emulator,
+    key_prior,
+    key_sim,
+    key_head,
+    key_sample,
+    key_probe_amortized,
+    key_sbc,
+) = jax.random.split(key, 10)
 
 # P, the cyclic shift (P x)ᵢ = xᵢ₊₁
 cyclic_shift = jnp.eye(6, k=1) + jnp.eye(6, k=-5)  # (N, N)
@@ -71,6 +82,7 @@ class CubicRing(eqx.Module):
         return averaged - self.cubic * averaged**3
 
 
+# user
 physics = CubicRing(coupling)
 # today (vardax)
 # step(state, dt), dt and state_signature: the pipekit_cycle.ForwardModel contract
@@ -96,9 +108,11 @@ Pick one of the five classical methods from chapters 4 to 8 based on regime:
 The result is the **oracle** for Step 4 and Step 5. Slow but exact (or
 as exact as the prior / likelihood allow).
 
-The oracle sees a window of $T = 3$ times, every cell observed, with $y_t = x_t + \sigma \varepsilon_t$, $R = \sigma^2 I$, $\sigma = 0.5$, around a truth $x_0 \sim \mathcal{N}(0, I)$; the background is $x_b = 0$ with $B = I$. The oracle is `IncrementalFourDVar`, which minimises [](#eq-strong4dvar-cost) through the incremental cost [](#eq-incremental-cost), and its posterior is [](#eq-gn-cov). The block continues the one above.
+The oracle sees a window of $T = 3$ times, every cell observed, with $y_t = x_t + \sigma \varepsilon_t$, $R = \sigma^2 I$, $\sigma = 0.5$, around a truth $x_0 \sim \mathcal{N}(0, I)$; the background is $x_b = 0$ with $B = I$. The oracle is `IncrementalFourDVar`. The block continues the one above.
 
-```python
+```{code-block} python
+:caption: Runs the `IncrementalFourDVar` oracle, which minimises [](#eq-strong4dvar-cost) through [](#eq-incremental-cost), and reads its posterior [](#eq-gn-cov).
+:label: code-cycle-oracle
 import lineax as lx
 
 # Shapes: S = 1 window; T = 3 times; N = 6 cells
@@ -106,33 +120,38 @@ import lineax as lx
 
 # user
 def simulate_window(
-    initial_state: Float[Array, " n"], key: jax.Array
+    initial_state: Float[Array, " n"], key: PRNGKeyArray
 ) -> Float[Array, "t n"]:
     # x₁ = M(x₀)
     state_1 = physics.step(initial_state, 1.0)  # (N,)
     # x₂ = M(x₁)
     state_2 = physics.step(state_1, 1.0)  # (N,)
     trajectory = jnp.stack([initial_state, state_1, state_2])  # (T, N)
+    # εₜ ~ 𝒩(0, I)
+    noise = jax.random.normal(key, (3, 6))  # (T, N)
     # yₜ = xₜ + σ εₜ
-    return trajectory + 0.5 * jax.random.normal(key, (3, 6))  # (T, N)
+    return trajectory + 0.5 * noise  # (T, N)
 
 
 state_structure = jax.ShapeDtypeStruct((6,), jnp.float32)
 # B = I
 prior_cov = lx.IdentityLinearOperator(state_structure)  # (N, N) op
-# R = σ² I; tagged PSD so the default CG solve accepts it
+# R = σ² I
+scaled_identity = jnp.float32(0.25) * prior_cov  # (N, N) op
+# tagged PSD so the default CG solve accepts it
 obs_cov = lx.TaggedLinearOperator(  # (N, N) op
-    jnp.float32(0.25) * prior_cov, lx.positive_semidefinite_tag
+    scaled_identity, lx.positive_semidefinite_tag
 )
 # x₀ ~ 𝒩(0, I)
 truth = jax.random.normal(key_truth, (6,))  # (N,)
-window_obs = simulate_window(truth, key_noise)  # (T, N)
+# user
+# yₜ = M^t(x₀) + σ εₜ
+window_obs = simulate_window(truth, key_noise)  # (N,) → (T, N)
+# m = 1, every cell observed
 full_mask = jnp.ones((1, 3, 6))  # (S, T, N)
+window_input = einx.id("t n -> 1 t n", window_obs)  # (T, N) → (S, T, N)
 # today (vardax)
-window = vdx.Batch1D(
-    input=einx.id("t n -> 1 t n", window_obs),  # (T, N) → (S, T, N)
-    mask=full_mask,
-)
+window = vdx.Batch1D(input=window_input, mask=full_mask)
 
 # today (vardax)
 incremental_config = vdx.IncrementalConfig(n_outer=3, n_inner=20)
@@ -147,8 +166,9 @@ oracle = vdx.IncrementalFourDVar(
 )
 # x₀* = argmin J(x₀), Gauss-Newton outer loop with CG inner solves
 oracle_analysis = oracle(window)  # (S, T, N) → (S, N)
+# today (vardax)
 # P*_GN at x₀*
-oracle_posterior = oracle.posterior(window)
+oracle_posterior = oracle.posterior(window)  # cov (N, N) PSD op
 print(oracle_analysis.shape, oracle_posterior.mean.shape)
 ```
 
@@ -178,29 +198,42 @@ This gate is **hard**: vardax refuses to promote an emulator that
 fails adjoint calibration, even if the forward agreement is excellent.
 Wrong-direction gradients are silently corrosive.
 
-Here a copy of the physics with $c$ off by 2% stands in for a trained network $F_\psi$, and the block checks [](#eq-gate-forward) and [](#eq-gate-jacobian) on $V = 64$ held-out states. It continues the one above.
+Here a copy of the physics with $c$ off by 2% stands in for a trained network $F_\psi$, tested on $V = 64$ held-out states. The block continues the one above.
 
-```python
+```{code-block} python
+:caption: Checks a stand-in emulator against the forward-agreement gate [](#eq-gate-forward) and the Jacobian gate [](#eq-gate-jacobian).
+:label: code-cycle-emulator-gates
 # Shapes: V = 64 held-out states; N = 6 cells
 
+# user
 # F_ψ: the cubic coefficient 2% off, standing in for a trained network
 emulator = CubicRing(coupling, cubic=0.0204)
 # x ~ 𝒩(0, I)
 val_states = jax.random.normal(key_val, (64, 6))  # (V, N)
-emulated = emulator.step(val_states, 1.0)  # (V, N)
-simulated = physics.step(val_states, 1.0)  # (V, N)
+# F_ψ(x)
+emulated = emulator.step(val_states, 1.0)  # (V, N) → (V, N)
+# M(x)
+simulated = physics.step(val_states, 1.0)  # (V, N) → (V, N)
+# F_ψ(x) − M(x)
+emulation_misfit = emulated - simulated  # (V, N)
+# ‖F_ψ(x) − M(x)‖
+misfit_norm = jnp.linalg.norm(emulation_misfit)  # → ()
+# ‖M(x)‖
+simulated_norm = jnp.linalg.norm(simulated)  # → ()
 # ‖F_ψ(x) − M(x)‖ / ‖M(x)‖ < ε_fwd = 0.01
-forward_error = jnp.linalg.norm(emulated - simulated) / jnp.linalg.norm(simulated)
+forward_error = misfit_norm / simulated_norm  # → ()
 assert forward_error < 0.01
 
 
 # user
 def emulator_step(states: Float[Array, "v n"]) -> Float[Array, "v n"]:
+    # F_ψ(x)
     return emulator.step(states, 1.0)
 
 
 # user
 def physics_step(states: Float[Array, "v n"]) -> Float[Array, "v n"]:
+    # M(x)
     return physics.step(states, 1.0)
 
 
@@ -225,22 +258,28 @@ $$\frac{|x^*_\text{em} - x^*_\text{phys}|}{\sigma_\text{post,phys}} \le 1$$ (eq-
 
 cell by cell, where $x^*_\text{em}$ and $x^*_\text{phys}$ are the emulator and physics analyses and $\sigma_\text{post,phys}$ is the physics posterior standard deviation (the square root of the diagonal of [](#eq-gn-cov)). The gate runs on a held-out set of events. If it fails, the emulator is worse than it looked on the per-state agreement test, so retrain with a broader distribution or roll back.
 
-The block continues the one above and ends with [](#eq-gate-posterior).
+The block continues the one above.
 
-```python
+```{code-block} python
+:caption: Reruns the oracle analysis with the emulator and applies the posterior-agreement gate [](#eq-gate-posterior).
+:label: code-cycle-emulator-inference
 # Shapes: S = 1 window; T = 3 times; N = 6 cells
 
 # today (vardax)
 fast_analysis = vdx.IncrementalFourDVar(
-    forward=emulator,  # the only change from Step 2
+    # the only change from Step 2
+    forward=emulator,
     obs_op=vdx.MaskedIdentity(),
     prior_mean=jnp.zeros(6),
     prior_cov_op=prior_cov,
     obs_cov_op=obs_cov,
     config=incremental_config,
 )
+# x₀*_em = argmin J(x₀) with M replaced by F_ψ
 emulator_analysis = fast_analysis(window)  # (S, T, N) → (S, N)
-emulator_posterior = fast_analysis.posterior(window)
+# today (vardax)
+# P*_GN at x₀*_em
+emulator_posterior = fast_analysis.posterior(window)  # cov (N, N) PSD op
 # today (vardax)
 # |x*_em − x*_phys| / σ_post,phys ≤ 1, cell by cell
 vdx.assert_posterior_agreement(
@@ -256,33 +295,37 @@ Train `AmortizedPosterior` (chapter 10) on simulated $(x, y)$ pairs from the phy
 
 `ConditionalFlowHead` is still a stub that raises until its `gauss_flows` dependency lands, so the example trains the Gaussian `RegressionHead` [](#eq-gaussian-head), with mean $\mu_\phi(y)$ and diagonal variance $\sigma^2_\phi(y)$, on $P = 65536$ simulated pairs by maximum likelihood [](#eq-mle-loss). With `depth=0` and the `IdentityObsEncoder`, $\mu_\phi$ is affine in $y$, which is exact for a linear-Gaussian problem and close for this weakly nonlinear one. The block continues the one above.
 
-```python
+```{code-block} python
+:caption: Trains the Gaussian regression head [](#eq-gaussian-head) by maximum likelihood [](#eq-mle-loss) on simulated pairs and samples its posterior.
+:label: code-cycle-amortized-training
 import optax
 
 # Shapes: P = 65,536 training pairs; T = 3 times; N = 6 cells; D = 36 context
 
 # x₀ ~ 𝒩(0, I)
 train_states = jax.random.normal(key_prior, (65536, 6))  # (P, N)
-simulation_keys = jax.random.split(key_sim, 65536)
+simulation_keys = jax.random.split(key_sim, 65536)  # (P,)
+simulate_pairs = jax.vmap(simulate_window)
+# user
 # y = H(M(x₀)) + σ ε for every pair
-train_obs = jax.vmap(simulate_window)(train_states, simulation_keys)  # (P, T, N)
+train_obs = simulate_pairs(train_states, simulation_keys)  # (P, N) → (P, T, N)
 # today (vardax)
 train_batch = vdx.Batch1D(
     input=train_obs, mask=jnp.ones((65536, 3, 6)), target=train_states
 )
 # today (vardax)
-amort = vdx.AmortizedPosterior(
-    # today (vardax)
-    # c = [vec(y); vec(m)]
-    encoder=vdx.IdentityObsEncoder(),
-    # today (vardax)
-    # μ_φ(c), log σ²_φ(c): one linear layer each
-    head=vdx.RegressionHead(context_dim=36, state_shape=(6,), depth=0, key=key_head),
-    # today (vardax)
-    config=vdx.AmortizedConfig(),
-)
+# c = [vec(y); vec(m)]
+encoder = vdx.IdentityObsEncoder()
+# today (vardax)
+# μ_φ(c), log σ²_φ(c): one linear layer each
+head = vdx.RegressionHead(context_dim=36, state_shape=(6,), depth=0, key=key_head)
+# today (vardax)
+amortized_config = vdx.AmortizedConfig()
+# today (vardax)
+amort = vdx.AmortizedPosterior(encoder=encoder, head=head, config=amortized_config)
 optimizer = optax.adam(1e-2)
-opt_state = optimizer.init(eqx.filter(amort, eqx.is_array))
+amortized_params = eqx.filter(amort, eqx.is_array)
+opt_state = optimizer.init(amortized_params)
 # today (vardax)
 train_step = eqx.filter_jit(vdx.amortized_train_step)
 for _ in range(500):
@@ -292,6 +335,7 @@ for _ in range(500):
 # Inference, sub-second
 # x̂₀ = μ_φ(y)
 x_map = amort(window)  # (S, T, N) → (S, N)
+# today (vardax)
 # x₀⁽ʲ⁾ ~ q_φ(x₀ | y)
 samples = amort.sample(window, key_sample, n=200)  # (S, T, N) → (S, 200, N)
 print(x_map.shape, samples.shape)
@@ -301,7 +345,9 @@ It prints `(1, 6) (1, 200, 6)`.
 
 Decision D12 holds the amortized head to three gates: posterior agreement with Step 2 [](#eq-gate-posterior), the Jacobian gate [](#eq-gate-jacobian) applied to the maps $y \mapsto x_0^*$, and uniform simulation-based calibration (SBC) rank histograms. The amortized head has no observation operator, so its posterior for the first gate is its mean alone, and the gate reads $\sigma_\text{post}$ from the oracle. The Jacobian gate probes $\partial x_0^* / \partial y$ of both predictors, and SBC ranks the truth among 20 posterior samples in each of 20 simulated runs. The block continues the one above.
 
-```python
+```{code-block} python
+:caption: Applies the posterior-agreement gate [](#eq-gate-posterior), the Jacobian gate [](#eq-gate-jacobian) and simulation-based calibration to the amortized head.
+:label: code-cycle-amortized-gates
 # Shapes: S = 1 window; T = 3 times; N = 6 cells
 
 
@@ -309,36 +355,45 @@ Decision D12 holds the amortized head to three gates: posterior agreement with S
 @eqx.filter_jit
 def amortized_map(obs: Float[Array, "s t n"]) -> Float[Array, "s n"]:
     # today (vardax)
-    return amort(vdx.Batch1D(input=obs, mask=full_mask))
+    obs_batch = vdx.Batch1D(input=obs, mask=full_mask)
+    # x̂₀ = μ_φ(y)
+    return amort(obs_batch)  # (S, T, N) → (S, N)
 
 
 # user
 @eqx.filter_jit
 def oracle_map(obs: Float[Array, "s t n"]) -> Float[Array, "s n"]:
     # today (vardax)
-    return oracle(vdx.Batch1D(input=obs, mask=full_mask))
+    obs_batch = vdx.Batch1D(input=obs, mask=full_mask)
+    # x₀* = argmin J(x₀)
+    return oracle(obs_batch)  # (S, T, N) → (S, N)
 
 
 # user
 @eqx.filter_jit
 def sample_posterior(
-    obs: Float[Array, "t n"], key: jax.Array, n_samples: int
+    obs: Float[Array, "t n"], key: PRNGKeyArray, n_samples: int
 ) -> Float[Array, "j n"]:
+    single_input = einx.id("t n -> 1 t n", obs)  # (T, N) → (S, T, N)
     # today (vardax)
-    single = vdx.Batch1D(input=einx.id("t n -> 1 t n", obs), mask=full_mask)
+    single = vdx.Batch1D(input=single_input, mask=full_mask)
     # today (vardax)
     # x₀⁽ʲ⁾ ~ q_φ(x₀ | y)
-    return amort.sample(single, key, n_samples)[0]  # (S, J, N) → (J, N)
+    samples = amort.sample(single, key, n_samples)  # (S, T, N) → (S, J, N)
+    return samples[0]  # (S, J, N) → (J, N)
 
 
 # user
-def sample_prior(key: jax.Array) -> Float[Array, " n"]:
+def sample_prior(key: PRNGKeyArray) -> Float[Array, " n"]:
     # x₀ ~ 𝒩(0, I)
     return jax.random.normal(key, (6,))
 
 
+# user
+# x̂₀ = μ_φ(y)
+amortized_window = amortized_map(window.input)  # (S, T, N) → (S, N)
 # today (vardax)
-amortized_posterior = vdx.Posterior(mean=amortized_map(window.input)[0])
+amortized_posterior = vdx.Posterior(mean=amortized_window[0])
 # today (vardax)
 # |x̂₀ − x₀*| / σ_post ≤ 1, cell by cell
 vdx.assert_posterior_agreement(

@@ -214,7 +214,9 @@ def test_default_config_uses_cvt():
 def test_docs_08_linear_gaussian_example_runs():
     """The docs/08 blocks (once a TypeError: no cvt field) run and agree with OI."""
     page = pathlib.Path(__file__).parents[1] / "docs" / "08_incremental_4dvar.md"
-    blocks = re.findall(r"```python\n(.*?)```", page.read_text(), flags=re.S)
+    # ```python or a MyST ```{code-block} python with option lines first
+    fence = r"```(?:python|\{code-block\} python)\n(?::[\w-]+:[^\n]*\n)*(.*?)```"
+    blocks = re.findall(fence, page.read_text(), flags=re.S)
     # the page's blocks build on each other, so they run in one namespace
     namespace: dict = {}
     exec("\n".join(blocks), namespace)

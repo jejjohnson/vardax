@@ -13,7 +13,9 @@ vardax does not own dynamics; those come from `somax` (geophysical fluids), `plu
 
 A forward supplies `step(state, dt)`, a default `dt` and a `state_signature`. The Lorenz-63 model below, with state $s = (x, y, z)$ and the vector field $f$ of [](#eq-lorenz63), advances by forward Euler steps and satisfies the protocol structurally, and the check prints `True`; the later blocks on this page build on it.
 
-```python
+```{code-block} python
+:caption: Defines Lorenz-63 [](#eq-lorenz63) as a forward-Euler forward model and checks that it satisfies the protocol.
+:label: code-dynamical-model-lorenz63
 import equinox as eqx
 import jax.numpy as jnp
 import pipekit_cycle as pc
@@ -98,37 +100,44 @@ methane Tier I problem), forward sensitivity is cheaper than reverse.
 
 If $M_t$ is linear, the tangent-linear model [](#eq-tlm-forward) is just $M_t$ itself (no linearisation needed). For `IncrementalFourDVar` and operational 4DVar, the inner loop is in this situation: the *outer* nonlinear model is wrapped, but the *inner* loop operates on its tangent linear, computed once per outer iteration via `jax.linearize` and reused across many CG iterations.
 
-The block continues the one above: it linearises one Lorenz-63 step at $x_b = (1, 1, 1)$ as in [](#eq-tlm-forward), transposes it with lineax and checks the adjoint step $M'^\top r$ for a cotangent $r$ against the dense Jacobian, printing `True`.
+The block below linearises at $x_b = (1, 1, 1)$, pulls back a cotangent $r$ and prints `True`.
 
-```python
+```{code-block} python
+:caption: Linearises one Lorenz-63 step as in [](#eq-tlm-forward) and checks the lineax adjoint step against the dense Jacobian.
+:label: code-dynamical-model-tangent-linear
 import einx
 import jax
 import lineax as lx
 
 # Shapes: N = 3 state components
 
+state_structure = jax.ShapeDtypeStruct((3,), jnp.float32)
 # x_b, the outer iterate
 background = jnp.array([1.0, 1.0, 1.0])  # (N,)
 # r, a cotangent to pull back
 cotangent = jnp.array([1.0, -1.0, 0.5])  # (N,)
 
+
+# user
+def one_step(state: Float[Array, " n"]) -> Float[Array, " n"]:
+    # M(s) = s + Δt f(s)
+    return dynamics.step(state, dynamics.dt)  # (N,)
+
+
 # today (jax)
 # δx ↦ M′(x_b) δx, the tangent-linear step
-_, tangent_step = jax.linearize(
-    lambda state: dynamics.step(state, dynamics.dt), background
-)
+_, tangent_step = jax.linearize(one_step, background)
 # today (lineax)
 # M′ as an operator, so lineax derives M′ᵀ
-tangent_op = lx.FunctionLinearOperator(  # (N, N) op
-    tangent_step, jax.ShapeDtypeStruct((3,), jnp.float32)
-)
+tangent_op = lx.FunctionLinearOperator(tangent_step, state_structure)  # (N, N) op
+# today (lineax)
+adjoint_op = tangent_op.transpose()  # (N, N) op
 # M′ᵀ r, the adjoint step
-adjoint_step = tangent_op.transpose().mv(cotangent)  # (N,) → (N,)
+adjoint_step = adjoint_op.mv(cotangent)  # (N,) → (N,)
 # today (jax)
+jacobian_fn = jax.jacfwd(one_step)
 # M′(x_b), formed densely to check
-step_jacobian = jax.jacfwd(  # (N, N)
-    lambda state: dynamics.step(state, dynamics.dt)
-)(background)
+step_jacobian = jacobian_fn(background)  # (N,) → (N, N)
 # M′ᵀ r = Σᵢ M′ᵢⱼ rᵢ
 expected_adjoint = einx.dot("i j, i -> j", step_jacobian, cotangent)  # (N,)
 print(bool(jnp.allclose(adjoint_step, expected_adjoint)))
@@ -151,7 +160,9 @@ batch).
 
 For typical 4DVar with between $T = 10$ and $T = 100$ assimilation cycles and a shallow-water `ForwardModel`, the rollout [](#eq-rollout) is one `diffeqsolve` saved at every step. The toy below rolls Lorenz-63 out for $K = 100$ steps of $\Delta t = 0.01$ and differentiates $\frac{1}{2} \|s(t_K)\|^2$, the squared norm of the final state, with two adjoints; it continues the block above.
 
-```python
+```{code-block} python
+:caption: Differentiates the rollout [](#eq-rollout) through the discrete adjoint and through the adjoint ODE [](#eq-adjoint-ode).
+:label: code-dynamical-model-rollout-adjoints
 import diffrax as dfx
 
 # Shapes: K = 100 steps; N = 3 state components
@@ -191,19 +202,23 @@ def rollout(
 def final_state_cost(
     initial_state: Float[Array, " n"], adjoint: dfx.AbstractAdjoint
 ) -> Float[Array, ""]:
+    # user
+    # s(tₖ) = Mₖ(s₀), k = 0, …, K
     trajectory = rollout(initial_state, dynamics, 100, 0.01, adjoint=adjoint)
+    # s(t_K)
+    final_state = trajectory[-1]  # (N,)
     # ½ ‖s(t_K)‖²
-    return 0.5 * einx.dot("n, n ->", trajectory[-1], trajectory[-1])  # → ()
+    return 0.5 * einx.dot("n, n ->", final_state, final_state)  # → ()
 
 
+# today (jax)
+cost_grad = jax.grad(final_state_cost)
 # today (diffrax)
 # ∇ₛ₀ by discretise-then-optimise, with recursive checkpoints
-checkpoint_grad = jax.grad(final_state_cost)(  # (N,)
-    background, dfx.RecursiveCheckpointAdjoint()
-)
+checkpoint_grad = cost_grad(background, dfx.RecursiveCheckpointAdjoint())  # (N,)
 # today (diffrax)
 # ∇ₛ₀ by optimise-then-discretise, solving the adjoint ODE backwards
-backsolve_grad = jax.grad(final_state_cost)(background, dfx.BacksolveAdjoint())  # (N,)
+backsolve_grad = cost_grad(background, dfx.BacksolveAdjoint())  # (N,)
 print(bool(jnp.allclose(checkpoint_grad, backsolve_grad, rtol=1e-2)))
 ```
 
@@ -211,9 +226,11 @@ It prints `True`. The two gradients differ by about 0.1%, because `BacksolveAdjo
 
 Inside vardax, the rollout is composed inside the cost function. Give the forward a `with_adjoint` method that stores the adjoint and passes it to `diffeqsolve`; the model's `forward_adjoint` slot then calls it, so that when `jax.grad(J)(x_0)` is called, the gradient flows back through the chosen adjoint path.
 
-The block continues the one above. `StrongFourDVar` minimises [](#eq-strong4dvar-cost) with $H_t$ the identity and recovers the initial state $x_\text{true} = (1.2, 0.8, 1.1)$ from a noise-free window of $T = 5$ times, starting from $x_b$, once with the forward's own adjoint and once with `forward_adjoint=dfx.BacksolveAdjoint()`:
+With $H_t$ the identity, `StrongFourDVar` recovers the initial state $x_\text{true} = (1.2, 0.8, 1.1)$ from a noise-free window of $T = 5$ times, starting from $x_b$, once with the forward's own adjoint and once with `forward_adjoint=dfx.BacksolveAdjoint()`:
 
-```python
+```{code-block} python
+:caption: Minimises the strong-constraint cost [](#eq-strong4dvar-cost) with two forward adjoints and compares the analyses.
+:label: code-dynamical-model-strong4dvar
 import dataclasses
 from collections.abc import Callable
 
@@ -253,13 +270,15 @@ class DiffraxForward:
 forward = DiffraxForward(vector_field=dynamics.vector_field, dt=0.01)
 # x_true(t₀), the initial state to recover
 true_initial = jnp.array([1.2, 0.8, 1.1])  # (N,)
+# user
 # yₜ = Mₜ(x_true), observed everywhere without noise
 window_obs = rollout(  # (N,) → (T, N)
     true_initial, dynamics, 4, 0.01, adjoint=dfx.RecursiveCheckpointAdjoint()
 )
-state_structure = jax.ShapeDtypeStruct((3,), jnp.float32)
+# today (lineax)
 # B = I
 prior_cov = lx.IdentityLinearOperator(state_structure)  # (N, N) op
+# today (lineax)
 # R = σ² I, σ = 0.1; tagged PSD so the default CG solve accepts it
 obs_cov = lx.TaggedLinearOperator(  # (N, N) op
     0.01 * prior_cov, lx.positive_semidefinite_tag
@@ -291,7 +310,9 @@ backsolve_4dvar = vdx.StrongFourDVar(
 )
 # x₀* = argmin J(x₀)
 default_analysis = default_4dvar(window)  # → (S, N)
+# x₀* again, through the adjoint ODE
 backsolve_analysis = backsolve_4dvar(window)  # → (S, N)
+
 print(default_analysis[0], backsolve_analysis[0])
 print(bool(jnp.allclose(default_analysis, backsolve_analysis, atol=1e-3)))
 ```

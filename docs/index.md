@@ -74,99 +74,206 @@ uv sync --all-extras
 
 vardax is not yet on PyPI; install from the checkout.
 
-## Quickstart — Optimal Interpolation
+## Quickstart: optimal interpolation
 
 A single forward pass: no iteration, no convergence criterion. The analysis
 is the $B$/$R$-weighted combination of background and observations, so it
 beats both.
 
-```python
-import jax, jax.numpy as jnp, lineax as lx
+```{code-block} python
+:caption: Computes the OI analysis [](#eq-blue-mean) of a noisy sine wave from a flat background.
+:label: code-index-oi-quickstart
+import einx
+import jax
+import jax.numpy as jnp
+import lineax as lx
 import vardax as vdx
+from jaxtyping import Array, Float
 
-N = 64
-truth = jnp.sin(jnp.linspace(0.0, 6.0, N))[None]  # (1, N)
-x_b = jnp.zeros((1, N))  # flat background
-y = truth + 0.3 * jax.random.normal(jax.random.PRNGKey(1), (1, N))
+# Shapes: S = 1 sample; T = 1 time; N = 64 grid cells
 
+key_noise = jax.random.PRNGKey(1)
+state_structure = jax.ShapeDtypeStruct((1, 64), jnp.float32)
 
-def pd(shape, var):
-    op = lx.DiagonalLinearOperator(jnp.full(shape, var))
-    return lx.TaggedLinearOperator(op, lx.positive_semidefinite_tag)
+# sᵢ, cell positions on [0, 6]
+positions = jnp.linspace(0.0, 6.0, 64)  # (N,)
+# sᵢ laid out as a state
+grid = einx.id("n -> 1 n", positions)  # (N,) → (T, N)
+# x_true = sin s
+truth = jnp.sin(grid)  # (T, N)
+# x_b = 0, a flat background
+background = jnp.zeros((1, 64))  # (T, N)
+# σ_o ε, σ_o = 0.3, ε ~ 𝒩(0, I)
+noise = 0.3 * jax.random.normal(key_noise, (1, 64))  # (T, N)
+# y = x_true + σ_o ε
+obs = truth + noise  # (T, N)
 
-
-oi = vdx.OptimalInterpolation(
-    obs_op=vdx.MaskedIdentity(),
-    prior_mean=x_b,
-    prior_cov_op=pd((1, N), 1.0),  # B
-    obs_cov_op=pd((1, N), 0.3**2),  # R
+# today (lineax)
+# B = I
+prior_cov = lx.IdentityLinearOperator(state_structure)  # (T N, T N) op
+# today (lineax)
+# R = σ_o² I; tagged PSD so the default CG solve accepts it
+obs_cov = lx.TaggedLinearOperator(  # (T N, T N) op
+    0.09 * prior_cov, lx.positive_semidefinite_tag
 )
+# today (vardax)
+# H(x) = m ⊙ x and K = B Hᵀ (H B Hᵀ + R)⁻¹
+model = vdx.OptimalInterpolation(
+    obs_op=vdx.MaskedIdentity(),
+    prior_mean=background,
+    prior_cov_op=prior_cov,
+    obs_cov_op=obs_cov,
+)
+# today (vardax)
+batch = vdx.Batch1D(
+    input=einx.id("t n -> 1 t n", obs),  # (T, N) → (S, T, N)
+    mask=jnp.ones((1, 1, 64)),
+)
+# x* = x_b + K (y − H x_b), one pass, no iteration
+analysis = model(batch)  # → (S, T, N)
 
-batch = vdx.Batch1D(input=y[None], mask=jnp.ones((1, 1, N)), target=truth[None])
-analysis = oi(batch)[0]
-# RMS error: background 0.72, observations 0.33, analysis 0.31
+
+# user
+def rms_error(state: Float[Array, "t n"]) -> Float[Array, ""]:
+    # (x − x_true)²
+    squared_error = (state - truth) ** 2  # (T, N)
+    # √(mean (x − x_true)²)
+    return jnp.sqrt(einx.mean("t n ->", squared_error))  # → ()
+
+
+print(
+    f"RMS error: background {rms_error(background):.2f}, "
+    f"observations {rms_error(obs):.2f}, analysis {rms_error(analysis[0]):.2f}"
+)
 ```
 
-For a correlated background, pass any `lineax` operator — a dense kernel
-matrix, or a structured operator from
-[`gaussx`](https://github.com/jejjohnson/gaussx) — in place of the diagonal
-one. Posterior covariance is a separate concern, handled by the
-[posterior adapters](13_posterior_covariance.md) rather than a method on
-the model.
+It prints `RMS error: background 0.72, observations 0.33, analysis 0.31`.
 
-## Quickstart — Incremental 4DVar
+For a correlated background, pass any `lineax` operator in place of the identity, such as a dense kernel matrix or a structured operator from [`gaussx`](https://github.com/jejjohnson/gaussx). Posterior covariance is a separate concern, handled by the [posterior adapters](13_posterior_covariance.md) rather than a method on the model.
 
-Gauss–Newton outer loops around a conjugate-gradient inner solve, on a
-window of Lorenz-63 observed every other step.
+## Quickstart: incremental 4DVar
 
-```python
-import diffrax as dfx, jax, jax.numpy as jnp, lineax as lx
-import vardax as vdx
+Gauss-Newton outer loops around a conjugate-gradient inner solve, on a window of Lorenz-63 observed every other step.
 
-prior = vdx.DynTrajectory(
-    model=vdx.Lorenz63(sigma=10.0, rho=28.0, beta=8.0 / 3.0),
-    adjoint=dfx.DirectAdjoint(),  # the inner solve needs jvp as well as vjp
+```{code-block} python
+:caption: Minimises the incremental cost [](#eq-incremental-cost) through the Gauss-Newton system [](#eq-gn-system) on a Lorenz-63 [](#eq-lorenz63) window.
+:label: code-index-incremental-quickstart
+import diffrax as dfx
+
+# Shapes: S = 1 window; K = 2,000 steps; T = 21 times; N = 3 state components
+
+key = jax.random.PRNGKey(0)
+key_truth, key_noise = jax.random.split(key)
+state_structure = jax.ShapeDtypeStruct((3,), jnp.float32)
+
+# today (vardax)
+# f(s) = (σ (y − x), x (ρ − z) − y, x y − β z)
+lorenz = vdx.Lorenz63(sigma=10.0, rho=28.0, beta=8.0 / 3.0)
+# today (vardax)
+# DirectAdjoint, because the CG inner solve needs jvp as well as vjp (issue #148)
+dynamics = vdx.DynTrajectory(model=lorenz, adjoint=dfx.DirectAdjoint())
+# today (vardax)
+# Mₜ, steps of Δt = 0.05
+forward = dynamics.as_forward_model(dt=0.05)
+# today (vardax)
+# a run at Δt = 0.01 after 1,000 burn-in steps
+_, run = vdx.simulate_lorenz63(  # → (K, N)
+    key_truth, dt=0.01, n_steps=2000, n_burn_in=1000
 )
-_, states = vdx.simulate_lorenz63(
-    jax.random.PRNGKey(0), dt=0.01, n_steps=2000, n_burn_in=1000
-)
-xs = states[500 : 500 + 5 * 21 : 5]
-mask = jnp.zeros((21, 3)).at[::2].set(1.0)
-y = xs + 0.5 * jax.random.normal(jax.random.PRNGKey(3), xs.shape)
-x_b = xs[0] + jnp.array([1.5, -1.5, 1.5])
+# xₜ, every fifth state of the run, so Δt = 0.05 apart
+truth = run[500:605:5]  # (K, N) → (T, N)
+# m, every other time observed
+mask = jnp.zeros((21, 3)).at[::2].set(1.0)  # (T, N)
+# σ_o ε, σ_o = 0.5, ε ~ 𝒩(0, I)
+noise = 0.5 * jax.random.normal(key_noise, (21, 3))  # (T, N)
+# xₜ + σ_o ε
+noisy_truth = truth + noise  # (T, N)
+# yₜ = m ⊙ (xₜ + σ_o ε)
+obs = mask * noisy_truth  # (T, N)
+# x_b = x_true(t₀) + (1.5, −1.5, 1.5)
+background = truth[0] + jnp.array([1.5, -1.5, 1.5])  # (N,)
 
+# today (lineax)
+identity = lx.IdentityLinearOperator(state_structure)  # (N, N) op
+# today (lineax)
+# B = 4 I
+prior_cov = lx.TaggedLinearOperator(4.0 * identity, lx.positive_semidefinite_tag)
+# today (lineax)
+# R = σ_o² I
+obs_cov = lx.TaggedLinearOperator(0.25 * identity, lx.positive_semidefinite_tag)
+# today (vardax)
+config = vdx.IncrementalConfig(n_outer=3, n_inner=20)
+# today (vardax)
+# δJ(δx) = ½ ‖x⁽ᵏ⁾ + δx − x_b‖²_{B⁻¹} + ½ Σₜ ‖dₜ⁽ᵏ⁾ − H′ₜ M′ₜ δx‖²_{R⁻¹}
 model = vdx.IncrementalFourDVar(
-    forward=prior.as_forward_model(dt=0.05),
+    forward=forward,
     obs_op=vdx.MaskedIdentity(),
-    prior_mean=x_b,
-    prior_cov_op=pd((3,), 4.0),  # B, using pd() from the block above
-    obs_cov_op=pd((3,), 0.25),  # R
-    config=vdx.IncrementalConfig(n_outer=3, n_inner=20),
+    prior_mean=background,
+    prior_cov_op=prior_cov,
+    obs_cov_op=obs_cov,
+    config=config,
 )
+# today (vardax)
+window = vdx.Batch1D(
+    input=einx.id("t n -> 1 t n", obs),  # (T, N) → (S, T, N)
+    mask=einx.id("t n -> 1 t n", mask),  # (T, N) → (S, T, N)
+)
+# 𝐇_GN δx* = −∇J(x⁽ᵏ⁾) by CG, then x⁽ᵏ⁺¹⁾ = x⁽ᵏ⁾ + δx*
+analysis = model(window)  # → (S, N)
 
-batch = vdx.Batch1D(input=(y * mask)[None], mask=mask[None], target=xs[None])
-x_star = model(batch)[0]
-# background error 2.60 → analysis error 0.84
+# ‖x_b − x_true(t₀)‖
+background_error = jnp.linalg.norm(background - truth[0])  # → ()
+# ‖x₀* − x_true(t₀)‖
+analysis_error = jnp.linalg.norm(analysis[0] - truth[0])  # → ()
+print(f"background error {background_error:.2f}, analysis error {analysis_error:.2f}")
 ```
+
+It prints `background error 2.60, analysis error 0.79`.
 
 ## Cycling any model through `pipekit_cycle.DACycle`
 
-All seven methods satisfy `pipekit_cycle.AnalysisStep` via
-`.as_analysis_step()` — the orchestration code is identical:
+All seven methods satisfy `pipekit_cycle.AnalysisStep` via `.as_analysis_step()`, so the orchestration code is identical for each of them. The block below continues the incremental quickstart: it observes the whole Lorenz-63 state at every time of the window, and cycles an OI analysis around each forecast.
 
-```python
+```{code-block} python
+:caption: Cycles the OI analysis [](#eq-blue-mean) around Lorenz-63 [](#eq-lorenz63) forecasts with `pipekit_cycle.DACycle`.
+:label: code-index-dacycle
+import pipekit as pk
 import pipekit_cycle as pc
 
-da_cycle = pc.DACycle(
-    forward_model=somax_model,
-    obs_op=vdx.AveragingKernel(...),
-    analysis_step=model.as_analysis_step(),  # any of the seven
-    obs_source=satellite_loader,
-    n_steps=n_assimilation_windows,
-)
+# Shapes: C = 20 cycles; T = 21 times; N = 3 state components
 
-result, final_state = da_cycle(initial_state, pc.DAState(t=0.0, cycle_count=0))
+# yₜ = xₜ + σ_o ε at every time, one per cycle
+cycle_obs = truth + noise  # (T, N)
+# today (vardax)
+# x_a = x_f + K (y − H x_f), with the forecast x_f as the background
+oi = vdx.OptimalInterpolation(
+    obs_op=vdx.MaskedIdentity(),
+    prior_mean=background,
+    prior_cov_op=prior_cov,
+    obs_cov_op=obs_cov,
+)
+# today (pipekit)
+# cycle c forecasts to t = c + 1, so it reads y_{c+1}
+obs_source = pk.Lambda(lambda cycle: cycle_obs[cycle + 1], name="cycle_obs")
+# today (pipekit_cycle)
+da_cycle = pc.DACycle(
+    forward_model=forward,
+    obs_op=vdx.MaskedIdentity(),
+    # any of the seven
+    analysis_step=oi.as_analysis_step(),
+    obs_source=obs_source,
+    n_steps=20,
+)
+# today (pipekit_cycle)
+initial_state = pc.DAState(t=0.0, cycle_count=0)
+# x_a at t_C, after C forecast-analysis cycles from x_b
+final_analysis, final_state = da_cycle(background, initial_state)  # (N,) → (N,)
+# ‖x_a − x_true(t_C)‖
+final_error = jnp.linalg.norm(final_analysis - truth[-1])  # → ()
+print(f"{final_state.cycle_count} cycles, final error {final_error:.2f}")
 ```
+
+It prints `20 cycles, final error 0.54`.
 
 Swap `OptimalInterpolation` for `IncrementalFourDVar` for `FourDVarNet1D`
 by changing the `analysis_step` slot. Nothing else in the pipeline

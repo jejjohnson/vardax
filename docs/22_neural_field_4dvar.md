@@ -57,23 +57,23 @@ Coordinates put time first, $(t, x, y)$, for the field, the observations
 and the collocation points alike (the convention of the residuals in
 `vardax.examples`):
 
-The block below minimises [](#eq-neural-field-cost) for a small SIREN fitted to 64 noisy samples of the decaying Taylor-Green vortex $\psi = \sin x \sin y e^{-2 \nu t}$ with $\nu = 0.1$, which solves the unforced vorticity equation exactly; it runs on a CPU in seconds. A real analysis uses a wider and deeper network, more collocation points and a step budget in the tens of thousands.
+A small SIREN is fitted to 64 noisy samples of the decaying Taylor-Green vortex $\psi = \sin x \sin y e^{-2 \nu t}$ with $\nu = 0.1$, which solves the unforced vorticity equation exactly; the example runs on a CPU in seconds. A real analysis uses a wider and deeper network, more collocation points and a step budget in the tens of thousands.
 
-```python
+```{code-block} python
+:caption: Minimises the neural-field cost [](#eq-neural-field-cost) for a SIREN field [](#eq-neural-field) fitted to point observations [](#eq-point-obs-cost) of a Taylor-Green vortex, then evaluates it and runs it as a cycle step.
+:label: code-neural-field-taylor-green
 import einx
-import geonnax
+import geonnax as gnx
 import jax
 import jax.numpy as jnp
 import optax
 import vardax as vdx
 from jaxtyping import Array, Float, PRNGKeyArray
-from vardax.examples import navier_stokes_vorticity_2d
 
 # Shapes: K = 64 observations; N_c = 32 collocation points; N = 25 grid points
 
-key_init, key_coords, key_noise, key_fit, key_cycle = jax.random.split(
-    jax.random.PRNGKey(0), 5
-)
+key = jax.random.PRNGKey(0)
+key_init, key_coords, key_noise, key_fit, key_cycle = jax.random.split(key, 5)
 viscosity = 0.1
 # the window (t, x, y) ∈ [0, 1] × [0, π]²
 box_low = jnp.array([0.0, 0.0, 0.0])  # (3,)
@@ -88,32 +88,45 @@ def sample_box(key: PRNGKeyArray) -> Float[Array, "c 3"]:
 
 # user
 def taylor_green(point: Float[Array, " 3"]) -> Float[Array, ""]:
+    # −2νt
+    exponent = -2.0 * viscosity * point[0]  # → ()
+    # e^{−2νt}
+    decay = jnp.exp(exponent)  # → ()
+    # sin x
+    sin_x = jnp.sin(point[1])  # → ()
+    # sin y
+    sin_y = jnp.sin(point[2])  # → ()
     # ψ(t, x, y) = sin x sin y e^{−2νt}
-    decay = jnp.exp(-2.0 * viscosity * point[0])  # → ()
-    return jnp.sin(point[1]) * jnp.sin(point[2]) * decay
+    return sin_x * sin_y * decay
 
 
+batched_taylor_green = jax.vmap(taylor_green)
 # (t_k, x_k, y_k) ~ U(window)
 obs_coords = jax.random.uniform(  # (K, 3)
     key_coords, (64, 3), minval=box_low, maxval=box_high
 )
-# y_k = ψ(t_k, s_k) + σ ε_k, with σ = 0.05
+# σ ε_k, with σ = 0.05
 obs_noise = 0.05 * jax.random.normal(key_noise, (64,))  # (K,)
-obs_values = jax.vmap(taylor_green)(obs_coords) + obs_noise  # (K, 3) → (K,)
+# user
+# ψ(t_k, s_k)
+obs_signal = batched_taylor_green(obs_coords)  # (K, 3) → (K,)
+# y_k = ψ(t_k, s_k) + σ ε_k
+obs_values = obs_signal + obs_noise  # (K,)
+# σ_k = 0.05
+obs_sigma = jnp.full((64,), 0.05)  # (K,)
+# m_k = 1
+obs_valid = jnp.ones((64,), dtype=bool)  # (K,)
 # today (vardax)
 obs = vdx.PointObsBatch(
-    coords=obs_coords,
-    values=obs_values,
-    sigma=jnp.full((64,), 0.05),
-    valid=jnp.ones((64,), dtype=bool),
+    coords=obs_coords, values=obs_values, sigma=obs_sigma, valid=obs_valid
 )
 
 # today (geonnax)
 # f_θ: (t, x, y) ↦ ψ
-initial_field = geonnax.SIREN.init(3, 16, 1, depth=2, first_omega=3.0, key=key_init)
+initial_field = gnx.SIREN.init(3, 16, 1, depth=2, first_omega=3.0, key=key_init)
 # today (vardax)
 # 𝒩[ψ] = ∂ₜω + u·∇ω − ν Δω, with ω = Δψ and u = ∇^⊥ψ
-vorticity_residual = navier_stokes_vorticity_2d(viscosity)
+vorticity_residual = vdx.examples.navier_stokes_vorticity_2d(viscosity)
 # today (vardax)
 # λ/(2 N_c) Σⱼ ‖𝒩[f_θ](c_j)‖², with the c_j drawn once per analysis
 physics_penalty = vdx.ResidualPenalty(
@@ -122,8 +135,10 @@ physics_penalty = vdx.ResidualPenalty(
     sampler=sample_box,
     weight=1e-2,
 )
+# today (optax)
+adam = optax.adam(1e-2)
 # today (vardax)
-minimiser = vdx.OptaxMinimiser(optax.adam(1e-2), max_steps=300)
+minimiser = vdx.OptaxMinimiser(adam, max_steps=300)
 # today (vardax)
 # J(θ) = J_o(θ) + λ/(2 N_c) Σⱼ ‖𝒩[f_θ](c_j)‖² + α/2 ‖θ‖²
 analysis = vdx.SpaceTimeFieldVar(
@@ -132,14 +147,16 @@ analysis = vdx.SpaceTimeFieldVar(
     weight_decay=1e-6,
     minimiser=minimiser,
 )
+# today (vardax)
 # θ* = argmin_θ J(θ)
 result = analysis(obs, key=key_fit)
 
 # s_j on a 5 × 5 grid of [0, π]²
 axis_points = jnp.linspace(0.0, jnp.pi, 5)  # (5,)
 grid = einx.id("a, b -> (a b) (1 + 1)", axis_points, axis_points)  # (N, 2)
+snapshot_time = jnp.float32(0.5)  # → ()
 # (t, s_j) with t = 0.5
-points = einx.id(", n d -> n (1 + d)", jnp.float32(0.5), grid)  # (N, 2) → (N, 3)
+points = einx.id(", n d -> n (1 + d)", snapshot_time, grid)  # (N, 2) → (N, 3)
 # today (vardax)
 # u(0.5, s_j) = f_θ*(0.5, s_j)
 field_values = result.evaluate(points)  # (N, 3) → (N,)
@@ -149,11 +166,20 @@ initial_condition = result.initial_condition(grid)  # (N, 2) → (N,)
 # today (vardax)
 # the collocation points are drawn once here and reused by every cycle
 step = analysis.as_analysis_step(grid, key=key_cycle)
+# today (vardax)
 # x₀ = u(t₀, s_j) for this cycle; without a grid the step returns the result
 cycle_state = step(None, obs)  # → (N,)
-truth = jax.vmap(taylor_green)(points)  # (N, 3) → (N,)
+# user
+# ψ(0.5, s_j)
+truth = batched_taylor_green(points)  # (N, 3) → (N,)
+# u − ψ
+field_error = field_values - truth  # (N,)
+# ‖u − ψ‖
+error_norm = jnp.linalg.norm(field_error)  # → ()
+# ‖ψ‖
+truth_norm = jnp.linalg.norm(truth)  # → ()
 # ‖u − ψ‖ / ‖ψ‖ on the grid
-relative_error = jnp.linalg.norm(field_values - truth) / jnp.linalg.norm(truth)
+relative_error = error_norm / truth_norm  # → ()
 print(f"{int(result.num_steps)} steps, ‖∇J‖ = {result.grad_norm:.0f}")
 print(f"relative error {relative_error:.2f}, cycle state {cycle_state.shape}")
 ```

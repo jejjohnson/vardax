@@ -11,7 +11,9 @@ A MAP estimate $x^*$ is the start of the answer, not the end. Real DA needs a po
 
 Every analysis emits a `Posterior(mean, cov, samples, provenance)`:
 
-```python
+```{code-block} python
+:caption: Lists the fields of `vdx.Posterior`, which carries the mean x* and covariance P* of [](#eq-oi-posterior).
+:label: code-postcov-container
 from typing import Any
 
 import equinox as eqx
@@ -44,11 +46,13 @@ five methods pair with an explicit `PosteriorAdapter`.
 
 For `OptimalInterpolation`, the posterior is exact: $P^*$ is the BLUE covariance [](#eq-blue-cov).
 
-The examples on this page share one toy problem. The state has $N = 6$ cells on a ring, and the forward model averages each cell with its right neighbour, $x_{t+1} = A x_t$ with $A = \frac{1}{2}(I + P)$ and $P$ the cyclic shift. The background is $x_b = 0$ with $B = I$, a window has $T = 3$ times, only cells 0 to 2 are observed (mask $m_t$), and $y_t = x_t + \sigma \varepsilon_t$ with $R = \sigma^2 I$, $\sigma = 0.5$. OI analyses the first time of the window on its own, with $H = I$ on the observed cells, and the block computes the diagonal of [](#eq-blue-cov). It continues the one above.
+The examples on this page share one toy problem. The state has $N = 6$ cells on a ring, and the forward model averages each cell with its right neighbour, $x_{t+1} = A x_t$ with $A = \frac{1}{2}(I + P)$ and $P$ the cyclic shift. The background is $x_b = 0$ with $B = I$, a window has $T = 3$ times, only cells 0 to 2 are observed (mask $m_t$), and $y_t = x_t + \sigma \varepsilon_t$ with $R = \sigma^2 I$, $\sigma = 0.5$. OI analyses the first time of the window on its own, with $H = I$ on the observed cells. The block continues the one above.
 
-```python
+```{code-block} python
+:caption: Builds the toy ring problem and reads the diagonal of the OI posterior covariance [](#eq-blue-cov).
+:label: code-postcov-oi
 import einx
-import gaussx
+import gaussx as gx
 import jax
 import jax.numpy as jnp
 import vardax as vdx
@@ -84,30 +88,39 @@ truth_1 = forward.step(truth, 1.0)  # (N,)
 # x₂ = A x₁
 truth_2 = forward.step(truth_1, 1.0)  # (N,)
 truth_trajectory = jnp.stack([truth, truth_1, truth_2])  # (T, N)
-# mₜ: cells 0, 1 and 2 observed at every time
-observed_cells = (jnp.arange(6) < 3).astype(jnp.float32)  # (N,)
+cell_index = jnp.arange(6)  # (N,)
+# cells 0, 1 and 2 observed
+is_observed = cell_index < 3  # (N,) bool
+observed_cells = is_observed.astype(jnp.float32)  # (N,)
+# mₜ: the same cells at every time
 mask = einx.id("n -> t n", observed_cells, t=3)  # (N,) → (T, N)
+# εₜ ~ 𝒩(0, I)
+obs_noise = jax.random.normal(key_noise, (3, 6))  # (T, N)
 # yₜ = xₜ + σ εₜ
-window_obs = truth_trajectory + 0.5 * jax.random.normal(key_noise, (3, 6))
+window_obs = truth_trajectory + 0.5 * obs_noise  # (T, N)
+window_input = einx.id("t n -> 1 t n", window_obs)  # (T, N) → (S, T, N)
+window_mask = einx.id("t n -> 1 t n", mask)  # (T, N) → (S, T, N)
 # today (vardax)
-window = vdx.Batch1D(
-    input=einx.id("t n -> 1 t n", window_obs),  # (T, N) → (S, T, N)
-    mask=einx.id("t n -> 1 t n", mask),
-)
+window = vdx.Batch1D(input=window_input, mask=window_mask)
 
 state_structure = jax.ShapeDtypeStruct((6,), jnp.float32)
 # B = I
 prior_cov = lx.IdentityLinearOperator(state_structure)  # (N, N) op
-# R = σ² I; tagged PSD so the default CG solve accepts it
+# R = σ² I
+scaled_identity = jnp.float32(0.25) * prior_cov  # (N, N) op
+# tagged PSD so the default CG solve accepts it
 obs_cov = lx.TaggedLinearOperator(  # (N, N) op
-    jnp.float32(0.25) * prior_cov, lx.positive_semidefinite_tag
+    scaled_identity, lx.positive_semidefinite_tag
 )
 
 # the same B and R on a single time, shape (1, N)
 snapshot_structure = jax.ShapeDtypeStruct((1, 6), jnp.float32)
+# B = I
 snapshot_prior_cov = lx.IdentityLinearOperator(snapshot_structure)  # (N, N) op
+# R = σ² I
+snapshot_scaled_identity = jnp.float32(0.25) * snapshot_prior_cov  # (N, N) op
 snapshot_obs_cov = lx.TaggedLinearOperator(  # (N, N) op
-    jnp.float32(0.25) * snapshot_prior_cov, lx.positive_semidefinite_tag
+    snapshot_scaled_identity, lx.positive_semidefinite_tag
 )
 # today (vardax)
 snapshot = vdx.Batch1D(
@@ -121,11 +134,12 @@ oi = vdx.OptimalInterpolation(
     snapshot_prior_cov,
     snapshot_obs_cov,
 )
+# today (vardax)
 # P* = (B⁻¹ + Hᵀ R⁻¹ H)⁻¹
-oi_posterior = oi.posterior(snapshot)
+oi_posterior = oi.posterior(snapshot)  # cov (N, N) PSD op
 # today (gaussx)
 # diag(P*) = 1 / (1 + σ⁻²) where observed, 1 elsewhere
-oi_variance = gaussx.diag(oi_posterior.cov)  # (N,)
+oi_variance = gx.diag(oi_posterior.cov)  # (N, N) op → (N,)
 print(" ".join(f"{variance:.2f}" for variance in oi_variance))
 ```
 
@@ -157,9 +171,11 @@ where $\mathbf{H}_\text{GN}$ is evaluated along the analysis trajectory, $M'_t$ 
 
 For `WeakFourDVar`, the control is $(x_0, \eta_1, \ldots, \eta_T)$ of the weak-constraint cost [](#eq-weak4dvar-cost), and the precision gains $Q_t^{-1}$ on each $\eta_t$. The adapter returns the $x_0$ block of the inverse, which is the Kalman-smoother covariance of $x_0$ in the linear-Gaussian case. Pass `analysis=(x0, eta)`.
 
-The strong 4DVar of the toy window and its Laplace posterior [](#eq-gn-cov) follow; `gaussx.diag` reads the posterior variances off the lazy operator. The block continues the one above.
+`gaussx.diag` reads the posterior variances off the lazy operator. The block continues the one above.
 
-```python
+```{code-block} python
+:caption: Runs the strong 4DVar of the toy window and reads the variances of its Laplace posterior [](#eq-gn-cov).
+:label: code-postcov-laplace
 # Shapes: S = 1 window; T = 3 times; N = 6 cells
 
 # today (vardax)
@@ -171,14 +187,15 @@ strong = vdx.StrongFourDVar(
     obs_cov_op=obs_cov,
 )
 # x₀* = argmin J(x₀), one window
-initial_analysis = strong(window)[0]  # (S, N) → (N,)
+window_analysis = strong(window)  # (S, T, N) → (S, N)
+initial_analysis = window_analysis[0]  # (S, N) → (N,)
 # today (vardax)
 laplace = vdx.LaplaceCovariance(prior_cov_op=prior_cov, obs_cov_op=obs_cov)
 # P*_GN = (B⁻¹ + Σₜ (H′ₜ M′ₜ←₀)ᵀ Rₜ⁻¹ (H′ₜ M′ₜ←₀))⁻¹
-laplace_posterior = laplace(initial_analysis, strong, window)
+laplace_posterior = laplace(initial_analysis, strong, window)  # cov (N, N) PSD op
 # today (gaussx)
 # diag(P*_GN)
-posterior_variance = gaussx.diag(laplace_posterior.cov)  # (N,)
+posterior_variance = gx.diag(laplace_posterior.cov)  # (N, N) op → (N,)
 print(" ".join(f"{variance:.2f}" for variance in posterior_variance))
 ```
 
@@ -210,15 +227,20 @@ running multiple MAPs from perturbed starting points.
 
 `GaussNewtonHessian` builds the same [](#eq-gn-cov) as `LaplaceCovariance` and exposes the Krylov budget (`n_krylov`, `tol`). The block continues the one above.
 
-```python
+```{code-block} python
+:caption: Rebuilds the Gauss-Newton posterior [](#eq-gn-cov) with a capped Krylov budget and checks it against the Laplace variances.
+:label: code-postcov-gauss-newton
+# Shapes: S = 1 window; T = 3 times; N = 6 cells
+
 # today (vardax)
 gauss_newton = vdx.GaussNewtonHessian(
     prior_cov_op=prior_cov, obs_cov_op=obs_cov, n_krylov=50
 )
 # P*_GN, with CG capped at 50 iterations per mat-vec
-gauss_newton_posterior = gauss_newton(initial_analysis, strong, window)
+gauss_newton_posterior = gauss_newton(initial_analysis, strong, window)  # cov (N, N)
 # today (gaussx)
-gauss_newton_variance = gaussx.diag(gauss_newton_posterior.cov)  # (N,)
+# diag(P*_GN)
+gauss_newton_variance = gx.diag(gauss_newton_posterior.cov)  # (N, N) op → (N,)
 print(bool(jnp.allclose(gauss_newton_variance, posterior_variance, atol=1e-4)))
 ```
 
@@ -240,23 +262,30 @@ where each member $x^{(m)}$ is a separate vardax analysis with a perturbed initi
 
 Here the $M = 8$ members re-run the strong 4DVar above on perturbed observations $y^{(m)} = y + \sigma \varepsilon^{(m)}$, and $\lambda = 1.1$ inflates the sample covariance [](#eq-ensemble-cov). `StrongFourDVar` already maps over the leading axis of a batch, so the members run in parallel without a `vmap`. The block continues the one above.
 
-```python
+```{code-block} python
+:caption: Re-runs the strong 4DVar on perturbed observations and forms the inflated ensemble covariance [](#eq-ensemble-cov).
+:label: code-postcov-ensemble
 # Shapes: M = 8 members; T = 3 times; N = 6 cells
 
+# ε⁽ᵐ⁾ ~ 𝒩(0, I)
+member_eps = jax.random.normal(key_members, (8, 3, 6))  # (M, T, N)
+# σ ε⁽ᵐ⁾
+member_noise = 0.5 * member_eps  # (M, T, N)
 # y⁽ᵐ⁾ = y + σ ε⁽ᵐ⁾
-member_noise = 0.5 * jax.random.normal(key_members, (8, 3, 6))  # (M, T, N)
-perturbed_obs = window.input + member_noise  # (S, T, N) → (M, T, N)
-# today (vardax)
-member_batch = vdx.Batch1D(
-    input=perturbed_obs,
-    mask=einx.id("t n -> m t n", mask, m=8),  # (T, N) → (M, T, N)
+perturbed_obs = einx.add(  # (T, N) → (M, T, N)
+    "t n, m t n -> m t n", window_obs, member_noise
 )
+member_mask = einx.id("t n -> m t n", mask, m=8)  # (T, N) → (M, T, N)
+# today (vardax)
+member_batch = vdx.Batch1D(input=perturbed_obs, mask=member_mask)
 # x⁽ᵐ⁾ = argmin J(x₀; y⁽ᵐ⁾)
 member_analyses = strong(member_batch)  # (M, T, N) → (M, N)
 # today (vardax)
 ensemble = vdx.EnsembleCovariance(n_members=8, inflation=1.1)
+# today (vardax)
+analysis_step = strong.as_analysis_step()
 # P*_ens = λ (1/(M − 1)) Σₘ (x⁽ᵐ⁾ − x̄)(x⁽ᵐ⁾ − x̄)ᵀ
-ensemble_posterior = ensemble(member_analyses, strong.as_analysis_step(), window)
+ensemble_posterior = ensemble(member_analyses, analysis_step, window)
 print(ensemble_posterior.mean.shape, ensemble_posterior.samples.shape)
 ```
 
@@ -285,14 +314,19 @@ anything spatial.
 Per-event posteriors feed downstream population models (TMTPP,
 hierarchical Bayesian) via a serialisable mark-likelihood:
 
-```python
+```{code-block} python
+:caption: Wraps the Laplace posterior [](#eq-gn-cov) of the toy window in a `GaussianMarkLikelihood` and serialises it to JSON.
+:label: code-postcov-mark-export
 import json
+
+# Shapes: N = 6 cells
 
 # today (vardax)
 mark = vdx.GaussianMarkLikelihood(
     posterior=laplace_posterior,
     event_metadata={"event_id": "toy-0001", "time": "2024-01-15T12:00Z"},
 )
+# today (vardax)
 # mean, diag(P*), samples, provenance and metadata as plain lists and dicts
 record = mark.to_dict()
 serialised = json.dumps(record)

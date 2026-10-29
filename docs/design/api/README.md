@@ -131,63 +131,114 @@ fast paths that don't need an adapter call.
 
 ## Import conventions
 
-```python
+```{code-block} python
+:caption: Lists the target import path of every public name, layer by layer, for the layout in [the target package structure](../architecture.md#package-structure-target).
+:label: code-design-api-imports
 # Protocols
+# today (pipekit_cycle); also re-exported today as vdx.<name>
+from pipekit_cycle import AnalysisStep, ForwardModel, ObservationOperator
+
+# proposed (architecture.md); every name ships today as vdx.<name>
 from vardax.protocols import (
-    ForwardModel, ObservationOperator, AnalysisStep,           # from pipekit-cycle
-    Prior, GradModulator, CostFunction, PosteriorAdapter, Minimiser,
+    CostFunction,
+    GradModulator,
+    Minimiser,
+    PosteriorAdapter,
+    Prior,
 )
 
-# Layer 1 — Components
-from vardax.priors import (
-    BilinAEPrior, ConvAEPrior, MLPAEPrior, IdentityPrior, DynamicalPrior,
-)
+# Layer 1: Components
+# proposed (architecture.md); both names ship today as vdx.<name>
+from vardax.priors import DynamicalPrior, IdentityPrior
+
+# proposed (architecture.md); ship today only as vdx.BilinAEPrior1D/2D, …
+from vardax.priors import BilinAEPrior, ConvAEPrior, MLPAEPrior
+
+# proposed (architecture.md); every name ships today as vdx.<name>
 from vardax.obs_operators import (
-    MaskedIdentity, LinearObs, AveragingKernel,
-    MultiInstrumentFusion, InstrumentRegistry,
-)
-from vardax.costs import (
-    obs_cost, prior_cost, model_error_cost,
-    variational_cost, incremental_cost, threedvar_cost,
-    blue_analysis,                              # closed-form for OptimalInterpolation
-)
-from vardax.grad_mod import (
-    ConvLSTMGradMod1D, ConvLSTMGradMod2D, MLPGradMod, IdentityGradMod,
-)
-from vardax.posterior import (
-    LaplaceCovariance, GaussNewtonHessian, EnsembleCovariance,
-    GaussianMarkLikelihood,
+    AveragingKernel,
+    InstrumentRegistry,
+    LinearObs,
+    MaskedIdentity,
+    MultiInstrumentFusion,
 )
 
-# Layer 2 — Models (seven peer classes)
+# proposed (architecture.md); both names ship today as vdx.<name>
+from vardax.costs import prior_cost, variational_cost
+
+# proposed (architecture.md); obs_cost ships today only as vdx.obs_cost_1d / _2d
+# blue_analysis is the closed form for OptimalInterpolation
+from vardax.costs import (
+    blue_analysis,
+    incremental_cost,
+    model_error_cost,
+    obs_cost,
+    threedvar_cost,
+)
+
+# proposed (architecture.md); both names ship today as vdx.<name>
+from vardax.grad_mod import ConvLSTMGradMod1D, ConvLSTMGradMod2D
+
+# proposed (architecture.md); not shipped
+from vardax.grad_mod import IdentityGradMod, MLPGradMod
+
+# proposed (architecture.md); every name ships today as vdx.<name>
+from vardax.posterior import (
+    EnsembleCovariance,
+    GaussianMarkLikelihood,
+    GaussNewtonHessian,
+    LaplaceCovariance,
+)
+
+# Layer 2: Models (seven peer classes)
+# proposed (architecture.md); all but FourDVarNet ship today as vdx.<name>,
+# FourDVarNet ships as vdx.FourDVarNet1D / FourDVarNet2D
 from vardax.models import (
-    OptimalInterpolation,
-    ThreeDVar,
-    StrongFourDVar,
-    WeakFourDVar,
-    IncrementalFourDVar,
-    FourDVarNet,
     AmortizedPosterior,
+    FourDVarNet,
+    IncrementalFourDVar,
+    OptimalInterpolation,
+    StrongFourDVar,
+    ThreeDVar,
+    WeakFourDVar,
 )
 
 # Configs + containers
+# today (vardax)
 from vardax import (
-    SolverConfig, IncrementalConfig, AmortizedConfig,
-    Batch1D, Batch2D, Batch2DMultivar, Posterior,
+    AmortizedConfig,
+    Batch1D,
+    Batch2D,
+    Batch2DMultivar,
+    IncrementalConfig,
+    Posterior,
 )
 
-# Training
-from vardax.training import train_step, eval_step, reconstruction_loss
+# proposed (architecture.md); not shipped
+from vardax import SolverConfig
 
-# Adjoints — vardax-owned, otherwise import from optimistix / diffrax
+# Training
+# proposed (architecture.md); every name ships today as vdx.<name>
+from vardax.training import eval_step, reconstruction_loss, train_step
+
+# Adjoints: vardax-owned, otherwise import from optimistix / diffrax
+# today (vardax)
 from vardax.adjoints import OneStepAdjoint
+
+# today (optimistix)
 import optimistix as optx
+
+# today (diffrax)
 import diffrax as dfx
 
 # Pipekit composition (required)
+# today (pipekit)
 import pipekit as pk
+
+# today (pipekit_cycle)
 import pipekit_cycle as pc
 
 # Persistence (optional [persist] extra)
-from vardax.persist import save, load
+# proposed (D13); vardax.persist is not shipped
+from vardax.persist import load, save
 ```

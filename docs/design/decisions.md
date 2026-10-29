@@ -295,27 +295,56 @@ proof of concept but is the wrong long-term design:
 Vardax exposes both as constructor slots and delegates the actual
 gradient computation upstream:
 
-```python
+```{code-block} python
+:caption: Declares the two adjoint slots of `StrongFourDVar`, one for the analysis that minimises [](#eq-strong4dvar-cost) (via [](#eq-implicit-grad) by default) and one for the rollout [](#eq-rollout).
+:label: code-design-decisions-adjoint-slots
+import diffrax as dfx
+import equinox as eqx
+import optimistix as optx
+
+
+# today* (vardax)
 class StrongFourDVar(eqx.Module):
     ...
-    minimiser: optimistix.AbstractMinimiser
-    minimiser_adjoint: optimistix.AbstractAdjoint = ImplicitAdjoint()
-    forward_adjoint: diffrax.AbstractAdjoint = RecursiveCheckpointAdjoint()
+    minimiser: optx.AbstractMinimiser
+    # today (optimistix)
+    # dx*/dθ = −(∇²ₓJ)⁻¹ ∇²ₓθ J
+    minimiser_adjoint: optx.AbstractAdjoint = optx.ImplicitAdjoint()
+    # today (diffrax); vardax ships default None (keep the forward's own adjoint)
+    forward_adjoint: dfx.AbstractAdjoint = dfx.RecursiveCheckpointAdjoint()
 ```
 
 A user who wants the operational memory profile:
 
-```python
-minimiser_adjoint = optimistix.ImplicitAdjoint()
-forward_adjoint = diffrax.BacksolveAdjoint()
+```{code-block} python
+:caption: Picks the implicit-function adjoint [](#eq-implicit-grad) for the analysis and the continuous adjoint [](#eq-adjoint-ode) for the rollout.
+:label: code-design-decisions-operational-adjoints
+import diffrax as dfx
+import optimistix as optx
+
+# today (optimistix)
+# dx*/dθ = −(∇²ₓJ)⁻¹ ∇²ₓθ J
+minimiser_adjoint = optx.ImplicitAdjoint()
+# today (diffrax)
+# dλ/dt = −(∂f/∂x)ᵀ λ, integrated backwards
+forward_adjoint = dfx.BacksolveAdjoint()
 ```
 
 A user training `FourDVarNet`:
 
-```python
-minimiser_adjoint = optimistix.RecursiveCheckpointAdjoint()
-# or — once contributed upstream:
-minimiser_adjoint = vardax.adjoints.OneStepAdjoint()   # Bolte et al. 2023
+```{code-block} python
+:caption: Picks the adjoint that trains `FourDVarNet` through its unrolled solver [](#eq-4dvarnet-update) under the loss [](#eq-4dvarnet-loss).
+:label: code-design-decisions-fourdvarnet-adjoints
+import optimistix as optx
+import vardax as vdx
+
+# today (optimistix); the FourDVarNet*D slot is named solver_adjoint
+# backpropagate through every unrolled step
+minimiser_adjoint = optx.RecursiveCheckpointAdjoint()
+# or, once contributed upstream:
+# today (vardax)
+# differentiate the last step only (Bolte et al. 2023)
+minimiser_adjoint = vdx.adjoints.OneStepAdjoint()
 ```
 
 **Apply.**

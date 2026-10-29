@@ -87,10 +87,11 @@ treats "is it calibrated?" as a first-class question. The validation
 gates of the [six-step cycle](14_six_step_cycle.md) are the
 enforcement mechanism:
 
-The block below runs all three gates on a conjugate Gaussian toy: $x \sim \mathcal{N}(0, I)$ in two dimensions and $y = x + \sigma \varepsilon$ with $\sigma = 0.5$, whose exact posterior is $\mathcal{N}(\mu(y), s^2 I)$ with $\mu(y) = y / (1 + \sigma^2)$ and $s^2 = \sigma^2 / (1 + \sigma^2)$ (the BLUE [](#eq-blue-mean) and [](#eq-blue-cov) with $H = B = I$ and $R = \sigma^2 I$).
-After simulation-based calibration, it checks the posterior gate [](#eq-gate-posterior) and the Jacobian gate [](#eq-gate-jacobian).
+The toy problem is conjugate Gaussian: $x \sim \mathcal{N}(0, I)$ in two dimensions and $y = x + \sigma \varepsilon$ with $\sigma = 0.5$, whose exact posterior is $\mathcal{N}(\mu(y), s^2 I)$ with $\mu(y) = y / (1 + \sigma^2)$ and $s^2 = \sigma^2 / (1 + \sigma^2)$ (the BLUE [](#eq-blue-mean) and [](#eq-blue-cov) with $H = B = I$ and $R = \sigma^2 I$).
 
-```python
+```{code-block} python
+:caption: Runs simulation-based calibration, the posterior gate [](#eq-gate-posterior) and the Jacobian gate [](#eq-gate-jacobian) on a conjugate Gaussian toy whose exact posterior is the BLUE [](#eq-blue-mean) and [](#eq-blue-cov).
+:label: code-uncertainty-gates
 import einx
 import jax
 import jax.numpy as jnp
@@ -100,9 +101,8 @@ from jaxtyping import Array, Float, PRNGKeyArray
 
 # Shapes: N = 2 state; S = 50 posterior samples; K = 100 calibration runs
 
-key_calibration, key_truth, key_noise, key_probe = jax.random.split(
-    jax.random.PRNGKey(0), 4
-)
+key = jax.random.PRNGKey(0)
+key_calibration, key_truth, key_noise, key_probe = jax.random.split(key, 4)
 noise_std = 0.5
 # s² = σ² / (1 + σ²), the conjugate posterior variance
 posterior_var = noise_std**2 / (1.0 + noise_std**2)  # → ()
@@ -116,8 +116,12 @@ def sample_prior(key: PRNGKeyArray) -> Float[Array, " n"]:
 
 # user
 def simulate_obs(state: Float[Array, " n"], key: PRNGKeyArray) -> Float[Array, " n"]:
-    # y = x + σ ε, ε ~ 𝒩(0, I)
-    return state + noise_std * jax.random.normal(key, (2,))
+    # ε ~ 𝒩(0, I)
+    noise = jax.random.normal(key, (2,))
+    # σ ε
+    scaled_noise = noise_std * noise
+    # y = x + σ ε
+    return state + scaled_noise
 
 
 # user
@@ -132,10 +136,21 @@ def sample_posterior(
 ) -> Float[Array, "s n"]:
     # δ ~ 𝒩(0, I)
     noise = jax.random.normal(key, (n_samples, 2))  # (S, N)
+    # user
+    # μ(y)
+    mean = posterior_mean(obs)  # (N,)
+    # s = √(s²)
+    posterior_std = jnp.sqrt(posterior_var)  # → ()
+    # s δ
+    scaled_noise = posterior_std * noise  # (S, N)
     # x = μ(y) + s δ
-    return einx.add(
-        "n, s n -> s n", posterior_mean(obs), jnp.sqrt(posterior_var) * noise
-    )
+    return einx.add("n, s n -> s n", mean, scaled_noise)
+
+
+# user
+def fast_mean_map(obs: Float[Array, " n"]) -> Float[Array, " n"]:
+    # μ_fast(y) = 0.79 y, a slightly wrong posterior-mean map
+    return 0.79 * obs
 
 
 # today (vardax)
@@ -149,25 +164,35 @@ ranks = vdx.simulation_based_calibration(  # → (K,)
     n_samples=50,
 )
 # rank counts in five bins of [0, 50]
-rank_counts = jnp.histogram(ranks, bins=5, range=(0, 50))[0]  # (5,)
+rank_counts, _ = jnp.histogram(ranks, bins=5, range=(0, 50))  # (K,) → (5,)
 print(rank_counts)
 
-# y = x + σ ε for one fresh truth x
-obs = simulate_obs(sample_prior(key_truth), key_noise)  # (N,)
+# user
+# x ~ 𝒩(0, I), one fresh truth
+fresh_truth = sample_prior(key_truth)  # (N,)
+# user
+# y = x + σ ε
+obs = simulate_obs(fresh_truth, key_noise)  # (N,)
+# s² at every component
+oracle_variance = jnp.full((2,), posterior_var)  # (N,)
 # today (lineax)
 # Σ = s² I
-oracle_cov = lx.DiagonalLinearOperator(jnp.full((2,), posterior_var))  # (N, N) op
+oracle_cov = lx.DiagonalLinearOperator(oracle_variance)  # (N, N) op
+# user
+# μ_oracle = μ(y)
+oracle_mean = posterior_mean(obs)  # (N,)
 # today (vardax)
-oracle = vdx.Posterior(mean=posterior_mean(obs), cov=oracle_cov)
-# today (vardax)
+oracle = vdx.Posterior(mean=oracle_mean, cov=oracle_cov)
 # a fast mean off by 0.1, below the oracle σ = s ≈ 0.45
-fast = vdx.Posterior(mean=posterior_mean(obs) + 0.1)
+fast_mean = oracle_mean + 0.1  # (N,)
+# today (vardax)
+fast = vdx.Posterior(mean=fast_mean)
 # today (vardax)
 # |μ_fast − μ_oracle| / σ_oracle ≤ 1
 vdx.assert_posterior_agreement(fast, oracle, tolerance_sigma=1.0)
 # today (vardax)
 # ‖J_fast v − J_oracle v‖ / ‖J_oracle v‖ < 0.05, J_fast = 0.79 I, J_oracle = 0.8 I
-vdx.assert_adjoint_calibrated(lambda y: 0.79 * y, posterior_mean, obs, key=key_probe)
+vdx.assert_adjoint_calibrated(fast_mean_map, posterior_mean, obs, key=key_probe)
 ```
 
 It prints the rank counts `[24. 12. 19. 23. 22.]`, roughly flat for 100 runs, and both assertions pass silently.

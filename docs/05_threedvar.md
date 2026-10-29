@@ -38,9 +38,11 @@ This is the right regime for:
 
 The example below has a nonlinear operator $H(x) = \exp(x)$, applied cell by cell, on a grid of $N = 8$ cells at a single time.
 The background is $x_b = 0$ with $B = I$, the truth is a draw around it, and the observations are $y = \exp(x_\text{true}) + \varepsilon$ with $R = \sigma^2 I$ and $\sigma = 0.1$.
-`ThreeDVar` takes a batch of $S$ samples, each of shape $(T, N)$, and minimises [](#eq-3dvar-cost).
+`ThreeDVar` takes a batch of $S$ samples, each of shape $(T, N)$.
 
-```python
+```{code-block} python
+:caption: Minimises the 3DVar cost [](#eq-3dvar-cost) for the nonlinear operator H(x) = exp(x) with ThreeDVar.
+:label: code-threedvar-analysis
 import einx
 import jax
 import jax.numpy as jnp
@@ -50,21 +52,30 @@ import vardax as vdx
 
 # Shapes: S = 1 sample; T = 1 time; N = 8 grid cells
 
-key_truth, key_noise = jax.random.split(jax.random.PRNGKey(0))
+key = jax.random.PRNGKey(0)
+key_truth, key_noise = jax.random.split(key)
 state_structure = jax.ShapeDtypeStruct((1, 8), jnp.float32)
 
+# today (lineax)
 # B = I
 prior_cov = lx.IdentityLinearOperator(state_structure)  # (T N, T N) op
+# today (lineax)
 # R = σ² I, σ = 0.1; tagged PSD so the default CG solve accepts it
 obs_cov = lx.TaggedLinearOperator(  # (T N, T N) op
     jnp.float32(0.01) * prior_cov, lx.positive_semidefinite_tag
 )
 # x_b = 0
 background = jnp.zeros((1, 8))  # (T, N)
-# x_true = x_b + 0.3 δ,  δ ~ 𝒩(0, I)
-truth = background + 0.3 * jax.random.normal(key_truth, (1, 8))  # (T, N)
-# y = exp(x_true) + σ ε,  ε ~ 𝒩(0, I)
-obs = jnp.exp(truth) + 0.1 * jax.random.normal(key_noise, (1, 8))  # (T, N)
+# 0.3 δ, δ ~ 𝒩(0, I)
+perturbation = 0.3 * jax.random.normal(key_truth, (1, 8))  # (T, N)
+# x_true = x_b + 0.3 δ
+truth = background + perturbation  # (T, N)
+# σ ε, ε ~ 𝒩(0, I)
+noise = 0.1 * jax.random.normal(key_noise, (1, 8))  # (T, N)
+# exp(x_true)
+clean_obs = jnp.exp(truth)  # (T, N)
+# y = exp(x_true) + σ ε
+obs = clean_obs + noise  # (T, N)
 
 # today (vardax)
 # H(x) = exp(x), elementwise
@@ -112,13 +123,15 @@ The `minimiser_adjoint` controls how gradients flow through the minimiser if the
 
 Written out, [](#eq-3dvar-cost) is two whitened quadratic forms, one per term, each applied with a CG solve rather than an inverse.
 `ThreeDVar` builds the same cost, with the residual masked where observations are missing (the mask here is all ones), and hands it to `optimistix.minimise`.
-The block continues the one above.
 
-```python
+```{code-block} python
+:caption: Writes out the 3DVar cost [](#eq-3dvar-cost) by hand and minimises it with optimistix.
+:label: code-threedvar-cost-by-hand
 from jaxtyping import Array, Float
 
 # Shapes: T = 1 time; N = 8 grid cells
 
+# today (lineax)
 cov_solver = lx.CG(atol=1e-6, rtol=1e-6)
 
 
@@ -128,12 +141,17 @@ def threedvar_cost(
 ) -> Float[Array, ""]:
     # δx = x − x_b
     increment = state - background  # (T, N)
+    # today (lineax)
     # B⁻¹ δx
     prior_solve = lx.linear_solve(prior_cov, increment, solver=cov_solver)
     # ½ δxᵀ B⁻¹ δx
     background_term = 0.5 * einx.dot("t n, t n ->", increment, prior_solve.value)
+    # today (vardax)
+    # H(x)
+    predicted = obs_op(state)  # (T, N)
     # d = y − H(x)
-    innovation = obs - obs_op(state)  # (T, N)
+    innovation = obs - predicted  # (T, N)
+    # today (lineax)
     # R⁻¹ d
     obs_solve = lx.linear_solve(obs_cov, innovation, solver=cov_solver)
     # ½ dᵀ R⁻¹ d
@@ -164,8 +182,13 @@ termination criteria internally.
 
 When $H$ is linear, the minimum of [](#eq-3dvar-cost) is the BLUE [](#eq-blue-mean), so `ThreeDVar` must agree with `OptimalInterpolation` (the Decision D14 invariant, see [chapter 4](04_oi_blue.md#validation)). The block below checks it with $H = I$ and the same background and covariances.
 
-```python
+```{code-block} python
+:caption: Checks that ThreeDVar with H = I reaches the BLUE [](#eq-blue-mean) of OptimalInterpolation.
+:label: code-threedvar-linear-agreement
+# Shapes: S = 1 sample; T = 1 time; N = 8 grid cells
+
 # today (vardax)
+# J(x) = ½ ‖x − x_b‖²_{B⁻¹} + ½ ‖y − x‖²_{R⁻¹}, with H = I
 linear_three = vdx.ThreeDVar(
     obs_op=vdx.MaskedIdentity(),
     prior_mean=background,
@@ -179,8 +202,9 @@ optimal_interpolation = vdx.OptimalInterpolation(
     prior_cov_op=prior_cov,
     obs_cov_op=obs_cov,
 )
-# x_a = x_b + B Hᵀ (H B Hᵀ + R)⁻¹ (y − H x_b)
+# x* = x_b + B Hᵀ (H B Hᵀ + R)⁻¹ (y − H x_b)
 closed_form = optimal_interpolation(batch)  # → (S, T, N)
+# x* = argminₓ J(x)
 iterative = linear_three(batch)  # → (S, T, N)
 print(bool(jnp.allclose(closed_form, iterative, atol=1e-3)))
 ```
@@ -189,12 +213,20 @@ print(bool(jnp.allclose(closed_form, iterative, atol=1e-3)))
 
 Near the MAP the Laplace approximation of chapter 13 gives $p(x \mid y) \approx \mathcal{N}(x; x^*, P^*)$, with $P^*$ the Laplace covariance [](#eq-laplace-cov), the inverse of the Gauss-Newton Hessian [](#eq-3dvar-gn-hessian) at $x^*$. `ThreeDVar.posterior` runs the analysis and applies `LaplaceCovariance` with the model's $B$ and $R$; the covariance stays a lazy operator:
 
-```python
+```{code-block} python
+:caption: Builds the Laplace posterior covariance [](#eq-laplace-cov) of the 3DVar analysis from the Gauss-Newton Hessian [](#eq-3dvar-gn-hessian).
+:label: code-threedvar-posterior
+# Shapes: S = 1 sample; T = 1 time; N = 8 grid cells
+
 # today (vardax)
 # P* = (B⁻¹ + H′(x*)ᵀ R⁻¹ H′(x*))⁻¹
 posterior = model.posterior(batch)
+# 1, a probe vector
+probe = jnp.ones((1, 8))  # (T, N)
+# today (vardax)
 # P* 1, one matrix-free product
-spread = posterior.cov.mv(jnp.ones((1, 8)))  # (T, N) → (T, N)
+spread = posterior.cov.mv(probe)  # (T, N) → (T, N)
+
 print(posterior.mean.shape, spread.shape)
 ```
 
