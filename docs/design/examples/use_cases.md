@@ -79,64 +79,99 @@ stack height $H_\text{eff}$ for a known facility. Single overpass.
 
 ### Sketch
 
-```python
-import jax.numpy as jnp
+```{code-block} python
+:caption: Inverts multi-instrument XCH4 for the Tier I source parameters with incremental 4DVar [](#eq-incremental-cost) over the fused averaging kernels [](#eq-fusion-cost) and exports the Gauss-Newton posterior [](#eq-gn-cov).
+:label: code-design-usecases-methane
 import gaussx as gx
+import geotoolz
+import jax.numpy as jnp
 import lineax as lx
 import plumax
 import vardax as vdx
 
+# Shapes: P = 4 source parameters (log Q, x₀, y₀, H_eff); Mᵢ observations of
+#         instrument i
+# Given: event (facility, time, geometry), edgar_lookup, load_era5_at
+
 # (1) Load satellite + met
-catalog = GeoCatalog.from_geoparquet("s3://catalog/overpasses.parquet")
+# not pinned (geotoolz)
+catalog = geotoolz.GeoCatalog.from_geoparquet("s3://catalog/overpasses.parquet")
+# not pinned (geotoolz)
 overpasses = catalog.query(
     geometry=event.bbox(buffer_km=50),
     interval=event.window(hours=2),
     instruments=["TROPOMI", "EMIT", "GHGSat"],
     quality_min="usable",
 )
+# user
 met = load_era5_at(event.time, event.bbox)
 
-# (2) Forward model — Tier I Gaussian plume
+# (2) Forward model: Tier I Gaussian plume
+# not pinned (plumax)
 plume = plumax.tier1.GaussianPlume(met=met, dispersion="MO")
 
 # (3) Multi-instrument observation operator
-fusion = vdx.obs_operators.MultiInstrumentFusion(
-    registry=vdx.obs_operators.InstrumentRegistry.from_l2_dict({
-        op.instrument: op.l2_ds for op in overpasses
-    }),
+# proposed (D9)
+registry = vdx.InstrumentRegistry.from_l2_dict(
+    {op.instrument: op.l2_ds for op in overpasses}
 )
+# today (vardax)
+# J_obs(x) = Σᵢ αᵢ ½ ‖mᵢ ⊙ (yᵢ − Hᵢ(x))‖²_{Rᵢ⁻¹}
+fusion = vdx.MultiInstrumentFusion(registry=registry)
 
 # (4) Prior: lognormal on Q from EDGAR inventory
-Q_prior_mu = jnp.log(edgar_lookup(event.facility_id))
-Q_prior_sigma = 1.0   # CV ~ 100%
-B_op = gx.LogNormalLinearOperator(mu=Q_prior_mu, sigma=Q_prior_sigma)
+# user
+inventory_rate = edgar_lookup(event.facility_id)  # → ()
+# μ = log Q_EDGAR
+log_rate_prior_mean = jnp.log(inventory_rate)  # → ()
+# σ = 1, a coefficient of variation of about 100%
+log_rate_prior_std = 1.0
+# proposed (gaussx)
+# log Q ~ 𝒩(μ, σ²)
+prior_cov = gx.LogNormalLinearOperator(
+    mu=log_rate_prior_mean, sigma=log_rate_prior_std
+)  # (P, P) op
 
 # (5) Block-diag R across instruments
-R_op = lx.BlockDiagonalLinearOperator([
-    spec.obs_cov_op for spec in fusion.registry.entries.values()
-])
+# proposed (lineax; gaussx ships gx.BlockDiag(*operators))
+# R = blockdiag(R_TROPOMI, R_EMIT, R_GHGSat)
+obs_cov = lx.BlockDiagonalLinearOperator(  # (Σ Mᵢ, Σ Mᵢ) op
+    [spec.obs_cov_op for spec in fusion.registry.entries.values()]
+)
 
 # (6) Configure inversion
-inversion = vdx.models.IncrementalFourDVar(
-    forward=plume, obs_op=fusion,
-    prior_mean=jnp.array([Q_prior_mu, 0.0, 0.0, 50.0]),  # Q, x0, y0, H
-    prior_cov_op=B_op, obs_cov_op=R_op,
+# x_b = (log Q_EDGAR, 0, 0, 50 m) for (Q, x₀, y₀, H)
+prior_mean = jnp.array([log_rate_prior_mean, 0.0, 0.0, 50.0])  # (P,)
+# today* (vardax; a fused obs_op goes in as fusion.to_observation_operator())
+# δJ(δx) over the source parameters, in χ with x − x_b = S χ
+inversion = vdx.IncrementalFourDVar(
+    forward=plume,
+    obs_op=fusion,
+    prior_mean=prior_mean,
+    prior_cov_op=prior_cov,
+    obs_cov_op=obs_cov,
     config=vdx.IncrementalConfig(n_outer=5, n_inner=20, cvt=True),
 )
 
 # (7) Build batch from overpasses
+# proposed (no issue yet)
 batch = vdx.utils.build_event_batch(overpasses, met=met)
 
 # (8) Invert
-x_star = inversion(batch)
+# today (vardax)
+# x* after the last outer iteration
+analysis = inversion(batch)  # → (1, P)
 
 # (9) Posterior via Gauss-Newton Hessian (reuses last GN outer iteration)
-posterior = vdx.posterior.GaussNewtonHessian(n_krylov=50)(
-    x_star, inversion.as_analysis_step(), batch,
+# today* (vardax; the adapter takes one window's analysis, e.g. analysis[0])
+# P*_GN = 𝐇_GN⁻¹ at x*, from 50 Lanczos vectors
+posterior = vdx.GaussNewtonHessian(n_krylov=50)(
+    analysis, inversion.as_analysis_step(), batch
 )
 
 # (10) Export to population layer (Tier V)
-mark = vdx.posterior.GaussianMarkLikelihood(
+# today (vardax)
+mark = vdx.GaussianMarkLikelihood(
     posterior=posterior,
     event_metadata={
         "event_id": event.id,
@@ -146,7 +181,10 @@ mark = vdx.posterior.GaussianMarkLikelihood(
         "met_source": "era5_2024-01-15T12Z",
     },
 )
-catalog.write_posterior(event.id, mark.to_dict())
+# today (vardax)
+mark_record = mark.to_dict()
+# not pinned (geotoolz)
+catalog.write_posterior(event.id, mark_record)
 ```
 
 ### What this exercises in vardax
@@ -214,41 +252,56 @@ inference.
 
 ### Sketch
 
-```python
+```{code-block} python
+:caption: Trains a FourDVarNet on the 4DVarNet loss [](#eq-4dvarnet-loss), persists it, cycles it on streaming altimetry and builds a Laplace posterior [](#eq-laplace-cov).
+:label: code-design-usecases-ssh
 import equinox as eqx
 import optax
+import pipekit_cycle as pc
+import pipekit_experiment
 import vardax as vdx
-from pipekit_jax import JaxModelOp
-from pipekit_experiment import LocalModelRegistry
+
+# Shapes: B batch; T = 10 times; H × W = 128 × 128 grid; K = 15 inner steps
+# Given: oceanbench_loader, somax_shallow_water, load_altika_stream, n_windows,
+#        initial_state, batch
 
 # (1) Build model
-model = vdx.models.FourDVarNet(
-    prior=vdx.priors.BilinAEPrior2D(latent_dim=128, n_time=10, height=128, width=128),
-    obs_op=vdx.obs_operators.MaskedIdentity(),
-    grad_mod=vdx.grad_mod.ConvLSTMGradMod2D(state_channels=10, hidden_dim=64),
+# proposed (D14; ships today as vdx.FourDVarNet2D(n_time, height, width, ..., key))
+# x_{k+1} = x_k − Φ(∇ₓJ(x_k), h_k), k = 0 … K − 1
+model = vdx.FourDVarNet(
+    # today* (vardax; also takes key)
+    prior=vdx.BilinAEPrior2D(latent_dim=128, n_time=10, height=128, width=128),
+    obs_op=vdx.MaskedIdentity(),
+    # today* (vardax; also takes key)
+    grad_mod=vdx.ConvLSTMGradMod2D(state_channels=10, hidden_dim=64),
+    # proposed (D4)
     config=vdx.SolverConfig(n_steps=15, alpha=0.2),
-    solver_adjoint=vdx.adjoints.OneStepAdjoint(),   # O(1) memory training
+    # O(1) memory training
+    solver_adjoint=vdx.adjoints.OneStepAdjoint(),
 )
 
 # (2) Training (OceanBench SSH benchmark)
+# today (optax)
 optimizer = optax.adam(1e-3)
 opt_state = optimizer.init(eqx.filter(model, eqx.is_array))
 
 for epoch in range(100):
     for batch in oceanbench_loader:
-        model, opt_state, loss = vdx.training.train_step(
-            model, batch, optimizer, opt_state,
-        )
+        # today (vardax)
+        # ℒ(θ, φ) = E ‖x*(θ, φ; y) − x_true‖²
+        model, opt_state, loss = vdx.train_step(model, batch, optimizer, opt_state)
 
 # (3) Persist via pipekit (Decision D13)
-registry = LocalModelRegistry(root="./ssh_models")
+# not pinned (pipekit_experiment)
+registry = pipekit_experiment.LocalModelRegistry(root="./ssh_models")
+# proposed (D13)
 hash_ = vdx.persist.save(model, registry, tags={"task": "ssh_oceanbench"})
 
 # (4) Operational cycling on streaming altimetry
-import pipekit_cycle as pc
-
+# today (pipekit_cycle)
 da_cycle = pc.DACycle(
-    forward_model=somax_shallow_water,        # physics oracle for comparison
+    # physics oracle for comparison
+    forward_model=somax_shallow_water,
     obs_op=model.obs_op,
     analysis_step=model.as_analysis_step(),
     obs_source=load_altika_stream,
@@ -256,8 +309,12 @@ da_cycle = pc.DACycle(
 )
 
 # (5) Posterior for downstream uncertainty propagation
-posterior_adapter = vdx.posterior.LaplaceCovariance()
+# today (vardax)
+posterior_adapter = vdx.LaplaceCovariance()
+# today (pipekit_cycle)
 result, final_state = da_cycle(initial_state, pc.DAState(t=0.0, cycle_count=0))
+# today* (vardax; the adapter takes one window's analysis, not the cycle result)
+# P*_Laplace = (B⁻¹ + H′ᵀ R⁻¹ H′)⁻¹
 posterior = posterior_adapter(result, model.as_analysis_step(), batch)
 ```
 
@@ -275,23 +332,52 @@ posterior = posterior_adapter(result, model.as_analysis_step(), batch)
 The same problem can be tackled with `IncrementalFourDVar` for a physics-based
 baseline:
 
-```python
-incremental = vdx.models.IncrementalFourDVar(
+```{code-block} python
+:caption: Solves the same SSH problem with incremental 4DVar [](#eq-incremental-cost) and checks the 4DVarNet against it with the posterior gate [](#eq-gate-posterior).
+:label: code-design-usecases-ssh-incremental
+import gaussx as gx
+import lineax as lx
+import vardax as vdx
+
+# Shapes: N = H × W grid cells; M observations; D = 2 coordinates
+# Given: model (the FourDVarNet above), somax_shallow_water, climatology_ssh (N,),
+#        coords (N, D), altika_uncertainty (M,), batch
+
+# proposed (gaussx)
+# Bᵢⱼ = k_Matérn(sᵢ, sⱼ; ℓ = 100, σ = 0.1)
+prior_cov = gx.MaternLinearOperator(  # (N, D) → (N, N) PSD op
+    coords, length_scale=100.0, sigma=0.1
+)
+# today (lineax)
+# R = diag(σ²)
+obs_cov = lx.DiagonalLinearOperator(altika_uncertainty)  # (M,) → (M, M) op
+
+# today (vardax)
+# δJ(δx), 3 outer relinearisations, 20 CG steps each, in χ with x₀ − x_b = S χ
+incremental = vdx.IncrementalFourDVar(
     forward=somax_shallow_water,
-    obs_op=vdx.obs_operators.MaskedIdentity(),
+    obs_op=vdx.MaskedIdentity(),
     prior_mean=climatology_ssh,
-    prior_cov_op=gx.MaternLinearOperator(coords, length_scale=100.0, sigma=0.1),
-    obs_cov_op=lx.DiagonalLinearOperator(altika_uncertainty),
+    prior_cov_op=prior_cov,
+    obs_cov_op=obs_cov,
     config=vdx.IncrementalConfig(n_outer=3, n_inner=20, cvt=True),
 )
-x_incremental = incremental(batch)
+# today (vardax)
+# x₀* after the last outer iteration
+x_incremental = incremental(batch)  # → (B, N)
 
 # Compare:
-assert_posterior_agreement(
-    LaplaceCovariance()(model(batch), model.as_analysis_step(), batch),
-    GaussNewtonHessian()(x_incremental, incremental.as_analysis_step(), batch),
-    tolerance_sigma=1.0,
+# today* (vardax; the adapter takes one window's analysis, e.g. analysis[0])
+# P*_Laplace at the 4DVarNet reconstruction
+p_learned = vdx.LaplaceCovariance()(model(batch), model.as_analysis_step(), batch)
+# today* (vardax; the adapter takes one window's analysis, e.g. analysis[0])
+# P*_GN at the incremental analysis
+p_incremental = vdx.GaussNewtonHessian()(
+    x_incremental, incremental.as_analysis_step(), batch
 )
+# today (vardax)
+# |x*_learned − x*_incr| / σ_post,incr ≤ 1
+vdx.assert_posterior_agreement(p_learned, p_incremental, tolerance_sigma=1.0)
 ```
 
 The same `Batch2D` flows through both inference paths.

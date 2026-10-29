@@ -24,12 +24,27 @@ explicit `PosteriorAdapter`.
 
 ## The `Posterior` container
 
-```python
+```{code-block} python
+:caption: Declares the `Posterior` container that every analysis returns, carrying the mean x* and covariance P* of [](#eq-oi-posterior) (Decision D10).
+:label: code-design-posterior-container
+import equinox as eqx
+import lineax as lx
+from jaxtyping import Array, Float
+
+# Shapes: N = state size; M = ensemble members or flow samples;
+#   *window = optional leading batch of windows
+
+
+# today* (vardax)
 class Posterior(eqx.Module):
-    mean: Array                                # MAP / posterior mean
-    cov: AbstractLinearOperator | None         # gaussx / lineax operator (may be None)
-    samples: Array | None                      # (B, M, ...) for ensembles / flow samples
-    provenance: dict                           # forward_model_id, n_iter, J_star, …
+    # x*, the MAP or posterior mean
+    mean: Float[Array, "*window N"]
+    # P*, a gaussx / lineax operator; None for sampling-only heads
+    cov: lx.AbstractLinearOperator | None
+    # x⁽ᵐ⁾, m = 1, …, M, for ensemble and flow heads
+    samples: Float[Array, "*window M N"] | None
+    # forward_model_id, n_iter, J_star, …
+    provenance: dict
 ```
 
 Conventions:
@@ -62,9 +77,27 @@ materialisation only on request.
 $x^* + (H'^\top R^{-1} H' + B^{-1})^{-1/2} \xi$ where $\xi \sim \mathcal{N}(0,I)$ —
 requires square-root which may be expensive for unstructured $B$.
 
-```python
+```{code-block} python
+:caption: Declares `LaplaceCovariance`, which returns the Laplace covariance [](#eq-laplace-cov) at the MAP as a lazy operator.
+:label: code-design-posterior-laplace
+import equinox as eqx
+from jaxtyping import Array, Float
+
+# Shapes: N = state size
+# today (pipekit_cycle): AnalysisStep
+# today (vardax): Posterior
+# proposed (D10): Batch, the union of the vardax batch types
+
+
+# today* (vardax)
 class LaplaceCovariance(eqx.Module):
-    def __call__(self, analysis: Array, model: AnalysisStep, batch: Batch) -> Posterior: ...
+    # P* = (H′ᵀ R⁻¹ H′ + B⁻¹)⁻¹, with H′ = ∂H/∂x at x*
+    def __call__(
+        self,
+        analysis: Float[Array, " N"],
+        model: AnalysisStep,
+        batch: Batch,
+    ) -> Posterior: ...
 ```
 
 ### `GaussNewtonHessian` — mid-cost, exact at MAP
@@ -79,10 +112,29 @@ Hessian operator from the last GN outer iteration is reused.
 **Cost.** `n_krylov` mat-vec products. Materialise only the diagonal /
 required marginals.
 
-```python
+```{code-block} python
+:caption: Declares `GaussNewtonHessian`, which inverts the Gauss-Newton Hessian [](#eq-gn-hessian) with at most `n_krylov` CG steps to give [](#eq-gn-cov).
+:label: code-design-posterior-gauss-newton
+import equinox as eqx
+from jaxtyping import Array, Float
+
+# Shapes: N = state size
+# today (pipekit_cycle): AnalysisStep
+# today (vardax): Posterior
+# proposed (D10): Batch, the union of the vardax batch types
+
+
+# today* (vardax)
 class GaussNewtonHessian(eqx.Module):
     n_krylov: int = eqx.field(static=True, default=50)
-    def __call__(self, analysis: Array, model: AnalysisStep, batch: Batch) -> Posterior: ...
+
+    # P*_GN = 𝐇_GN⁻¹, applied by n_krylov CG mat-vecs
+    def __call__(
+        self,
+        analysis: Float[Array, " N"],
+        model: AnalysisStep,
+        batch: Batch,
+    ) -> Posterior: ...
 ```
 
 ### `EnsembleCovariance` — non-Gaussian-aware
@@ -97,12 +149,32 @@ EnVar inversion.
 covariance materialisation O($M N^2$) for full; localised / shrunk
 estimators available via `filterax`.
 
-```python
+```{code-block} python
+:caption: Declares `EnsembleCovariance`, which turns M member analyses into the inflated sample covariance [](#eq-ensemble-cov).
+:label: code-design-posterior-ensemble
+import equinox as eqx
+from jaxtyping import Array, Float
+
+# Shapes: M = ensemble members; N = state size
+# today (pipekit_cycle): AnalysisStep
+# today (vardax): Posterior
+# proposed (D10): Batch, the union of the vardax batch types
+
+
+# today* (vardax)
 class EnsembleCovariance(eqx.Module):
     n_members: int = eqx.field(static=True)
     inflation: float = 1.0
+    # proposed (D10)
     localization_radius: float | None = None
-    def __call__(self, analyses: Array, model: AnalysisStep, batch: Batch) -> Posterior: ...
+
+    # P*_ens = λ / (M − 1) Σₘ (x⁽ᵐ⁾ − x̄)(x⁽ᵐ⁾ − x̄)ᵀ
+    def __call__(
+        self,
+        analyses: Float[Array, "M N"],
+        model: AnalysisStep,
+        batch: Batch,
+    ) -> Posterior: ...
 ```
 
 ## Posterior selection heuristic
@@ -123,28 +195,50 @@ class EnsembleCovariance(eqx.Module):
 Per-event posteriors feed Tier V (TMTPP, hierarchical Bayesian) via a
 mark-likelihood serialisation:
 
-```python
+```{code-block} python
+:caption: Serialises a `Posterior`, the Gaussian of [](#eq-oi-posterior), into a JSON mark-likelihood for Tier V population models (Decision D10).
+:label: code-design-posterior-mark-likelihood
+from typing import Any
+
+import equinox as eqx
+
+# Shapes: N = state size; M = ensemble members or flow samples
+# today (vardax): Posterior
+
+
+# today* (vardax)
+# ships to_dict with keys mean, cov_diag, samples, provenance, event_metadata
 class GaussianMarkLikelihood(eqx.Module):
     """Posterior → mark-likelihood for population models (Tier V, Decision D10)."""
 
     posterior: Posterior
-    event_metadata: dict       # event_id, time, location, instruments_used, …
+    # event_id, time, location, instruments_used, …
+    event_metadata: dict
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
+        metadata = self.event_metadata
+        samples = self.posterior.samples
+        # x* as nested lists
+        mean = self.posterior.mean.tolist()  # (N,) → list
+        # proposed (D10)
+        # P* as a diagonal, Cholesky or low-rank record
+        cov = self._serialise_cov()  # (N, N) op → dict
+        # x⁽ᵐ⁾ as nested lists, or None
+        sample_list = None if samples is None else samples.tolist()  # (M, N) → list
         return {
-            "event_id": self.event_metadata["event_id"],
-            "time": self.event_metadata["time"],
-            "geometry": self.event_metadata["geometry"],
-            "mean": self.posterior.mean.tolist(),
-            "cov": self._serialise_cov(),       # diagonal / Cholesky / LowRank repr
-            "samples": (self.posterior.samples.tolist()
-                        if self.posterior.samples is not None else None),
+            "event_id": metadata["event_id"],
+            "time": metadata["time"],
+            "geometry": metadata["geometry"],
+            "mean": mean,
+            "cov": cov,
+            "samples": sample_list,
             "provenance": self.posterior.provenance,
         }
 
-    def _serialise_cov(self) -> dict:
+    # proposed (D10)
+    def _serialise_cov(self) -> dict[str, Any]:
         """Serialise gaussx AbstractLinearOperator to JSON-compatible form."""
-        # ...
+        ...
 ```
 
 The serialised form is consumed by population models without
@@ -168,21 +262,61 @@ Six-step cycle requires:
 
 These gates run on a held-out validation set in CI:
 
-```python
+```{code-block} python
+:caption: CI tests for the posterior-agreement gate [](#eq-gate-posterior) and the Jacobian gate [](#eq-gate-jacobian) on held-out windows (Decision D12).
+:label: code-design-posterior-gate-tests
 # tests/test_six_step_validation.py
+import equinox as eqx
+import vardax as vdx
+from jaxtyping import Array, Float
 
-def test_posterior_agreement(physics_model, emulator_model, val_batches):
+# Shapes: N = state size; D = observations per window; V = held-out states
+
+
+def test_posterior_agreement(
+    physics_model: eqx.Module,
+    emulator_model: eqx.Module,
+    val_batches: list[vdx.Batch1D],
+) -> None:
+    # today (vardax)
+    laplace = vdx.LaplaceCovariance()
     for batch in val_batches:
-        p_phys = LaplaceCovariance()(physics_model(batch), physics_model, batch)
-        p_em   = LaplaceCovariance()(emulator_model(batch), emulator_model, batch)
-        assert_posterior_agreement(p_em, p_phys, tolerance_sigma=1.0)
+        # today* (vardax)
+        # x*_phys = argmin J_phys(x)
+        physics_analysis = physics_model(batch)  # → (N,)
+        # today* (vardax)
+        # x*_em = argmin J_em(x)
+        emulator_analysis = emulator_model(batch)  # → (N,)
+        # today (vardax)
+        # P*_phys = (H′ᵀ R⁻¹ H′ + B⁻¹)⁻¹ at x*_phys
+        physics_posterior = laplace(physics_analysis, physics_model, batch)
+        # today (vardax)
+        # P*_em at x*_em
+        emulator_posterior = laplace(emulator_analysis, emulator_model, batch)
+        # today (vardax)
+        # |x*_em − x*_phys| / σ_post,phys ≤ 1
+        vdx.assert_posterior_agreement(
+            emulator_posterior, physics_posterior, tolerance_sigma=1.0
+        )
 
 
-def test_adjoint_calibration(physics_obs_op, emulator_obs_op, val_states):
-    for x in val_states:
-        H_phys = physics_obs_op.linearize(x)
-        H_em = emulator_obs_op.linearize(x)
-        op_norm = estimate_operator_norm_diff(H_phys, H_em, n_probe=20)
+def test_adjoint_calibration(
+    physics_obs_op: vdx.ObservationOperator,
+    emulator_obs_op: vdx.ObservationOperator,
+    val_states: Float[Array, "V N"],
+) -> None:
+    for state in val_states:
+        # today (vardax)
+        # H′_phys = ∂H_phys/∂x at x
+        physics_tangent = physics_obs_op.linearize(state)  # (N,) → (D, N) op
+        # today (vardax)
+        # H′_em = ∂H_em/∂x at x
+        emulator_tangent = emulator_obs_op.linearize(state)  # (N,) → (D, N) op
+        # proposed (D12); vdx.assert_adjoint_calibrated ships the probing gate
+        # ‖H′_em − H′_phys‖_op, by 20 random-vector probes
+        op_norm = estimate_operator_norm_diff(  # → ()
+            physics_tangent, emulator_tangent, n_probe=20
+        )
         assert op_norm < 0.05
 ```
 

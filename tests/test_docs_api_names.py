@@ -2,7 +2,8 @@
 
 Docs examples drifted from the package: they called methods, helpers,
 modules and keyword arguments that do not exist, so they failed on
-copy-paste. This test parses every ```python block in README.md and the
+copy-paste. This test parses every Python block (```python, or MyST's
+```{code-block} python with its option lines) in README.md and the
 user-facing docs and checks, statically:
 
 - ``from vardax[.module] import name`` and ``import vardax.module``
@@ -51,12 +52,21 @@ def _pages() -> list[pathlib.Path]:
     return [README, *pages]
 
 
+# A plain ```python fence, or a MyST code-block directive whose `:caption:` and
+# `:label:` option lines come before the code.
+PYTHON_BLOCK = re.compile(
+    r"```(?:python|\{code-block\} python)\n((?::[\w-]+:[^\n]*\n)*)(.*?)```",
+    flags=re.S,
+)
+
+
 def _blocks(page: pathlib.Path) -> list[tuple[int, str]]:
     text = page.read_text()
     blocks = []
-    for match in re.finditer(r"```python\n(.*?)```", text, flags=re.S):
-        line = text.count("\n", 0, match.start()) + 2
-        blocks.append((line, match.group(1)))
+    for match in PYTHON_BLOCK.finditer(text):
+        options = match.group(1).count("\n")
+        line = text.count("\n", 0, match.start()) + 2 + options
+        blocks.append((line, match.group(2)))
     return blocks
 
 

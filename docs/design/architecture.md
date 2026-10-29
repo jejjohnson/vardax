@@ -116,217 +116,349 @@ Foundation (required dependencies):
 
 ### Protocols
 
-```python
-# vardax/protocols.py
+```{code-block} python
+:caption: Declares the five vardax protocols (prior φ, gradient modulator Φ, cost J, posterior adapter, minimiser) next to the three re-exported from pipekit-cycle; J is the cost of [](#eq-3dvar-cost) and its 4DVar forms, Φ drives [](#eq-4dvarnet-update).
+:label: code-design-architecture-protocols
+# vardax/protocols.py; ships today as vardax/_src/protocols.py, re-exported as vdx.*
+from typing import Any, Protocol, runtime_checkable
 
-# Re-exports from pipekit-cycle — vardax satisfies these directly.
-from pipekit_cycle import ForwardModel, ObservationOperator, AnalysisStep
+# Re-exports from pipekit-cycle; vardax satisfies these directly.
+# today (pipekit_cycle)
+from pipekit_cycle import AnalysisStep, ForwardModel, ObservationOperator
+from jaxtyping import Array, Float
+
+# Shapes: N = state size
+# today (vardax): Posterior
+# proposed (D8): Batch, the union of the vardax batch types
 
 # Vardax-specific protocols (no pipekit-cycle equivalent):
 
+
+# today (vardax)
 @runtime_checkable
 class Prior(Protocol):
     """φ: state → regularised state.
 
     For Gaussian priors with mean `m` and covariance op `B`, φ is the
-    affine map x ↦ m + B^{1/2}(B^{-1/2}(x - m)) — i.e. identity. For
+    affine map x ↦ m + B^{1/2}(B^{-1/2}(x - m)), i.e. identity. For
     learned autoencoder priors, φ is the encode-decode map. For
     dynamical priors, φ integrates the forward model n steps.
     """
-    def __call__(self, x: Array) -> Array: ...
+
+    # x ↦ φ(x)
+    def __call__(self, x: Float[Array, " N"]) -> Float[Array, " N"]: ...
 
 
+# today* (vardax); ships as __call__(grad, state, carry)
 @runtime_checkable
 class GradModulator(Protocol):
     """Φ: (gradient, carry) → (update, new_carry). FourDVarNet only."""
-    def __call__(self, grad: Array, carry: Any) -> tuple[Array, Any]: ...
+
+    # (∇J, h) ↦ (Φ(∇J, h), h′)
+    def __call__(
+        self, grad: Float[Array, " N"], carry: Any
+    ) -> tuple[Float[Array, " N"], Any]: ...
 
 
+# today (vardax)
 @runtime_checkable
 class CostFunction(Protocol):
     """J: (state, batch, …) → scalar."""
-    def __call__(self, x: Array, batch: Batch, **kwargs) -> Float[Array, ""]: ...
+
+    # x ↦ J(x)
+    def __call__(
+        self, x: Float[Array, " N"], batch: Batch, **kwargs: Any
+    ) -> Float[Array, ""]: ...
 
 
+# today (vardax)
 @runtime_checkable
 class PosteriorAdapter(Protocol):
     """Maps inference output → mean + covariance + provenance."""
-    def __call__(self, analysis: Array, model: AnalysisStep, batch: Batch) -> Posterior: ...
+
+    # x* ↦ (x*, P*, provenance)
+    def __call__(
+        self, analysis: Float[Array, " N"], model: AnalysisStep, batch: Batch
+    ) -> Posterior: ...
 
 
+# today (vardax)
 @runtime_checkable
 class Minimiser(Protocol):
     """Wrapper around optimistix.AbstractMinimiser exposing vardax's
     cost-function interface. Carries its own minimiser_adjoint."""
-    def __call__(self, cost_fn: CostFunction, x0: Array, batch: Batch) -> Array: ...
+
+    # x* = argmin J(x), started from x₀
+    def __call__(
+        self, cost_fn: CostFunction, x0: Float[Array, " N"], batch: Batch
+    ) -> Float[Array, " N"]: ...
 ```
 
 ### Configuration types
 
-```python
+```{code-block} python
+:caption: Declares the configs of `FourDVarNet` ([](#eq-4dvarnet-update)), `IncrementalFourDVar` ([](#eq-incremental-cost) with the transform [](#eq-cvt)) and `AmortizedPosterior` ([](#eq-amortized-objective)).
+:label: code-design-architecture-configs
+from typing import Literal
+
+import equinox as eqx
+
+
+# proposed (architecture.md); FourDVarNet1D/2D take these as constructor kwargs
 class SolverConfig(eqx.Module):
     """Config for FourDVarNet inner loop."""
+
     n_steps: int = eqx.field(static=True)
+    # α, the step size of xₖ₊₁ = xₖ − α Φ(∇J, hₖ)
     alpha: float = 0.2
     prior_weight: float = 1.0
-    # No grad_mode enum — adjoints come from minimiser_adjoint slot.
+    # No grad_mode enum; adjoints come from the minimiser_adjoint slot.
 
 
+# today* (vardax); ships n_inner=30, cg_atol=cg_rtol=1e-6, plus covariance_tol
 class IncrementalConfig(eqx.Module):
     """Config for IncrementalFourDVar."""
+
     n_outer: int = eqx.field(static=True, default=3)
     n_inner: int = eqx.field(static=True, default=20)
     cg_atol: float = 1e-5
     cg_rtol: float = 1e-5
+    # x₀ − x_b = S χ when True
     cvt: bool = eqx.field(static=True, default=True)
 
 
+# today* (vardax); ships head_type: str = "regression" and no temperature
 class AmortizedConfig(eqx.Module):
-    head_type: Literal["flow", "score", "regression"] = eqx.field(static=True, default="flow")
+    head_type: Literal["flow", "score", "regression"] = eqx.field(
+        static=True, default="flow"
+    )
     n_samples: int = eqx.field(static=True, default=64)
     temperature: float = 1.0
 ```
 
 ### Layer 2 model classes — sketch
 
-```python
+```{code-block} python
+:caption: Sketches the seven Layer 2 peer classes, from the closed-form BLUE [](#eq-blue-mean) through the 3DVar [](#eq-3dvar-cost), strong [](#eq-strong4dvar-cost), weak [](#eq-weak4dvar-cost) and incremental [](#eq-incremental-cost) 4DVar costs to `FourDVarNet` [](#eq-4dvarnet-cost) and the amortized posterior [](#eq-amortized-objective).
+:label: code-design-architecture-models
+import diffrax as dfx
+import equinox as eqx
+import lineax as lx
+import optimistix as optx
+from jaxtyping import Array, Float, PRNGKeyArray
+
+# Shapes: N = state size; S = posterior samples
+# today (pipekit_cycle): ForwardModel, ObservationOperator, AnalysisStep
+# today (vardax): Prior, GradModulator, IncrementalConfig, AmortizedConfig
+# proposed (architecture.md): SolverConfig
+# proposed (D8): Batch, the union of the vardax batch types
+# vardax ships every forward_adjoint default as None (keep the forward's own)
+
+
 # vardax/models/optimal_interpolation.py
 
+
+# today* (vardax); ships extra CG fields cg_atol, cg_rtol, cg_max_steps, solver
 class OptimalInterpolation(eqx.Module):
     """BLUE: x* = x_b + BH^T(HBH^T + R)^{-1}(y - Hx_b). Closed-form."""
-    obs_op: ObservationOperator        # must have a linear `linearize(x_b) -> H`
-    prior_mean: Array
-    prior_cov_op: AbstractLinearOperator
-    obs_cov_op: AbstractLinearOperator
 
-    def __call__(self, batch: Batch) -> Array: ...
+    # must have a linear `linearize(x_b) -> H`
+    obs_op: ObservationOperator
+    prior_mean: Float[Array, " N"]
+    prior_cov_op: lx.AbstractLinearOperator
+    obs_cov_op: lx.AbstractLinearOperator
+
+    # x* = x_b + K(y − H x_b)
+    def __call__(self, batch: Batch) -> Float[Array, " N"]: ...
     def as_analysis_step(self) -> AnalysisStep: ...
 
 
 # vardax/models/threedvar.py
 
+
+# today* (vardax)
 class ThreeDVar(eqx.Module):
     """3D variational: minimise ‖x-x_b‖²_B + ‖y-H(x)‖²_R over x."""
-    obs_op: ObservationOperator
-    prior_mean: Array
-    prior_cov_op: AbstractLinearOperator
-    obs_cov_op: AbstractLinearOperator
-    minimiser: optimistix.AbstractMinimiser
-    minimiser_adjoint: optimistix.AbstractAdjoint = ImplicitAdjoint()
 
-    def __call__(self, batch: Batch) -> Array: ...
+    obs_op: ObservationOperator
+    prior_mean: Float[Array, " N"]
+    prior_cov_op: lx.AbstractLinearOperator
+    obs_cov_op: lx.AbstractLinearOperator
+    minimiser: optx.AbstractMinimiser
+    # today (optimistix)
+    minimiser_adjoint: optx.AbstractAdjoint = optx.ImplicitAdjoint()
+
+    # x* = argmin J(x)
+    def __call__(self, batch: Batch) -> Float[Array, " N"]: ...
     def as_analysis_step(self) -> AnalysisStep: ...
 
 
 # vardax/models/strong_fourdvar.py
 
+
+# today* (vardax)
 class StrongFourDVar(eqx.Module):
     """4DVar, strong constraint. Control = x_0."""
+
     forward: ForwardModel
     obs_op: ObservationOperator
-    prior_mean: Array
-    prior_cov_op: AbstractLinearOperator
-    obs_cov_op: AbstractLinearOperator
-    minimiser: optimistix.AbstractMinimiser
-    minimiser_adjoint: optimistix.AbstractAdjoint = ImplicitAdjoint()
-    forward_adjoint: diffrax.AbstractAdjoint = RecursiveCheckpointAdjoint()
+    prior_mean: Float[Array, " N"]
+    prior_cov_op: lx.AbstractLinearOperator
+    obs_cov_op: lx.AbstractLinearOperator
+    minimiser: optx.AbstractMinimiser
+    # today (optimistix)
+    minimiser_adjoint: optx.AbstractAdjoint = optx.ImplicitAdjoint()
+    # today (diffrax)
+    forward_adjoint: dfx.AbstractAdjoint = dfx.RecursiveCheckpointAdjoint()
 
-    def __call__(self, batch: Batch) -> Array: ...
+    # x₀* = argmin J(x₀)
+    def __call__(self, batch: Batch) -> Float[Array, " N"]: ...
     def as_analysis_step(self) -> AnalysisStep: ...
 
 
 # vardax/models/weak_fourdvar.py
 
+
+# today* (vardax)
 class WeakFourDVar(eqx.Module):
     """4DVar, weak constraint. Control = (x_0, η_1, …, η_T)."""
+
     forward: ForwardModel
     obs_op: ObservationOperator
-    prior_mean: Array
-    prior_cov_op: AbstractLinearOperator
-    obs_cov_op: AbstractLinearOperator
-    model_err_cov_op: AbstractLinearOperator   # Q
-    minimiser: optimistix.AbstractMinimiser
-    minimiser_adjoint: optimistix.AbstractAdjoint = ImplicitAdjoint()
-    forward_adjoint: diffrax.AbstractAdjoint = RecursiveCheckpointAdjoint()
+    prior_mean: Float[Array, " N"]
+    prior_cov_op: lx.AbstractLinearOperator
+    obs_cov_op: lx.AbstractLinearOperator
+    # Q
+    model_err_cov_op: lx.AbstractLinearOperator
+    minimiser: optx.AbstractMinimiser
+    # today (optimistix)
+    minimiser_adjoint: optx.AbstractAdjoint = optx.ImplicitAdjoint()
+    # today (diffrax)
+    forward_adjoint: dfx.AbstractAdjoint = dfx.RecursiveCheckpointAdjoint()
 
-    def __call__(self, batch: Batch) -> Array: ...
+    # (x₀*, η*) = argmin J(x₀, η)
+    def __call__(self, batch: Batch) -> Float[Array, " N"]: ...
     def as_analysis_step(self) -> AnalysisStep: ...
 
 
 # vardax/models/incremental_fourdvar.py
 
+
+# today* (vardax)
 class IncrementalFourDVar(eqx.Module):
     """Operational 4DVar: GN outer + CG inner + CVT.
 
     Functionally equivalent to StrongFourDVar but with a specialised
     inner solver. Use this for production work."""
+
     forward: ForwardModel
     obs_op: ObservationOperator
-    prior_mean: Array
-    prior_cov_op: AbstractLinearOperator
-    obs_cov_op: AbstractLinearOperator
+    prior_mean: Float[Array, " N"]
+    prior_cov_op: lx.AbstractLinearOperator
+    obs_cov_op: lx.AbstractLinearOperator
     config: IncrementalConfig
-    forward_adjoint: diffrax.AbstractAdjoint = RecursiveCheckpointAdjoint()
+    # today (diffrax)
+    forward_adjoint: dfx.AbstractAdjoint = dfx.RecursiveCheckpointAdjoint()
 
-    def __call__(self, batch: Batch) -> Array: ...
+    # 𝐇_GN δx* = −∇J, repeated n_outer times
+    def __call__(self, batch: Batch) -> Float[Array, " N"]: ...
     def as_analysis_step(self) -> AnalysisStep: ...
 
 
 # vardax/models/fourdvarnet.py
 
+
+# proposed (architecture.md); ships as FourDVarNet1D / FourDVarNet2D, built from
+# sizes with solver_adjoint and no prior / grad_mod / config / forward_adjoint slots
 class FourDVarNet(eqx.Module):
     """Learned 4DVar: learned prior φ_θ + learned grad modulator Φ_φ."""
+
     prior: Prior
     obs_op: ObservationOperator
     grad_mod: GradModulator
     config: SolverConfig
     # Adjoint through the unrolled solver:
-    solver_adjoint: optimistix.AbstractAdjoint = RecursiveCheckpointAdjoint()
+    # today (optimistix)
+    solver_adjoint: optx.AbstractAdjoint = optx.RecursiveCheckpointAdjoint()
     # Adjoint through any dynamical prior:
-    forward_adjoint: diffrax.AbstractAdjoint = RecursiveCheckpointAdjoint()
+    # today (diffrax)
+    forward_adjoint: dfx.AbstractAdjoint = dfx.RecursiveCheckpointAdjoint()
 
-    def __call__(self, batch: Batch) -> Array: ...
+    # xₖ₊₁ = xₖ − Φ_φ(∇J, hₖ), unrolled
+    def __call__(self, batch: Batch) -> Float[Array, " N"]: ...
     def as_analysis_step(self) -> AnalysisStep: ...
 
 
 # vardax/models/amortized.py
 
+
+# today (vardax)
 class AmortizedPosterior(eqx.Module):
-    """Direct q_φ(x | y) head — flow / score / regression."""
+    """Direct q_φ(x | y) head: flow / score / regression."""
+
     encoder: eqx.Module
     head: eqx.Module
     config: AmortizedConfig
 
-    def __call__(self, batch: Batch) -> Array: ...
-    def sample(self, batch: Batch, key, n: int) -> Array: ...
-    def log_prob(self, x: Array, batch: Batch) -> Scalar: ...
+    # E[x | y] under q_φ
+    def __call__(self, batch: Batch) -> Float[Array, " N"]: ...
+    # x⁽ˢ⁾ ~ q_φ(x | y)
+    def sample(
+        self, batch: Batch, key: PRNGKeyArray, n: int
+    ) -> Float[Array, "S N"]: ...
+    # log q_φ(x | y)
+    def log_prob(self, x: Float[Array, " N"], batch: Batch) -> Float[Array, ""]: ...
     def as_analysis_step(self) -> AnalysisStep: ...
 ```
 
 ### Data containers
 
-```python
+```{code-block} python
+:caption: Declares the batch containers that carry y and its mask into the observation term [](#eq-obs-cost), and the `Posterior` that carries x* and P* of [](#eq-oi-posterior).
+:label: code-design-architecture-containers
+import equinox as eqx
+import lineax as lx
+from jaxtyping import Array, Float, Int
+
+# Shapes: B = windows in the batch; T = times; N = 1D state size;
+#   H, W = 2D grid height and width; S = posterior samples
+
+
+# today* (vardax); ships input, mask, target as "B *sample"
 class Batch1D(eqx.Module):
+    # y
     input: Float[Array, "B T N"]
+    # m
     mask: Float[Array, "B T N"]
     target: Float[Array, "B T N"] | None = None
+    # proposed (D9)
     instrument: Int[Array, "B T N"] | None = None
+    # proposed (D9)
     obs_err: Float[Array, "B T N"] | None = None
 
+
+# today* (vardax); ships input, mask, target
 class Batch2D(eqx.Module):
     input: Float[Array, "B T H W"]
     mask: Float[Array, "B T H W"]
     target: Float[Array, "B T H W"] | None = None
+    # proposed (D9)
     instrument: Int[Array, "B T H W"] | None = None
+    # proposed (D9)
     obs_err: Float[Array, "B T H W"] | None = None
 
-# Same shape conventions as v0.3. Multivariate variant supplied via
-# Batch2DMultivar; 3D via Batch3D.
 
+# Same shape conventions as v0.3. Multivariate variant supplied via
+# Batch2DMultivar (today); 3D via Batch3D (proposed).
+
+
+# today* (vardax); ships cov, samples, provenance with defaults
 class Posterior(eqx.Module):
-    mean: Array
-    cov: AbstractLinearOperator | None
-    samples: Array | None
+    # x*
+    mean: Float[Array, " N"]
+    # P*
+    cov: lx.AbstractLinearOperator | None
+    samples: Float[Array, "S N"] | None
     provenance: dict
 ```
 

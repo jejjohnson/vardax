@@ -86,14 +86,26 @@ Returns `(x_star, posterior_cov_op)` where `posterior_cov_op` is an
 `AbstractLinearOperator` representing $P^*$ — not materialised by
 default. `gaussx` exploits structure in $B$, $R$, $H$.
 
-```python
+```{code-block} python
+:caption: Declares the planned closed-form BLUE primitive, returning the mean [](#eq-blue-mean) and the covariance operator [](#eq-blue-cov).
+:label: code-design-api-primitives-blue
+import lineax as lx
+from jaxtyping import Array, Float
+
+# Shapes: N = state size; M = observation size
+
+
+# proposed (D16): OptimalInterpolation ships this analysis, not a standalone primitive
 def blue_analysis(
-    x_b: Array,
-    y: Array,
-    B_op: AbstractLinearOperator,
-    R_op: AbstractLinearOperator,
-    H_op: AbstractLinearOperator,
-) -> tuple[Array, AbstractLinearOperator]: ...
+    x_b: Float[Array, " N"],
+    y: Float[Array, " M"],
+    B_op: lx.AbstractLinearOperator,
+    R_op: lx.AbstractLinearOperator,
+    H_op: lx.AbstractLinearOperator,
+) -> tuple[Float[Array, " N"], lx.AbstractLinearOperator]:
+    # x* = x_b + B Hᵀ (H B Hᵀ + R)⁻¹ (y − H x_b)
+    # P* = (B⁻¹ + Hᵀ R⁻¹ H)⁻¹, returned as an (N, N) operator
+    ...
 ```
 
 The implementation picks between the $B$-space form (Sherman-Morrison-
@@ -112,9 +124,31 @@ $B^{1/2}$ comes from `gaussx.MaternLinearOperator.half()` when the prior
 is Matérn; falls back to Cholesky factorisation for arbitrary
 `AbstractLinearOperator`.
 
-```python
-def cvt_transform(x, x_b, B_half_op) -> chi: ...
-def cvt_inverse(chi, x_b, B_half_op) -> x: ...
+```{code-block} python
+:caption: Declares the planned control-variable transform χ = B⁻¹ᐟ²(x − x_b) of [](#eq-cvt) and its inverse.
+:label: code-design-api-primitives-cvt
+import lineax as lx
+from jaxtyping import Array, Float
+
+# Shapes: N = state size
+
+
+# proposed (D11): IncrementalFourDVar applies the CVT internally (config.cvt)
+def cvt_transform(
+    x: Float[Array, " N"], x_b: Float[Array, " N"], B_half_op: lx.AbstractLinearOperator
+) -> Float[Array, " N"]:
+    # χ = B⁻¹ᐟ² (x − x_b)
+    ...
+
+
+# proposed (D11)
+def cvt_inverse(
+    chi: Float[Array, " N"],
+    x_b: Float[Array, " N"],
+    B_half_op: lx.AbstractLinearOperator,
+) -> Float[Array, " N"]:
+    # x = x_b + B¹ᐟ² χ
+    ...
 ```
 
 In CVT coordinates the prior cost is $\|\chi\|^2$ (identity Gaussian),
@@ -128,11 +162,28 @@ which preconditions the CG inner loop in `IncrementalFourDVar`.
 
 Wraps `jax.linearize` to return an `AbstractLinearOperator`:
 
-```python
-def tangent_linear(fn: Callable, x: Array) -> AbstractLinearOperator:
+```{code-block} python
+:caption: Defines the planned tangent-linear primitive, which wraps `jax.linearize` as the operator M′ of [](#eq-tlm-forward).
+:label: code-design-api-primitives-tangent-linear
+from collections.abc import Callable
+
+import jax
+import lineax as lx
+from jaxtyping import Array, Float
+
+# Shapes: N = state size
+
+
+# proposed (primitives.md)
+def tangent_linear(
+    fn: Callable[[Float[Array, " N"]], Float[Array, " N"]], x: Float[Array, " N"]
+) -> lx.AbstractLinearOperator:
     """Linearise fn at x. Returns operator suitable for incremental 4DVar."""
+    # today (jax)
+    # δx ↦ M′(x) δx
     _, jvp = jax.linearize(fn, x)
-    return lineax.FunctionLinearOperator(jvp, in_structure=x)
+    # today* (lineax): the shipped keyword is input_structure, a ShapeDtypeStruct
+    return lx.FunctionLinearOperator(jvp, in_structure=x)
 ```
 
 The transpose / adjoint comes for free via `lineax`.
@@ -175,8 +226,27 @@ inner solver according to `model.solver_adjoint`.
 One outer training step: loss → backprop → optimiser update. Encodes
 the correctness-critical differentiation pattern (Decisions D5, D15).
 
-```python
-def train_step(model, batch, optimizer, opt_state) -> tuple[model, opt_state, loss]: ...
+```{code-block} python
+:caption: Declares the training step that updates the model parameters on the reconstruction loss [](#eq-4dvarnet-loss).
+:label: code-design-api-primitives-train-step
+import equinox as eqx
+import optax
+import vardax as vdx
+from jaxtyping import Array, Float
+
+# Shapes: no arrays beyond the batch; loss → ()
+
+# today (vardax)
+Batch = vdx.Batch1D | vdx.Batch2D
+
+
+# today (vardax)
+def train_step(
+    model: eqx.Module,
+    batch: Batch,
+    optimizer: optax.GradientTransformation,
+    opt_state: optax.OptState,
+) -> tuple[eqx.Module, optax.OptState, Float[Array, ""]]: ...
 ```
 
 ---
@@ -187,21 +257,67 @@ def train_step(model, batch, optimizer, opt_state) -> tuple[model, opt_state, lo
 
 Inner CG solve over the linearised quadratic cost:
 
-```python
+```{code-block} python
+:caption: Declares the planned inner CG solve of the Gauss-Newton system [](#eq-gn-system) for the incremental cost [](#eq-incremental-cost).
+:label: code-design-api-primitives-gn-inner
+import lineax as lx
+import vardax as vdx
+from jaxtyping import Array, Float
+
+# Shapes: N = state size
+
+# today (vardax)
+Batch = vdx.Batch1D
+
+
+# proposed (D11): IncrementalFourDVar runs this loop internally
 def gauss_newton_inner(
-    dx0, x_b, batch, forward_lin, obs_op_lin,
-    B_inv_op, R_inv_op, n_inner, cg_atol, cg_rtol,
-) -> dx_star: ...
+    dx0: Float[Array, " N"],
+    x_b: Float[Array, " N"],
+    batch: Batch,
+    forward_lin: lx.AbstractLinearOperator,
+    obs_op_lin: lx.AbstractLinearOperator,
+    B_inv_op: lx.AbstractLinearOperator,
+    R_inv_op: lx.AbstractLinearOperator,
+    n_inner: int,
+    cg_atol: float,
+    cg_rtol: float,
+) -> Float[Array, " N"]:
+    # 𝐇_GN δx* = −∇J, solved by CG
+    ...
 ```
 
 ### `incremental_outer(x0, batch, forward, obs_op, B_op, R_op, config)`
 
 Full incremental 4DVar — GN outer + CG inner with optional CVT:
 
-```python
+```{code-block} python
+:caption: Declares the planned Gauss-Newton outer loop that relinearises and minimises the incremental cost [](#eq-incremental-cost) through [](#eq-gn-system).
+:label: code-design-api-primitives-incremental-outer
+import lineax as lx
+import pipekit_cycle as pc
+import vardax as vdx
+from jaxtyping import Array, Float
+
+# Shapes: N = state size
+
+# today (vardax)
+Batch = vdx.Batch1D
+
+
+# proposed (D11): IncrementalFourDVar runs this loop internally
 def incremental_outer(
-    x0, batch, forward, obs_op, B_op, R_op, config: IncrementalConfig,
-) -> Array: ...
+    x0: Float[Array, " N"],
+    batch: Batch,
+    forward: pc.ForwardModel,
+    obs_op: pc.ObservationOperator,
+    B_op: lx.AbstractLinearOperator,
+    R_op: lx.AbstractLinearOperator,
+    # today (vardax)
+    config: vdx.IncrementalConfig,
+) -> Float[Array, " N"]:
+    # x⁽ᵏ⁺¹⁾ = x⁽ᵏ⁾ + δx*, k = 0 … n_outer − 1
+    ...
 ```
 
 Each outer iteration relinearises $H$, $M$ at current $x_b$, solves the

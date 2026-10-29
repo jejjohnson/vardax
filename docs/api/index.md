@@ -23,10 +23,32 @@ reference is organised by area rather than dumped as one flat page:
 Everything documented here is importable from the top-level namespace:
 
 ```python
+import jax
+import jax.numpy as jnp
+import lineax as lx
+import pipekit_cycle as pc
 import vardax as vdx
 
-model = vdx.ThreeDVar(...)
+# Shapes: T = 1 time; N = 4 grid cells
+
+state_structure = jax.ShapeDtypeStruct((1, 4), jnp.float32)
+# x_b = 0
+background = jnp.zeros((1, 4))  # (T, N)
+# today (lineax)
+# B = R = I
+identity = lx.IdentityLinearOperator(state_structure)  # (T N, T N) op
+# today (vardax)
+# J(x) = ½ ‖x − x_b‖²_{B⁻¹} + ½ ‖y − H(x)‖²_{R⁻¹}
+model = vdx.ThreeDVar(
+    obs_op=vdx.MaskedIdentity(),
+    prior_mean=background,
+    prior_cov_op=identity,
+    obs_cov_op=identity,
+)
+# today (vardax)
 step = model.as_analysis_step()
+# today (pipekit_cycle)
+print(isinstance(step, pc.AnalysisStep))
 ```
 
 Three public submodules are also bound into the package namespace for the

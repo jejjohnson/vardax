@@ -1,3 +1,8 @@
+---
+numbering:
+  enumerator: "20.%s"
+---
+
 # Uncertainty Quantification
 
 Consolidated from the `mfourdvar` uncertainty notes
@@ -5,46 +10,27 @@ Consolidated from the `mfourdvar` uncertainty notes
 outline; this chapter fills it in and maps each branch to the vardax
 machinery that implements it.
 
-Chapter [13](13_posterior_covariance.md) covers *how* to compute a
-posterior covariance; this chapter is the map of *what is uncertain in
-the first place* — where stochasticity enters a variational
-assimilation system, and which lever addresses which source.
+Chapter [13](13_posterior_covariance.md) covers *how* to compute a posterior covariance; this chapter is the map of *what is uncertain in the first place*: where stochasticity enters a variational assimilation system, and which lever addresses which source.
 
 ## Three kinds of uncertainty
 
-- **Aleatoric** — irreducible randomness in the measurement process:
-  sensor noise, representativeness error, sampling gaps. More data of
-  the same kind does not remove it; it belongs in the likelihood
-  ($R$).
-- **Epistemic** — reducible ignorance about the system: imperfect
-  model physics, unknown parameters, limited training data. More
-  information (observations, better physics, more training) shrinks
-  it; it belongs in priors and posteriors.
-- **Intrinsic variability** — chaotic sensitivity of the dynamics
-  itself. Even a perfect model with perfect parameters diverges from
-  truth under infinitesimal initial-condition error; it bounds
-  predictability (forecast horizon) rather than estimation quality.
+- **Aleatoric**: irreducible randomness in the measurement process, such as sensor noise, representativeness error and sampling gaps. More data of the same kind does not remove it; it belongs in the likelihood ($R$).
+- **Epistemic**: reducible ignorance about the system, such as imperfect model physics, unknown parameters and limited training data. More information (observations, better physics, more training) shrinks it; it belongs in priors and posteriors.
+- **Intrinsic variability**: chaotic sensitivity of the dynamics itself. Even a perfect model with perfect parameters diverges from truth under infinitesimal initial-condition error; it bounds predictability (forecast horizon) rather than estimation quality.
 
-The mfourdvar notes organise the *loci* of these uncertainties into
-four groups — data, model, parameters, estimation — which map onto
-vardax as follows.
+The mfourdvar notes organise the *loci* of these uncertainties into four groups (data, model, parameters, estimation), which map onto vardax as follows.
 
 ## Uncertain data
 
-The likelihood side. Observation error enters the cost through the
-observation-error covariance $R$ (chapter
-[2](02_observation_model.md)); real data additionally arrive with
-gaps.
+The likelihood side. Observation error enters the cost through the observation-error covariance $R$ of the observation cost [](#eq-obs-cost), and real data also arrive with gaps.
 
-- **Error covariance** — every analysis method takes an `obs_cov_op`
-  ($R$ as a `lineax` operator); per-instrument $R$ blocks compose
-  through [`MultiInstrumentFusion`](11_observation_operators.md).
-- **Gaps and NaNs** — real products encode missing data as `NaN`
+- **Error covariance**: every analysis method takes an `obs_cov_op` ($R$ as a `lineax` operator); per-instrument $R$ blocks compose through [`MultiInstrumentFusion`](11_observation_operators.md), as in the fusion cost [](#eq-fusion-cost).
+- **Gaps and NaNs**: real products encode missing data as `NaN`
   rather than a clean mask; the `nan_to_num` flag of
   [`obs_cost_1d` / `obs_cost_2d`](xref:api#vardax.obs_cost_1d) and the
   NaN-stripping analysis steps keep gradients finite (ported from
   mfourdvar's NaN-safe observation operator).
-- **Augmentation and latent inputs** — the mfourdvar notes flag two
+- **Augmentation and latent inputs**: the mfourdvar notes flag two
   learning-side treatments: perturbing inputs with samples of the
   observation noise during training, and letting an encoder treat the
   clean field as a latent variable behind noisy inputs. In vardax
@@ -57,35 +43,26 @@ gaps.
 The dynamics side. A forward model is wrong in ways that range from
 "ignore it" to "model it":
 
-- **Deterministic (perfect-model)** — strong-constraint 4DVar
-  (chapter [6](06_strong_4dvar.md)) treats $M_t$ as exact; all model
-  error is silently folded into the initial-condition posterior.
-- **Additive model error** — weak-constraint 4DVar (chapter
-  [7](07_weak_4dvar.md)) promotes per-step error terms
-  $\boldsymbol{\eta}_t$ to control variables with their own covariance
-  $Q$; the dynamical-residual priors
-  ([`DynIncrements`](19_physical_models.md)) are the functional
-  version of the same idea — dynamics as a soft penalty rather than a
-  hard constraint.
-- **Fully Bayesian** — placing distributions over the model structure
+- **Deterministic (perfect-model)**: strong-constraint 4DVar [](#eq-strong4dvar-cost) treats $M_t$ as exact; all model error is silently folded into the initial-condition posterior.
+- **Additive model error**: weak-constraint 4DVar promotes the per-step error terms $\boldsymbol{\eta}_t$ of [](#eq-weak-model) to control variables with their own covariance $Q$; the dynamical-residual priors ([`DynIncrements`](19_physical_models.md), [](#eq-residual-one-step)) are the functional version of the same idea, with the dynamics as a soft penalty rather than a hard constraint.
+- **Fully Bayesian**: placing distributions over the model structure
   itself is out of vardax's scope; the pragmatic surrogate is
   ensembles over model variants, scored through the same analysis
   seams.
 
 ## Uncertain parameters
 
-Between data and model sit the parameters $\theta$ — ODE forcings,
-closure coefficients, neural-prior weights:
+Between data and model sit the parameters $\theta$ (ODE forcings, closure coefficients, neural-prior weights):
 
-- **Deterministic point estimates** — fit $\theta$ by gradient
+- **Deterministic point estimates**: fit $\theta$ by gradient
   descent through the solve
   ([`DynamicalPrior.loss(..., params=θ)`](19_physical_models.md) is
   differentiable in $\theta$).
-- **Probabilistic** — the amortized family (chapter
+- **Probabilistic**: the amortized family (chapter
   [10](10_amortized_inference.md)) returns distributions, not points:
   `ConditionalFlowHead` for flow-based posteriors, with the
   reverse-SDE `ScoreDiffusionHead` stubbed for multimodal cases.
-- **Approximate Bayesian** — the mfourdvar outline lists dropout and
+- **Approximate Bayesian**: the mfourdvar outline lists dropout and
   deep ensembles. Neither needs library support beyond what exists:
   ensembles are `jax.vmap` over `PRNGKey`s at construction time, and
   their spread feeds the ensemble posterior adapter below.
@@ -94,16 +71,11 @@ closure coefficients, neural-prior weights:
 
 The output side: attaching error bars to the analysis itself.
 
-- **Curvature-based** — the posterior adapters of chapter
-  [13](13_posterior_covariance.md): `LaplaceCovariance` (inverse
-  Hessian at the mode), `GaussNewtonHessian` (drops second-order
-  terms), both matrix-free via `lineax`.
-- **Monte Carlo / ensemble** — `EnsembleCovariance` estimates the
-  posterior spread from an ensemble of analyses (perturbed
-  observations, perturbed parameters, or both).
-- **Amortized** — the heads of chapter
+- **Curvature-based**: the posterior adapters of chapter [13](13_posterior_covariance.md), `LaplaceCovariance` [](#eq-laplace-cov) and `GaussNewtonHessian` [](#eq-gn-cov), both matrix-free via `lineax`.
+- **Monte Carlo / ensemble**: `EnsembleCovariance` [](#eq-ensemble-cov) estimates the posterior spread from an ensemble of analyses (perturbed observations, perturbed parameters, or both).
+- **Amortized**: the heads of chapter
   [10](10_amortized_inference.md) emit $q_\phi(x \mid y)$ directly.
-- **Conformal prediction** — distribution-free calibrated intervals
+- **Conformal prediction**: distribution-free calibrated intervals
   wrapped around any point estimator; listed in the mfourdvar outline
   as future work and deliberately left outside vardax (it is a
   post-processing wrapper, not an assimilation component).
@@ -115,9 +87,11 @@ treats "is it calibrated?" as a first-class question. The validation
 gates of the [six-step cycle](14_six_step_cycle.md) are the
 enforcement mechanism:
 
-The block below runs all three gates on a conjugate Gaussian toy: $x \sim \mathcal{N}(0, I)$ in two dimensions and $y = x + \sigma \varepsilon$ with $\sigma = 0.5$, whose exact posterior is $\mathcal{N}(\mu(y), s^2 I)$ with $\mu(y) = y / (1 + \sigma^2)$ and $s^2 = \sigma^2 / (1 + \sigma^2)$.
+The toy problem is conjugate Gaussian: $x \sim \mathcal{N}(0, I)$ in two dimensions and $y = x + \sigma \varepsilon$ with $\sigma = 0.5$, whose exact posterior is $\mathcal{N}(\mu(y), s^2 I)$ with $\mu(y) = y / (1 + \sigma^2)$ and $s^2 = \sigma^2 / (1 + \sigma^2)$ (the BLUE [](#eq-blue-mean) and [](#eq-blue-cov) with $H = B = I$ and $R = \sigma^2 I$).
 
-```python
+```{code-block} python
+:caption: Runs simulation-based calibration, the posterior gate [](#eq-gate-posterior) and the Jacobian gate [](#eq-gate-jacobian) on a conjugate Gaussian toy whose exact posterior is the BLUE [](#eq-blue-mean) and [](#eq-blue-cov).
+:label: code-uncertainty-gates
 import einx
 import jax
 import jax.numpy as jnp
@@ -127,9 +101,8 @@ from jaxtyping import Array, Float, PRNGKeyArray
 
 # Shapes: N = 2 state; S = 50 posterior samples; K = 100 calibration runs
 
-key_calibration, key_truth, key_noise, key_probe = jax.random.split(
-    jax.random.PRNGKey(0), 4
-)
+key = jax.random.PRNGKey(0)
+key_calibration, key_truth, key_noise, key_probe = jax.random.split(key, 4)
 noise_std = 0.5
 # s² = σ² / (1 + σ²), the conjugate posterior variance
 posterior_var = noise_std**2 / (1.0 + noise_std**2)  # → ()
@@ -143,8 +116,12 @@ def sample_prior(key: PRNGKeyArray) -> Float[Array, " n"]:
 
 # user
 def simulate_obs(state: Float[Array, " n"], key: PRNGKeyArray) -> Float[Array, " n"]:
-    # y = x + σ ε, ε ~ 𝒩(0, I)
-    return state + noise_std * jax.random.normal(key, (2,))
+    # ε ~ 𝒩(0, I)
+    noise = jax.random.normal(key, (2,))
+    # σ ε
+    scaled_noise = noise_std * noise
+    # y = x + σ ε
+    return state + scaled_noise
 
 
 # user
@@ -159,10 +136,21 @@ def sample_posterior(
 ) -> Float[Array, "s n"]:
     # δ ~ 𝒩(0, I)
     noise = jax.random.normal(key, (n_samples, 2))  # (S, N)
+    # user
+    # μ(y)
+    mean = posterior_mean(obs)  # (N,)
+    # s = √(s²)
+    posterior_std = jnp.sqrt(posterior_var)  # → ()
+    # s δ
+    scaled_noise = posterior_std * noise  # (S, N)
     # x = μ(y) + s δ
-    return einx.add(
-        "n, s n -> s n", posterior_mean(obs), jnp.sqrt(posterior_var) * noise
-    )
+    return einx.add("n, s n -> s n", mean, scaled_noise)
+
+
+# user
+def fast_mean_map(obs: Float[Array, " n"]) -> Float[Array, " n"]:
+    # μ_fast(y) = 0.79 y, a slightly wrong posterior-mean map
+    return 0.79 * obs
 
 
 # today (vardax)
@@ -176,25 +164,35 @@ ranks = vdx.simulation_based_calibration(  # → (K,)
     n_samples=50,
 )
 # rank counts in five bins of [0, 50]
-rank_counts = jnp.histogram(ranks, bins=5, range=(0, 50))[0]  # (5,)
+rank_counts, _ = jnp.histogram(ranks, bins=5, range=(0, 50))  # (K,) → (5,)
 print(rank_counts)
 
-# y = x + σ ε for one fresh truth x
-obs = simulate_obs(sample_prior(key_truth), key_noise)  # (N,)
+# user
+# x ~ 𝒩(0, I), one fresh truth
+fresh_truth = sample_prior(key_truth)  # (N,)
+# user
+# y = x + σ ε
+obs = simulate_obs(fresh_truth, key_noise)  # (N,)
+# s² at every component
+oracle_variance = jnp.full((2,), posterior_var)  # (N,)
 # today (lineax)
 # Σ = s² I
-oracle_cov = lx.DiagonalLinearOperator(jnp.full((2,), posterior_var))  # (N, N) op
+oracle_cov = lx.DiagonalLinearOperator(oracle_variance)  # (N, N) op
+# user
+# μ_oracle = μ(y)
+oracle_mean = posterior_mean(obs)  # (N,)
 # today (vardax)
-oracle = vdx.Posterior(mean=posterior_mean(obs), cov=oracle_cov)
-# today (vardax)
+oracle = vdx.Posterior(mean=oracle_mean, cov=oracle_cov)
 # a fast mean off by 0.1, below the oracle σ = s ≈ 0.45
-fast = vdx.Posterior(mean=posterior_mean(obs) + 0.1)
+fast_mean = oracle_mean + 0.1  # (N,)
+# today (vardax)
+fast = vdx.Posterior(mean=fast_mean)
 # today (vardax)
 # |μ_fast − μ_oracle| / σ_oracle ≤ 1
 vdx.assert_posterior_agreement(fast, oracle, tolerance_sigma=1.0)
 # today (vardax)
 # ‖J_fast v − J_oracle v‖ / ‖J_oracle v‖ < 0.05, J_fast = 0.79 I, J_oracle = 0.8 I
-vdx.assert_adjoint_calibrated(lambda y: 0.79 * y, posterior_mean, obs, key=key_probe)
+vdx.assert_adjoint_calibrated(fast_mean_map, posterior_mean, obs, key=key_probe)
 ```
 
 It prints the rank counts `[24. 12. 19. 23. 22.]`, roughly flat for 100 runs, and both assertions pass silently.

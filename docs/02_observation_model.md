@@ -1,21 +1,21 @@
+---
+numbering:
+  enumerator: "2.%s"
+---
+
 # Observation Model
 
-The observation operator $H : \mathbb{R}^n \to \mathbb{R}^m$ maps the
-state $x$ to predicted observations $\hat{y} = H(x)$. Real
-instruments rarely measure the state directly — they smooth, average,
-mask, or project. Getting $H$ right is what separates an inversion
-that recovers truth from one that returns a biased fantasy.
+The observation operator $H : \mathbb{R}^n \to \mathbb{R}^m$ maps the state $x$ to predicted observations $\hat{y} = H(x)$. Real instruments rarely measure the state directly; they smooth, average, mask or project it. Getting $H$ right is what separates an inversion that recovers the truth from one that returns a biased fantasy.
 
 ## The likelihood model
 
-vardax assumes Gaussian observation errors:
+vardax assumes Gaussian observation errors,
 
-$$y = H(x) + \varepsilon, \text{ with } \varepsilon \sim \mathcal{N}(0, R),$$
+$$y = H(x) + \varepsilon, \text{ with } \varepsilon \sim \mathcal{N}(0, R)$$ (eq-obs-model)
 
-so $p(y \mid x) = \mathcal{N}(y; H(x), R)$. The observation cost in the
-variational problem is
+where $y \in \mathbb{R}^m$ are the observations and $R$ is the observation-error covariance, so $p(y \mid x) = \mathcal{N}(y; H(x), R)$. The observation cost in the variational problem is the negative log-likelihood up to a constant,
 
-$$J_\text{obs}(x) = \frac{1}{2} \|y - H(x)\|^2_{R^{-1}} = \frac{1}{2} (y - H(x))^\top R^{-1} (y - H(x)).$$
+$$J_\text{obs}(x) = \frac{1}{2} \|y - H(x)\|^2_{R^{-1}} = \frac{1}{2} (y - H(x))^\top R^{-1} (y - H(x))$$ (eq-obs-cost)
 
 Non-Gaussian likelihoods (Student-$t$, censored, count data) require
 either a non-Gaussian extension of $J_\text{obs}$ or amortized
@@ -26,7 +26,9 @@ inference with a flow / score-based head (chapter 10).
 Every vardax observation operator satisfies
 `pipekit_cycle.ObservationOperator`, restated here with typed signatures:
 
-```python
+```{code-block} python
+:caption: Restates the observation-operator protocol: the forward map of [](#eq-obs-model) and its tangent linear.
+:label: code-obs-model-protocol
 from typing import Protocol
 
 import lineax as lx
@@ -59,16 +61,20 @@ masked identity, an averaging kernel, or a multi-instrument fusion.
 
 ### Masked identity
 
-The simplest case — we observe the state where the mask is non-zero:
+In the simplest case we observe the state where the mask is non-zero,
 
-$$H(x) = m \odot x, \text{ with } m \in \{0, 1\}^n.$$
+$$H(x) = m \odot x, \text{ with } m \in \{0, 1\}^n$$ (eq-masked-identity)
+
+where $\odot$ is the element-wise product.
 
 Tangent-linear: $H'(x) = \mathrm{diag}(m)$. Use case: SSH altimetry
 along-track gaps, SST with cloud masks, in-situ samples on a grid.
 
-The mask is passed per call, so the models apply it to $H'$ themselves; the examples on this page build on each other, starting from a toy state on $N = 6$ cells.
+The mask is passed per call, so the models apply it to $H'$ themselves. The examples on this page build on each other, starting from a toy state on $N = 6$ cells.
 
-```python
+```{code-block} python
+:caption: Computes the masked identity [](#eq-masked-identity) on a toy state of six cells.
+:label: code-obs-model-masked-identity
 import jax.numpy as jnp
 import lineax as lx
 import vardax as vdx
@@ -91,9 +97,11 @@ It prints `[1.  1.2 0.  1.6 1.8 0. ]`.
 
 ### Linear projection
 
-Pre-computed projection from state to observation space:
+A pre-computed projection from state to observation space is
 
-$$H(x) = H_\text{mat} \cdot x.$$
+$$H(x) = H_\text{mat} \cdot x$$ (eq-linear-obs)
+
+where $H_\text{mat} \in \mathbb{R}^{m \times n}$ is a fixed matrix.
 
 Use case: Lagrangian footprint matrix from a particle simulator
 (observation at receptor = footprint-weighted source field), spectral
@@ -101,13 +109,17 @@ filtering, spatial interpolation. The matrix is stored as an
 `AbstractLinearOperator` so structure (sparse, low-rank, Kronecker) can
 be exploited.
 
-Here the footprint $F = H_\text{mat}$ maps the six cells to $M = 3$ receptors, each averaging two neighbouring cells. The block continues the one above.
+Here the footprint $F = H_\text{mat}$ maps the six cells to $M = 3$ receptors, each averaging two neighbouring cells.
 
-```python
+```{code-block} python
+:caption: Computes the linear projection [](#eq-linear-obs) through a footprint matrix of three receptors.
+:label: code-obs-model-linear
 # Shapes: N = 6 state cells; M = 3 receptors
 
-# F, each receptor averages two neighbouring cells
-footprint = jnp.kron(jnp.eye(3), jnp.array([[0.5, 0.5]]))  # (M, N)
+# (½ ½), the average of two neighbouring cells
+pair_average = jnp.array([[0.5, 0.5]])  # (1, 2)
+# F = I₃ ⊗ (½ ½), each receptor averages two neighbouring cells
+footprint = jnp.kron(jnp.eye(3), pair_average)  # (M, N)
 # today (lineax)
 footprint_op = lx.MatrixLinearOperator(footprint)  # (M, N) op
 # today (vardax)
@@ -119,7 +131,7 @@ print(receptor_obs)
 
 It prints `[1.1 1.5 1.9]`.
 
-### Averaging kernel — RTM L2 products
+### Averaging kernel: RTM L2 products
 
 For satellite L2 products derived from optimal-estimation retrievals
 (TROPOMI CH₄, EMIT CH₄, OCO CO₂, MOPITT CO, …), the L2 retrieval is
@@ -127,7 +139,9 @@ For satellite L2 products derived from optimal-estimation retrievals
 applies a smoothing matrix $A$ (the averaging kernel) and falls back to
 a retrieval prior $x_a$ where the signal is weak:
 
-$$\hat{y} = A (h \odot x + (1 - h) \odot x_a).$$
+$$\hat{y} = A (h \odot x + (1 - h) \odot x_a)$$ (eq-averaging-kernel)
+
+where the symbols are
 
 | Symbol | Description |
 |---|---|
@@ -145,9 +159,11 @@ especially when the retrieval prior $x_a$ differs from the inversion
 prior $x_b$. vardax exposes `AveragingKernel` as a first-class operator
 because this is a day-one requirement, not a future feature.
 
-The toy kernel $A$ below is tridiagonal, the prior $x_a$ is flat and the sensitivity $h$ falls from 1 to 0.2 with height. The block continues the one above and prints `True`.
+The toy kernel $A$ below is tridiagonal, the prior $x_a$ is flat and the sensitivity $h$ falls from 1 to 0.2 with height. The check of the tangent linear against $A \mathrm{diag}(h)$ formed densely prints `True`.
 
-```python
+```{code-block} python
+:caption: Computes the averaging-kernel operator [](#eq-averaging-kernel) and checks its tangent linear against the dense A diag(h).
+:label: code-obs-model-averaging-kernel
 import einx
 
 # Shapes: N = 6 levels
@@ -160,10 +176,12 @@ kernel = 0.5 * jnp.eye(6) + 0.25 * neighbours  # (N, N)
 retrieval_prior = jnp.full(6, 1.8)  # (N,)
 # h, sensitivity falling off with height
 weighting_vector = jnp.linspace(1.0, 0.2, 6)  # (N,)
+# today (lineax)
+kernel_op = lx.MatrixLinearOperator(kernel)  # (N, N) op
 
 # today (vardax)
 averaging_kernel = vdx.AveragingKernel(
-    kernel_matrix=lx.MatrixLinearOperator(kernel),
+    kernel_matrix=kernel_op,
     prior_profile=retrieval_prior,
     pressure_weights=weighting_vector,
 )
@@ -185,33 +203,33 @@ the dense $A$.
 
 ### Multi-instrument fusion
 
-Operational satellite work combines multiple instruments. Each
-instrument has its own $H_i$, mask $m_i$, error covariance $R_i$, and
-optionally averaging kernel $(A_i, x_{a,i}, h_i)$. The fused
-observation cost composes at the likelihood level:
+Operational satellite work combines multiple instruments. Each instrument has its own $H_i$, mask $m_i$, error covariance $R_i$ and optionally an averaging kernel $(A_i, x_{a,i}, h_i)$. The fused observation cost composes [](#eq-obs-cost) at the likelihood level,
 
-$$J_\text{obs}(x) = \sum_{i \in \mathcal{I}} \alpha_i \cdot \frac{1}{2} \|m_i \odot (y_i - H_i(x))\|^2_{R_i^{-1}}.$$
+$$J_\text{obs}(x) = \sum_{i \in \mathcal{I}} \alpha_i \cdot \frac{1}{2} \|m_i \odot (y_i - H_i(x))\|^2_{R_i^{-1}}$$ (eq-fusion-cost)
 
-The per-instrument weight $\alpha_i$ defaults to uniform; tuning is for
-hierarchical bias-correction (Epic 9). Each `InstrumentSpec` carries its own operator, mask and $R_i$. Quality masks zero-weight unreliable
-pixels — they contribute zero log-likelihood, not dropped (this lets us
-audit effective per-instrument observation count).
+where $\mathcal{I}$ is the set of instruments and $\alpha_i$ is a per-instrument weight. The weight defaults to uniform; tuning it is for hierarchical bias correction (Epic 9). Each `InstrumentSpec` carries its own operator, mask and $R_i$. Quality masks zero-weight unreliable pixels, so they contribute zero log-likelihood rather than being dropped, which lets us audit the effective per-instrument observation count.
 
-The registry below reuses the three operators above: TROPOMI through the averaging kernel, EMIT through the masked identity and GHGSat through the footprint. The block continues the one above.
+The registry below reuses the three operators above: TROPOMI through the averaging kernel, EMIT through the masked identity and GHGSat through the footprint. It evaluates each $H_i(x)$ but does not form the cost itself.
 
-```python
+```{code-block} python
+:caption: Evaluates each instrument operator of the fusion cost [](#eq-fusion-cost) through a registry of three instruments.
+:label: code-obs-model-fusion
 import jax
 
 # Shapes: N = 6 state cells; M = 3 receptors
 
 state_structure = jax.ShapeDtypeStruct((6,), jnp.float32)
 receptor_structure = jax.ShapeDtypeStruct((3,), jnp.float32)
+# today (lineax)
+state_identity = lx.IdentityLinearOperator(state_structure)  # (N, N) op
+# today (lineax)
+receptor_identity = lx.IdentityLinearOperator(receptor_structure)  # (M, M) op
 # R_TROPOMI = 0.04 I
-tropomi_cov = 0.04 * lx.IdentityLinearOperator(state_structure)  # (N, N) op
+tropomi_cov = 0.04 * state_identity  # (N, N) op
 # R_EMIT = 0.01 I
-emit_cov = 0.01 * lx.IdentityLinearOperator(state_structure)  # (N, N) op
+emit_cov = 0.01 * state_identity  # (N, N) op
 # R_GHGSat = 0.0025 I
-ghgsat_cov = 0.0025 * lx.IdentityLinearOperator(receptor_structure)  # (M, M) op
+ghgsat_cov = 0.0025 * receptor_identity  # (M, M) op
 
 # today (vardax)
 registry = vdx.InstrumentRegistry(
@@ -241,8 +259,9 @@ fusion = vdx.MultiInstrumentFusion(registry=registry)
 # {i: Hᵢ(x)}
 predicted = fusion(state)  # (N,) → {i: (Mᵢ,)}
 # today (vardax)
+stacked_op = fusion.to_observation_operator()
 # [H_EMIT(x); H_GHGSat(x); H_TROPOMI(x)], in sorted id order
-stacked = fusion.to_observation_operator()(state)  # (N,) → (N + M + N,)
+stacked = stacked_op(state)  # (N,) → (N + M + N,)
 print({name: obs.shape for name, obs in predicted.items()}, stacked.shape)
 ```
 
@@ -250,24 +269,15 @@ It prints `{'TROPOMI': (6,), 'EMIT': (6,), 'GHGSat': (3,)} (15,)`.
 
 `MultiInstrumentFusion.__call__` returns `dict[str, Array]` (per-instrument predicted observations); no vardax model consumes the dict yet. For strict `pipekit_cycle.ObservationOperator` contexts, the `.to_observation_operator()` adapter flattens to a single concatenated output, and its `linearize` is the Jacobian of that map, the per-instrument $H_i'$ stacked row-wise.
 
-### Any differentiable model — parameter estimation
+### Any differentiable model: parameter estimation
 
-When the control is not the state but a source, a forcing or a parameter
-vector $q$, the observation operator is a downstream model run
-$\mathcal{G}(q)$: a transport model followed by its receptors, a
-radiative-transfer forward, a neural emulator. The cost is then
+When the control is not the state but a source, a forcing or a parameter vector $q$, the observation operator is a downstream model run $\mathcal{G}(q)$: a transport model followed by its receptors, a radiative-transfer forward, a neural emulator. The cost $J(q)$ is then exactly the 3DVar cost [](#eq-3dvar-cost) with $x = q$, $x_b = q_b$ and $H = \mathcal{G}$, or OI (chapter 4) when $\mathcal{G}$ is linear. `CallableObs` wraps any differentiable JAX function as that operator; `linearize(x)` is a matrix-free `lineax.JacobianLinearOperator`, so the tangent-linear map is a JVP and its adjoint a VJP.
 
-$$J(q) = \frac{1}{2} (q - q_b)^\top B^{-1} (q - q_b) + \frac{1}{2} (y - \mathcal{G}(q))^\top R^{-1} (y - \mathcal{G}(q)),$$
+In the example below the control is $P = 3$ unconstrained emission parameters $q$, and $\mathcal{G}(q) = G \operatorname{softplus}(q)$ maps them to $M = 6$ receptors through a transport matrix $G$ that decays with the distance between receptor and source. The observations are noise-free, $B = I$ and $R = 10^{-2} I$.
 
-which is exactly 3DVar (chapter 5) with $\mathcal{G}$ as $H$, or OI
-(chapter 4) when $\mathcal{G}$ is linear. `CallableObs` wraps any
-differentiable JAX function as that operator; `linearize(x)` is a
-matrix-free `lineax.JacobianLinearOperator`, so the tangent-linear map is
-a JVP and its adjoint a VJP.
-
-In the example below the control is $P = 3$ unconstrained emission parameters $q$, and $\mathcal{G}(q) = G \operatorname{softplus}(q)$ maps them to $M = 6$ receptors through a transport matrix $G$ that decays with the distance between receptor and source. The observations are noise-free, $B = I$ and $R = 10^{-2} I$. The block continues the one above.
-
-```python
+```{code-block} python
+:caption: Minimises the 3DVar cost [](#eq-3dvar-cost) over emission parameters q, with a transport model as the observation operator.
+:label: code-obs-model-parameter-3dvar
 import optimistix as optx
 
 # Shapes: S = 1 sample; T = 1 time; P = 3 sources; M = 6 receptors
@@ -276,7 +286,10 @@ import optimistix as optx
 receptor_index = jnp.arange(6.0)  # (M,)
 source_index = 2.0 * jnp.arange(3.0)  # (P,)
 offset = einx.subtract("m, p -> m p", receptor_index, source_index)  # (M, P)
-transport = jnp.exp(-jnp.abs(offset))  # (M, P)
+# |m − 2p|
+distance = jnp.abs(offset)  # (M, P)
+# G = exp(−|m − 2p|)
+transport = jnp.exp(-distance)  # (M, P)
 
 
 # user
@@ -293,14 +306,17 @@ true_source = jnp.array([[0.5, -0.3, 0.2]])  # (T, P)
 # y = 𝒢(q_true), noise-free
 receptor_data = run_model(true_source)  # (T, M)
 
+source_structure = jax.ShapeDtypeStruct((1, 3), jnp.float32)
+receptor_data_structure = jax.ShapeDtypeStruct((1, 6), jnp.float32)
 # today (lineax)
 # B = I
-source_cov = lx.IdentityLinearOperator(jax.ShapeDtypeStruct((1, 3), jnp.float32))
+source_cov = lx.IdentityLinearOperator(source_structure)  # (T P, T P) op
+# today (lineax)
+receptor_data_identity = lx.IdentityLinearOperator(receptor_data_structure)
 # today (lineax)
 # R = 10⁻² I; tagged PSD so the default CG solve accepts it
 receptor_cov = lx.TaggedLinearOperator(  # (T M, T M) op
-    1e-2 * lx.IdentityLinearOperator(jax.ShapeDtypeStruct((1, 6), jnp.float32)),
-    lx.positive_semidefinite_tag,
+    1e-2 * receptor_data_identity, lx.positive_semidefinite_tag
 )
 # today (vardax)
 # H(q) = 𝒢(q)
@@ -340,7 +356,9 @@ the common case: `RecursiveCheckpointAdjoint` runs a `while_loop`. Add
 per observation; that is cheap when the control is small, as a source or
 parameter vector usually is. The toy `simulate` below integrates $dc/dt = q - c$ to $t = 1$, so $H'(q) = (1 - e^{-1}) I$, and the block prints `True`:
 
-```python
+```{code-block} python
+:caption: Materialises the tangent linear of a diffrax-solve observation operator [](#eq-obs-model) with one VJP per observation.
+:label: code-obs-model-materialise
 import diffrax as dfx
 
 # Shapes: T = 1 time; P = 3 sources
@@ -348,6 +366,7 @@ import diffrax as dfx
 
 # user
 def simulate(source: Float[Array, "t p"]) -> Float[Array, "t p"]:
+    # today (diffrax)
     # dc/dt = q − c
     term = dfx.ODETerm(lambda time, conc, rate: rate - conc)
     # today (diffrax)
@@ -369,19 +388,27 @@ simulator_obs = vdx.CallableObs(fn=simulate, jac="bwd", materialise=True)
 # today (vardax)
 # H′(q) = ∂c(1)/∂q = (1 − e⁻¹) I
 simulator_tangent = simulator_obs.linearize(true_source)  # (T P, T P) op
+# (1 − e⁻¹) I, the exact tangent
 exact_tangent = (1.0 - jnp.exp(-1.0)) * jnp.eye(3)  # (T P, T P)
 print(bool(jnp.allclose(simulator_tangent.as_matrix(), exact_tangent, atol=1e-4)))
 ```
 
 ## Tangent-linear and adjoint contract
 
-For incremental 4DVar (chapter 8), every observation operator must
-expose `linearize`, whose operator applies $H'$ with `mv` and $H'^\top$ with `transpose().mv`. The block continues the one above and uses the averaging kernel:
+For incremental 4DVar (chapter 8), every observation operator must expose `linearize`, whose operator applies $H'$ with `mv` and $H'^\top$ with `transpose().mv`. The pair must pass the adjoint test
 
-```python
+$$\langle H' u, v \rangle = \langle u, (H')^\top v \rangle \text{ for all } u, v$$ (eq-adjoint-test)
+
+up to floating-point tolerance, where $u$ is a state-space vector and $v$ an observation-space vector. Failing this test means the gradient flowing back through $H$ is wrong, and any downstream optimiser will take wrong steps. The block below draws random $u = \delta x$ and $v = r$ and prints `True`; `tests/test_obs_operators.py` runs the same test for `AveragingKernel`.
+
+```{code-block} python
+:caption: Checks the adjoint test [](#eq-adjoint-test) for the averaging kernel.
+:label: code-obs-model-adjoint-test
 # Shapes: N = 6 levels
 
-key_tangent, key_residual = jax.random.split(jax.random.PRNGKey(0))
+key = jax.random.PRNGKey(0)
+key_tangent, key_residual = jax.random.split(key)
+
 # δx ~ 𝒩(0, I)
 increment = jax.random.normal(key_tangent, (6,))  # (N,)
 # r ~ 𝒩(0, I)
@@ -401,32 +428,18 @@ adjoint_inner = einx.dot("n, n ->", increment, adjoint_residual)  # → ()
 print(bool(jnp.isclose(forward_inner, adjoint_inner, atol=1e-5)))
 ```
 
-The block ends with the adjoint test, which prints `True`; `tests/test_obs_operators.py` runs the same test for `AveragingKernel`:
-
-$$\langle H' u, v \rangle = \langle u, (H')^\top v \rangle \text{ for all } u, v$$
-
-up to floating-point tolerance. Failing this test means the gradient
-flowing back through $H$ is wrong, and any downstream optimiser will
-take wrong steps.
-
 ## Observation-error covariance $R$
 
 $R$ is supplied as a `lineax.AbstractLinearOperator`. Common
 parameterisations:
 
-- **Diagonal** — `lineax.DiagonalLinearOperator(variances)`. Default
-  for heteroscedastic retrievals (per-pixel σ from L2 metadata).
-- **Block-diagonal** — `gaussx.BlockDiag(*instrument_covs)`.
-  Per-instrument diagonals when fusing.
-- **Structured** — `gaussx.ImplicitKernelOperator(matern, coords)` if obs errors are
-  spatially correlated (rare but matters for high-resolution imaging
-  spectrometers).
+- **Diagonal**: `lineax.DiagonalLinearOperator(variances)`. The default for heteroscedastic retrievals (per-pixel σ from L2 metadata).
+- **Block-diagonal**: `gaussx.BlockDiag(*instrument_covs)`. Per-instrument diagonals when fusing.
+- **Structured**: `gaussx.ImplicitKernelOperator(matern, coords)` if observation errors are spatially correlated (rare, but it matters for high-resolution imaging spectrometers).
 
-gaussx operators do not register `lineax.linearise`, so the models' solves reject them; wrap one as `lx.FunctionLinearOperator(op.mv, structure, lx.positive_semidefinite_tag)` first, as chapter 4 does for $B$.
+The models' solves reject gaussx operators until they are wrapped as a `lx.FunctionLinearOperator`, as [chapter 4](04_oi_blue.md#why-the-matrices-are-never-materialised) does for $B$.
 
-The choice flows into $J_\text{obs}$ via $R^{-1}$, computed lazily —
-the inverse is never materialised, only applied to vectors via
-`lineax.CG`.
+The choice flows into [](#eq-obs-cost) via $R^{-1}$, which is applied lazily: the inverse is never materialised, only applied to vectors via `lineax.CG`.
 
 ## When the observation model is wrong
 
@@ -448,8 +461,8 @@ Epic 9 adds joint bias estimation for the cross-instrument case.
 
 ## See also
 
-- Chapter 3 — dynamical model + its adjoint
-- Chapter 4 — `OptimalInterpolation` (the linear-$H$ case)
-- Chapter 8 — `IncrementalFourDVar` (uses `linearize()` for tangent-linear obs)
-- Chapter 11 — observation operator family in detail
+- Chapter 3: the dynamical model and its adjoint
+- Chapter 4: `OptimalInterpolation` (the linear-$H$ case)
+- Chapter 8: `IncrementalFourDVar` (uses `linearize()` for tangent-linear observations)
+- Chapter 11: the observation operator family in detail
 - Design doc: [`design/api/observation_operators.md`](design/api/observation_operators.md)
