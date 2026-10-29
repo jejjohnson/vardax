@@ -41,7 +41,7 @@ gaps.
   through [`MultiInstrumentFusion`](11_observation_operators.md).
 - **Gaps and NaNs** — real products encode missing data as `NaN`
   rather than a clean mask; the `nan_to_num` flag of
-  [`obs_cost_1d` / `obs_cost_2d`](api/costs_priors.md) and the
+  [`obs_cost_1d` / `obs_cost_2d`](xref:api#vardax.obs_cost_1d) and the
   NaN-stripping analysis steps keep gradients finite (ported from
   mfourdvar's NaN-safe observation operator).
 - **Augmentation and latent inputs** — the mfourdvar notes flag two

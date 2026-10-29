@@ -473,7 +473,7 @@ and a structurally smaller posterior covariance.
 
 Dynamics-aware priors ported from `mfourdvar` (`DynIncrements`,
 `DynTrajectory`) need the window's time coordinates; the static
-[`Prior`](../api/protocols.md) seam ($\varphi: x \mapsto x$) cannot
+[`Prior`](xref:api#vardax.Prior) seam ($\varphi: x \mapsto x$) cannot
 express them.
 
 **Options.**
