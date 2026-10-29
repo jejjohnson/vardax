@@ -197,7 +197,7 @@ separate slots for the two:
 | Slot | Used by | Default |
 |---|---|---|
 | `checkpoint: bool \| int` | `StrongFourDVar`, `WeakFourDVar`, `IncrementalFourDVar`, `ReducedBasisFourDVar` | `False` (plain reverse mode) |
-| `forward_adjoint: diffrax.AbstractAdjoint` | the same four; needs a forward with `with_adjoint` ([`SupportsForwardAdjoint`](api/protocols.md)) | `None` (the forward's own) |
+| `forward_adjoint: diffrax.AbstractAdjoint` | the same four; needs a forward with `with_adjoint` ([`SupportsForwardAdjoint`](xref:api#vardax.SupportsForwardAdjoint)) | `None` (the forward's own) |
 | `minimiser_adjoint: optimistix.AbstractAdjoint` | `ThreeDVar`, `StrongFourDVar`, `WeakFourDVar`, `ReducedBasisFourDVar` | `ImplicitAdjoint()` |
 | `solver_adjoint: optimistix.AbstractAdjoint` | `FourDVarNet1D`, `FourDVarNet2D` (through the learned inner solver) | `RecursiveCheckpointAdjoint()` |
 
@@ -448,7 +448,7 @@ declarative vocabulary: the frozen-dataclass specs in
 `pipekit_cycle.adjoints` (named after their diffrax counterparts).
 Each layer interprets a spec into its native mechanism —
 `pipekit_jax.to_diffrax_adjoint` at the dynamics layer,
-[`to_optimistix_adjoint`][vardax.adjoints.to_optimistix_adjoint] at the
+[`to_optimistix_adjoint`](xref:api#vardax.to_optimistix_adjoint) at the
 inner-solve layer (this chapter), and filterax's scan strategies at the
 cycle layer:
 
@@ -456,7 +456,7 @@ cycle layer:
 |---|---|---|---|
 | `DirectAdjoint` | `diffrax.DirectAdjoint` | unrolled (the default) | plain scan |
 | `RecursiveCheckpointAdjoint` | `diffrax.RecursiveCheckpointAdjoint` | `optx.RecursiveCheckpointAdjoint` | checkpointed scan |
-| `TruncatedAdjoint(k)` | — | [`KStepAdjoint(k)`][vardax.adjoints.KStepAdjoint]; `k=1` ≡ `OneStepAdjoint` | truncated scan |
+| `TruncatedAdjoint(k)` | — | [`KStepAdjoint(k)`](xref:api#vardax.KStepAdjoint); `k=1` ≡ `OneStepAdjoint` | truncated scan |
 | `ImplicitAdjoint` | steady-state only | `optx.ImplicitAdjoint` | — |
 | `BacksolveAdjoint` | `diffrax.BacksolveAdjoint` ⚠ unstable for chaotic/stiff dynamics | — | — |
 
@@ -490,7 +490,7 @@ point any $k$ is exact (the warmup contributes nothing); for the
 truncated, unconverged solvers of 4DVarNet, larger $k$ trades memory
 for a less biased gradient. The dynamics layer composes independently:
 a `pipekit_jax.DiffraxForwardModel` slots into
-[`StrongFourDVar`][vardax.StrongFourDVar] as a plain
+[`StrongFourDVar`](xref:api#vardax.StrongFourDVar) as a plain
 `pipekit_cycle.ForwardModel`, bringing diffrax's solvers and adjoints
 to the forecast step with no vardax code changes.
 

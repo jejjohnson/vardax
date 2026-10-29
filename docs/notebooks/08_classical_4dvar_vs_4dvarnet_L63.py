@@ -78,7 +78,7 @@ print(f"Test batch shape: {batch_test.input.shape}")
 # ## 2. Classical 4DVar — gradient descent on $x$
 #
 # We use a fixed prior — a bilinear autoencoder pre-trained on clean training
-# windows, as in notebook [07](07_prior_pretraining_L63.py) — and minimise
+# windows, as in notebook [07](07_prior_pretraining_L63.ipynb) — and minimise
 # $U(x)$ with respect to $x$ directly, running a manual gradient-descent loop
 # so we can track the convergence trajectory.
 

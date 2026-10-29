@@ -3,13 +3,13 @@
 Supporting cast: a reference dynamical system for experiments, the
 statistical gates that decide whether an inference setup can be trusted,
 and the plotting helpers used throughout the
-[end-to-end examples](../15_lorenz_examples.md).
+[end-to-end examples](https://jejjohnson.github.io/vardax/lorenz-examples/).
 
 ## Dynamical systems
 
 Lorenz-63 and Lorenz-96 are the standard chaotic testbeds for
 assimilation experiments; the `simulate_*` helpers generate trajectories
-for the [Lorenz examples](../15_lorenz_examples.md) and the test suite,
+for the [Lorenz examples](https://jejjohnson.github.io/vardax/lorenz-examples/) and the test suite,
 and `time_patches` produces the consecutive time pairs consumed by the
 one-step increment losses.
 
@@ -25,8 +25,8 @@ one-step increment losses.
 line search of a variational solver cannot drive an explicit ODE step
 off the attractor into overflow: inside a box the adapter is the
 identity, outside it saturates smoothly. Notebooks
-[13](../notebooks/13_neural_closure_L96.py) and
-[14](../notebooks/14_posterior_uncertainty_L63.py) use it around
+[13](https://jejjohnson.github.io/vardax/notebooks/neural-closure-l96/) and
+[14](https://jejjohnson.github.io/vardax/notebooks/posterior-uncertainty-l63/) use it around
 Lorenz-96 and Lorenz-63 forwards.
 
 ::: vardax

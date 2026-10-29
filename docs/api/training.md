@@ -3,7 +3,7 @@
 Training a learned solver means differentiating *through* an inner
 optimisation loop, and how you do that determines memory cost and gradient
 quality. The adjoint strategies here make that choice explicit and
-swappable — see [Adjoint Methods](../12_adjoint_methods.md) in the
+swappable — see [Adjoint Methods](https://jejjohnson.github.io/vardax/adjoint-methods/) in the
 Mathematical Reference for the trade-offs. Around them sit the loss
 functions and train/eval steps for [4DVarNet](models.md) and the
 [amortized posteriors](amortized.md), and the ConvLSTM gradient modulators

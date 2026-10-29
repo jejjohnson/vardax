@@ -162,7 +162,7 @@ Three slots control the gradient:
   gradient, less memory (chapter 3).
 - **`forward_adjoint`** — a `diffrax.AbstractAdjoint` for a forward that
   integrates with `diffrax` and implements `with_adjoint(adjoint)`
-  ([`SupportsForwardAdjoint`](api/protocols.md)); for example
+  ([`SupportsForwardAdjoint`](xref:api#vardax.SupportsForwardAdjoint)); for example
   `dfx.BacksolveAdjoint()` for constant memory over long windows. Any
   other forward raises `ValueError`.
 - **`minimiser_adjoint`** — controls how gradients flow back through
@@ -173,7 +173,7 @@ Three slots control the gradient:
 ## Large controls: first-order minimisers
 
 `minimiser=` takes an `optimistix.AbstractMinimiser` (the default is
-`optx.BFGS(rtol=1e-6, atol=1e-6)`) or any [`Minimiser`](api/protocols.md):
+`optx.BFGS(rtol=1e-6, atol=1e-6)`) or any [`Minimiser`](xref:api#vardax.Minimiser):
 a callable `minimiser(cost_fn, x0, batch) -> x_star` over a pytree
 control. BFGS keeps a dense inverse-Hessian estimate, which is not viable
 when the control is $10^5$ network weights. `OptaxMinimiser` runs a
@@ -219,7 +219,7 @@ and returns exactly what the default model returns.
 ## Parameterized initial states
 
 `parameterization=` takes any
-[`StateParameterization`](api/protocols.md): the control becomes a
+[`StateParameterization`](xref:api#vardax.StateParameterization): the control becomes a
 pytree $\theta$, the initial state $x_0 = \psi(\theta)$, and its
 penalty replaces the background term,
 
@@ -289,7 +289,7 @@ tens, forward-mode differentiation (`jax.jacfwd`, $P$ tangent runs) also
 becomes affordable, and the full Hessian $\nabla^2_X J$ is a
 $P \times P$ matrix.
 
-Every [`ReducedBasis`](api/protocols.md) carries its own $Q$:
+Every [`ReducedBasis`](xref:api#vardax.ReducedBasis) carries its own $Q$:
 
 | Constructor | Columns of $\Phi$ | $Q$ |
 |---|---|---|
@@ -515,7 +515,7 @@ memory. Four strategies:
    storing its intermediates. 3–4× less gradient memory on Lorenz-96
    (chapter 3).
 2. **`dfx.BacksolveAdjoint()`** (via `forward_adjoint=`, for a
-   [`SupportsForwardAdjoint`](api/protocols.md) forward) — solve the adjoint ODE backwards in
+   [`SupportsForwardAdjoint`](xref:api#vardax.SupportsForwardAdjoint) forward) — solve the adjoint ODE backwards in
    time. $O(1)$ memory in the trajectory length. Caveat: reverse-time
    stiffness can require an implicit integrator (`dfx.Kvaerno5`,
    `dfx.ImplicitEuler`).

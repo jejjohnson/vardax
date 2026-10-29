@@ -365,7 +365,7 @@ make uv-test-cov    # pytest with coverage XML
 make uv-format      # ruff format + ruff check --fix
 make uv-lint        # ruff check + ty check
 make uv-pre-commit  # all hooks on all files
-make docs-serve     # mkdocs at http://127.0.0.1:8000
+make docs-serve     # MyST site + API reference at http://127.0.0.1:8000
 ```
 
 Four checks must pass before a commit lands:

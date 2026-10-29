@@ -3,7 +3,7 @@
 The functional core under the [model classes](models.md): pure cost
 functions that score a candidate state against observations and prior,
 prior modules that supply the regularisation term, and the inner-loop
-solver functions that drive the [4DVarNet](../09_4dvarnet.md) iteration.
+solver functions that drive the [4DVarNet](https://jejjohnson.github.io/vardax/dvarnet/) iteration.
 The model classes are thin, stateful-looking wrappers over these pieces —
 drop down to this layer when building custom methods or instrumenting the
 optimisation.
@@ -14,8 +14,8 @@ The variational cost $J(x) = J_\text{obs}(x) + J_\text{prior}(x)$ and its
 gradient, with the observation and prior terms also available separately
 (`decomposed_loss` returns them unsummed for logging). The `_1d` / `_2d`
 suffixes match the [`Batch1D` / `Batch2D`](protocols.md) carriers. See
-[3DVar](../05_threedvar.md) and
-[strong-constraint 4DVar](../06_strong_4dvar.md) for the math each term
+[3DVar](https://jejjohnson.github.io/vardax/threedvar/) and
+[strong-constraint 4DVar](https://jejjohnson.github.io/vardax/strong-4dvar/) for the math each term
 implements.
 
 ::: vardax

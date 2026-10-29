@@ -27,7 +27,7 @@
 #
 # ## The posterior and its Gaussian approximation
 #
-# With the generative model of notebook [01](01_model_based_4dvar_L63.py),
+# With the generative model of notebook [01](01_model_based_4dvar_L63.ipynb),
 # the posterior over the initial state is
 #
 # $$
@@ -64,13 +64,13 @@
 # derivatives by the residuals and is dropped in the Gauss–Newton
 # approximation, on the grounds that at a good fit the residuals are
 # small and of random sign. Notebook
-# [09](09_param_estimation_L63.py) met the same split as the Fisher
+# [09](09_param_estimation_L63.ipynb) met the same split as the Fisher
 # information versus the realised curvature. Section 2 measures how much
 # the dropped term matters here.
 #
 # In vardax the Gauss–Newton covariance is what
-# [`LaplaceCovariance`](../api/posterior.md) and
-# [`GaussNewtonHessian`](../api/posterior.md) build, lazily, as a
+# [`LaplaceCovariance`](xref:api#vardax.LaplaceCovariance) and
+# [`GaussNewtonHessian`](xref:api#vardax.GaussNewtonHessian) build, lazily, as a
 # `lineax` operator whose matrix-vector product runs a conjugate-gradient
 # solve against the precision — nothing is ever formed as a dense matrix
 # unless you ask. For a single-time analysis they linearise the model's
@@ -116,7 +116,7 @@
 # run at ECMWF). With a nonlinear model the members are approximate
 # posterior samples that see some of the non-Gaussianity the Laplace
 # approximation cannot, at the price of $M$ solves instead of one.
-# [`EnsembleCovariance`](../api/posterior.md) packages the result.
+# [`EnsembleCovariance`](xref:api#vardax.EnsembleCovariance) packages the result.
 #
 # ## Calibration
 #
@@ -134,7 +134,7 @@
 #   the ranks are uniform on $\{0, \ldots, n\}$; a U-shaped histogram
 #   means over-confidence, a hump means under-confidence, a slope means
 #   bias. vardax ships this as
-#   [`simulation_based_calibration`](../api/utils.md), one of the three
+#   [`simulation_based_calibration`](xref:api#vardax.simulation_based_calibration), one of the three
 #   validation gates of chapter [14](../14_six_step_cycle.md).
 #
 # For these checks to be meaningful the truth must actually be drawn from
@@ -181,7 +181,7 @@ from vardax import (
 # supports both forward- and reverse-mode differentiation through the ODE
 # solve; the covariance adapters need both (tangent-linear products for
 # $G'v$ and adjoint products for $G'^{\top}w$). It is wrapped in
-# [`SoftBoundedForward`](../api/utils.md) so that the line search inside
+# [`SoftBoundedForward`](xref:api#vardax.SoftBoundedForward) so that the line search inside
 # BFGS cannot drive the adaptive solver off the attractor and past its
 # step cap; the box ($|x_i| \le 60$) contains the attractor with room to
 # spare, so on it the wrapper is exactly the Lorenz-63 flow.
@@ -582,5 +582,5 @@ plt.show()
 #   windows. Here the Laplace posterior is calibrated in the bulk and
 #   over-confident in the tails, where the cost stops being quadratic.
 #
-# Notebook [17](17_amortized_posterior_L63.py) runs the same gates on an
+# Notebook [17](17_amortized_posterior_L63.ipynb) runs the same gates on an
 # amortized posterior, where they are far from a formality.

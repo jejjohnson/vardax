@@ -109,3 +109,16 @@ contents and reading order. Recommended entry points:
   targeting upstream contribution.
 - **Math reference rewritten** to DA-textbook style. 17 chapters
   organised around the DA hierarchy rather than a 4DVarNet narrative.
+
+## Documentation build
+
+The site is built by two tools and deployed as one, the same split radtrax, plumax and kernellib use.
+
+| Half | Tool | Source | Deployed at |
+|---|---|---|---|
+| Prose: home, maths reference, tutorials, design docs | [mystmd](https://mystmd.org) | `docs/myst.yml`, `docs/*.md`, `docs/notebooks/`, `docs/design/` | `/` |
+| API reference | MkDocs + mkdocstrings | `mkdocs.yml`, `docs/api/` | `/reference/` |
+
+`make docs` runs `scripts/build_docs.py`, which builds the API reference, converts and executes each jupytext tutorial into a gitignored `.ipynb` next to its `.py` source, builds the MyST site, assembles both into `public/` and checks every internal link across the two. `make docs-fast` skips executing the tutorials, and `make docs-serve` serves the result at http://127.0.0.1:8000. The MyST half needs the `myst` CLI (`npm install -g mystmd`).
+
+MyST pages link into the API with the `xref:` protocol and the top-level name, for example ``[`StrongFourDVar`](xref:api#vardax.StrongFourDVar)``; a target missing from the inventory fails the build. API pages link to the prose with absolute URLs under https://jejjohnson.github.io/vardax/. mystmd drops a file's leading number from its URL, so `05_threedvar.md` is served at `/threedvar/` and `09_4dvarnet.md` at `/dvarnet/`.

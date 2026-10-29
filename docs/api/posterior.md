@@ -9,7 +9,7 @@ estimates are delegated to
 [gaussx](https://jejjohnson.github.io/gaussx/) — `gaussx.inv`,
 `gaussx.diag`, and `gaussx.ensemble_covariance` — so structured and
 iterative solves come for free. See
-[Posterior Covariance](../13_posterior_covariance.md) in the Mathematical
+[Posterior Covariance](https://jejjohnson.github.io/vardax/posterior-covariance/) in the Mathematical
 Reference for derivations and when each approximation is trustworthy.
 
 Adapters satisfy the [`PosteriorAdapter`](protocols.md) Protocol and all

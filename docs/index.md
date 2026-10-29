@@ -4,21 +4,22 @@
 
 *Formerly `fourdvarjax` — renamed to `vardax`.*
 
-!!! info "Status"
-    All seven analysis methods ship and all seven satisfy
-    `pipekit_cycle.AnalysisStep` via `.as_analysis_step()`. Import them
-    from the package root (`import vardax as vdx; vdx.StrongFourDVar`):
-    there is no `vardax.models` or `vardax.obs_operators` module. The
-    `vardax.adjoints`, `vardax.amortized` and `vardax.cycle` submodules
-    are bound too, and a few symbols live only there — `AbstractAdjoint`
-    is `vardax.adjoints.AbstractAdjoint`, not `vardax.AbstractAdjoint`.
-    Individual components may still be stubs where a chapter says so
-    (the flow and score heads of
-    [amortized inference](10_amortized_inference.md) are the current
-    ones); see [boundaries](design/boundaries.md) for what vardax will
-    and will not own.
-    *(The package was previously published as `fourdvarjax` v0.1.x;
-    `vardax` is now the canonical name.)*
+```{note} Status
+All seven analysis methods ship and all seven satisfy
+`pipekit_cycle.AnalysisStep` via `.as_analysis_step()`. Import them
+from the package root (`import vardax as vdx; vdx.StrongFourDVar`):
+there is no `vardax.models` or `vardax.obs_operators` module. The
+`vardax.adjoints`, `vardax.amortized` and `vardax.cycle` submodules
+are bound too, and a few symbols live only there — `AbstractAdjoint`
+is `vardax.adjoints.AbstractAdjoint`, not `vardax.AbstractAdjoint`.
+Individual components may still be stubs where a chapter says so
+(the flow and score heads of
+[amortized inference](10_amortized_inference.md) are the current
+ones); see [boundaries](design/boundaries.md) for what vardax will
+and will not own.
+*(The package was previously published as `fourdvarjax` v0.1.x;
+`vardax` is now the canonical name.)*
+```
 
 vardax provides the seven classical and modern DA analysis methods as
 peer [`pipekit_cycle.AnalysisStep`](design/pipekit_composition.md)
@@ -176,7 +177,7 @@ though, and the shapes have to line up: the 4DVar adapters re-solve
 against the background the model was constructed with and expect a
 batched observation window, so a cycle that uses each forecast as the
 next background supplies a small custom `AnalysisStep`. Notebook
-[16](notebooks/16_cycled_assimilation_L63.py) shows that pattern
+[16](notebooks/16_cycled_assimilation_L63.ipynb) shows that pattern
 end to end.
 
 ## Documentation
