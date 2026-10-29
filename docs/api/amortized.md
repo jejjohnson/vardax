@@ -4,7 +4,7 @@ Where the variational methods on the [Models](models.md) page solve an
 optimisation problem *per analysis*, an amortized posterior pays the cost
 once at training time: a network is fit to map observations directly to an
 approximate posterior, so inference is a single forward pass. See
-[Amortized Inference](../10_amortized_inference.md) in the Mathematical
+[Amortized Inference](https://jejjohnson.github.io/vardax/amortized-inference/) in the Mathematical
 Reference for the underlying theory and the fidelity/speed trade-offs.
 
 `AmortizedPosterior` composes two exchangeable parts: an *observation

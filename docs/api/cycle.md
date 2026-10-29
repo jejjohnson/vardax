@@ -11,10 +11,10 @@ the [`ForwardModel`](protocols.md) Protocol.
 
 Because the coupling is purely structural (runtime-checkable Protocols, no
 inheritance), the same cycle accepts every vardax method interchangeably —
-swapping [3DVar](../05_threedvar.md) for
-[strong-constraint 4DVar](../06_strong_4dvar.md) inside a cycle is a
+swapping [3DVar](https://jejjohnson.github.io/vardax/threedvar/) for
+[strong-constraint 4DVar](https://jejjohnson.github.io/vardax/strong-4dvar/) inside a cycle is a
 one-argument change. The full forecast/analysis loop is worked through in
-[Six-Step Inference Cycle](../14_six_step_cycle.md). Both factories are also
+[Six-Step Inference Cycle](https://jejjohnson.github.io/vardax/six-step-cycle/). Both factories are also
 accessible via the `vardax.cycle` submodule namespace.
 
 ## Factories

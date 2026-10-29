@@ -1,0 +1,132 @@
+# ---------------------------------------------------------------------------
+# mystmd builds the prose half of the documentation: home page, maths
+# reference, tutorials and design docs. The API reference is built separately
+# by MkDocs + mkdocstrings and mounted at `/reference/`. See `docs/README.md`.
+#
+# `references.api` points at a LOCAL server because mystmd only loads
+# intersphinx inventories over http(s). `scripts/build_docs.py` serves the
+# freshly built MkDocs `site/` on this exact port, then rewrites the resulting
+# localhost URLs to the deployed `/reference/` path. Keep the port in sync
+# with API_PORT in that script.
+#
+# The tutorials are jupytext `.py` sources (the repo forbids committed
+# `.ipynb`). `scripts/build_docs.py` converts and executes each one into a
+# gitignored `.ipynb` next to its source before this build reads them.
+# ---------------------------------------------------------------------------
+version: 1
+
+project:
+  id: vardax-docs
+  title: vardax
+  description: >-
+    JAX-native variational data assimilation: seven analysis methods behind
+    one pipekit-cycle protocol.
+  github: https://github.com/jejjohnson/vardax
+  authors:
+    - name: J. Emmanuel Johnson
+  references:
+    api: http://127.0.0.1:8911/
+  toc:
+    - file: index.md
+    - title: Mathematical reference
+      children:
+        - title: Foundation
+          children:
+            - file: 01_problem_setting.md
+            - file: 02_observation_model.md
+            - file: 03_dynamical_model.md
+        - title: Analysis methods
+          children:
+            - file: 04_oi_blue.md
+            - file: 05_threedvar.md
+            - file: 06_strong_4dvar.md
+            - file: 07_weak_4dvar.md
+            - file: 08_incremental_4dvar.md
+            - file: 09_4dvarnet.md
+            - file: 10_amortized_inference.md
+        - title: Cross-cutting
+          children:
+            - file: 11_observation_operators.md
+            - file: 12_adjoint_methods.md
+            - file: 13_posterior_covariance.md
+            - file: 14_six_step_cycle.md
+        - title: End-to-end examples
+          children:
+            - file: 15_lorenz_examples.md
+            - file: 16_ssh_example.md
+            - file: 17_methane_example.md
+            - file: 18_latent_da.md
+        - title: Applications and foundations
+          children:
+            - file: 19_physical_models.md
+            - file: 20_uncertainty.md
+            - file: 21_oceanbench.md
+            - file: 22_neural_field_4dvar.md
+        - title: Reference
+          children:
+            - file: notation.md
+            - file: references.md
+    - title: Tutorials
+      children:
+        - file: notebooks/index.md
+        - file: notebooks/01_model_based_4dvar_L63.ipynb
+        - file: notebooks/02_unrolling_vs_fixedpoint_L63.ipynb
+        - file: notebooks/03_4dvarnet_L63.ipynb
+        - file: notebooks/04_4dvarnet_2d_demo.ipynb
+        - file: notebooks/05_end_to_end_L63.ipynb
+        - file: notebooks/06_end_to_end_L96.ipynb
+        - file: notebooks/07_prior_pretraining_L63.ipynb
+        - file: notebooks/08_classical_4dvar_vs_4dvarnet_L63.ipynb
+        - file: notebooks/09_param_estimation_L63.ipynb
+        - file: notebooks/10_bilevel_opt_L63.ipynb
+        - file: notebooks/11_gradient_learning_L63.ipynb
+        - file: notebooks/12_weak_constraint_4dvar_L63.ipynb
+        - file: notebooks/13_neural_closure_L96.ipynb
+        - file: notebooks/14_posterior_uncertainty_L63.ipynb
+        - file: notebooks/15_observation_operators.ipynb
+        - file: notebooks/16_cycled_assimilation_L63.ipynb
+        - file: notebooks/17_amortized_posterior_L63.ipynb
+    - title: Design docs
+      children:
+        - file: design/README.md
+        - file: design/vision.md
+        - file: design/architecture.md
+        - file: design/boundaries.md
+        - file: design/decisions.md
+        - file: design/pipekit_composition.md
+        - file: design/posterior.md
+        - file: design/latent_da.md
+        - title: API
+          children:
+            - file: design/api/README.md
+            - file: design/api/primitives.md
+            - file: design/api/components.md
+            - file: design/api/observation_operators.md
+            - file: design/api/models.md
+        - title: Examples
+          children:
+            - file: design/examples/README.md
+            - file: design/examples/primitives.md
+            - file: design/examples/components.md
+            - file: design/examples/models.md
+            - file: design/examples/integration.md
+            - file: design/examples/use_cases.md
+
+site:
+  title: vardax
+  template: book-theme
+  options:
+    logo: assets/logo-light.svg
+    logo_dark: assets/logo-dark.svg
+    favicon: assets/icon.svg
+    # URLs follow the folder layout (design/api/models), so same-named pages in
+    # different folders do not collide. mystmd still drops a leading number:
+    # 05_threedvar.md is served at /threedvar/.
+    folders: true
+  # mystmd requires a full URL here, and the theme prepends BASE_URL to any
+  # nav URL starting with `/` on hydration, so the deployed location is
+  # hard-coded. A local preview's nav button therefore points at the
+  # deployed site. See docs/README.md.
+  nav:
+    - title: API reference
+      url: https://jejjohnson.github.io/vardax/reference/

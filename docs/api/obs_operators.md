@@ -7,7 +7,7 @@ the predicted observation, and `linearize(state)` returns the tangent-linear
 (Jacobian) operator that the incremental and posterior-covariance machinery
 needs. Because conformance is structural, custom operators plug in by
 matching that signature; nothing here needs to be subclassed. See
-[Observation Operators](../11_observation_operators.md) in the Mathematical
+[Observation Operators](https://jejjohnson.github.io/vardax/observation-operators/) in the Mathematical
 Reference for the modelling background.
 
 ## Core operators

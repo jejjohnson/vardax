@@ -3,14 +3,14 @@
 The seven analysis methods are *peers* — sibling `equinox.Module` classes
 with no inheritance between them, each owning exactly the assumptions its
 math requires. Pick by problem structure: a single analysis time with a
-linear observation operator wants [OI](../04_oi_blue.md) or
-[3DVar](../05_threedvar.md); an assimilation window with perfect-model
-dynamics wants [strong-constraint 4DVar](../06_strong_4dvar.md); admitting
-model error turns that into [weak-constraint 4DVar](../07_weak_4dvar.md);
+linear observation operator wants [OI](https://jejjohnson.github.io/vardax/oi-blue/) or
+[3DVar](https://jejjohnson.github.io/vardax/threedvar/); an assimilation window with perfect-model
+dynamics wants [strong-constraint 4DVar](https://jejjohnson.github.io/vardax/strong-4dvar/); admitting
+model error turns that into [weak-constraint 4DVar](https://jejjohnson.github.io/vardax/weak-4dvar/);
 the operational linearise-and-iterate formulation with control-variable
-transform is [incremental 4DVar](../08_incremental_4dvar.md); and replacing
+transform is [incremental 4DVar](https://jejjohnson.github.io/vardax/incremental-4dvar/); and replacing
 the inner-loop optimiser with a trained ConvLSTM gives
-[4DVarNet](../09_4dvarnet.md).
+[4DVarNet](https://jejjohnson.github.io/vardax/dvarnet/).
 
 Every model exposes `.as_analysis_step()`, returning a lightweight wrapper
 that satisfies the pipekit-cycle [`AnalysisStep`](protocols.md) Protocol —
@@ -34,7 +34,7 @@ window. `IncrementalConfig` collects the outer/inner-loop knobs of
 
 ## Neural-field 4DVar
 
-[`SpaceTimeFieldVar`](../22_neural_field_4dvar.md) fits one continuous
+[`SpaceTimeFieldVar`](https://jejjohnson.github.io/vardax/neural-field-4dvar/) fits one continuous
 field $u(t, s) = f_\theta(t, s)$ over the whole window to point
 observations, with an optional PDE residual as a soft constraint and
 weight decay in place of $B$; no rollout. It returns a

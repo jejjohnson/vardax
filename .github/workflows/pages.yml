@@ -20,10 +20,25 @@ jobs:
       - name: Set up Python
         run: uv python install 3.12
 
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+
+      - name: Install mystmd
+        run: npm install -g mystmd
+
       - name: Install dependencies
         run: uv sync --group docs
 
-      - name: Build and deploy docs
+      # MyST prose at the root, the MkDocs API reference under /reference/;
+      # see docs/README.md. The tutorials are executed during the build.
+      - name: Build and verify the documentation site
         env:
           JAX_PLATFORMS: cpu
-        run: uv run mkdocs gh-deploy --force --strict
+          BASE_URL: /${{ github.event.repository.name }}
+        run: uv run --group docs python scripts/build_docs.py
+
+      # The repository's Pages source is the gh-pages branch.
+      - name: Deploy to gh-pages
+        run: uv run --group docs ghp-import --no-jekyll --push --force public

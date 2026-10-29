@@ -184,7 +184,7 @@ The modulators, shipped and planned:
 
 `IdentityPrior` with a fixed-step modulator and many solver steps is gradient descent on the variational cost; it is the classical baseline, useful for checking agreement with the linear-Gaussian limit (Decision D14 invariant).
 
-Notebook [11](notebooks/11_gradient_learning_L63.py) trains a
+Notebook [11](notebooks/11_gradient_learning_L63.ipynb) trains a
 `ConvLSTMGradMod1D` on its own, with the prior frozen, and compares it
 with that fixed-step baseline across solver-step budgets.
 

@@ -34,7 +34,7 @@ uv run pytest tests/ -v               # 147 tests should pass
 uv run ruff check .                   # lint
 uv run ruff format --check .          # format
 uv run ty check src/vardax            # typecheck
-uv run --group docs mkdocs build --strict   # docs build
+uv run --group docs python scripts/build_docs.py   # docs build (needs mystmd: npm install -g mystmd)
 ```
 
 Or just `make uv-test && make uv-lint`. Pre-commit hooks run a subset
@@ -58,7 +58,7 @@ PR titles are validated by the `conventional-commits` workflow.
 ## PR review
 
 - All four CI checks (tests, lint, format, typecheck) must pass.
-- Docs build (`mkdocs build --strict`) must pass.
+- Docs build (`scripts/build_docs.py`: MkDocs API reference, MyST prose site and a link check over both) must pass.
 - For substantial changes, link to relevant design decisions in
   [`docs/design/decisions.md`](docs/design/decisions.md).
 - Resolve review comment threads after addressing them.

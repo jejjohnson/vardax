@@ -39,7 +39,8 @@ pytestmark = pytest.mark.integration
 REPO = pathlib.Path(__file__).parents[1]
 DOCS = REPO / "docs"
 README = REPO / "README.md"
-EXCLUDED = ("design",)
+# _build holds the MyST build output, which copies the page sources.
+EXCLUDED = ("design", "_build")
 ALIASES = {"vardax": vardax, "vdx": vardax}
 _MISSING = object()
 
