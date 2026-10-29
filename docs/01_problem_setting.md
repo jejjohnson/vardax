@@ -11,9 +11,7 @@ likelihood comes from instruments, and the posterior is what we want.
 Let $x \in \mathbb{R}^n$ denote the state and $y \in \mathbb{R}^m$ the
 observations. Bayes' theorem gives the posterior
 
-$$
-p(x \mid y) \propto p(y \mid x)\, p(x).
-$$
+$$p(x \mid y) \propto p(y \mid x) p(x).$$
 
 Three ingredients:
 
@@ -35,11 +33,7 @@ Three ingredients:
 The maximum a posteriori (MAP) estimator minimises the negative
 log-posterior:
 
-$$
-x^* = \underset{x}{\arg\min}\; \big\{-\log p(y \mid x) - \log p(x)\big\}
-    = \underset{x}{\arg\min}\;
-        \tfrac{1}{2} \|x - x_b\|^2_{B^{-1}} + \tfrac{1}{2} \|y - H(x)\|^2_{R^{-1}}.
-$$
+$$x^* = \underset{x}{\arg\min} \left\{-\log p(y \mid x) - \log p(x)\right\} = \underset{x}{\arg\min} \frac{1}{2} \|x - x_b\|^2_{B^{-1}} + \frac{1}{2} \|y - H(x)\|^2_{R^{-1}}.$$
 
 This is the 3DVar cost (chapter 5). When the state evolves through
 dynamics $M_t$, we add a time index and a forward rollout — that's
@@ -51,19 +45,12 @@ Consider a state $x_0$ at the start of an assimilation window and
 observations $y_t$ at times $t = 0, 1, \ldots, T$. A dynamical model
 $M_t$ propagates $x_0$ forward:
 
-$$
-x_t = M_t(x_0).
-$$
+$$x_t = M_t(x_0).$$
 
 The 4D variational cost combines the background term, all observation
 terms across time, and (optionally) a model-error term:
 
-$$
-J(x_0, \boldsymbol{\eta}) =
-  \underbrace{\tfrac{1}{2} \|x_0 - x_b\|^2_{B^{-1}}}_{\text{background}} +
-  \underbrace{\tfrac{1}{2} \sum_{t=0}^{T} \|y_t - H_t(M_t(x_0; \boldsymbol{\eta}))\|^2_{R_t^{-1}}}_{\text{observations}} +
-  \underbrace{\tfrac{1}{2} \sum_{t=1}^{T} \|\eta_t\|^2_{Q_t^{-1}}}_{\text{model error (weak constraint only)}}.
-$$
+$$J(x_0, \boldsymbol{\eta}) = \underbrace{\frac{1}{2} \|x_0 - x_b\|^2_{B^{-1}}}_{\text{background}} + \underbrace{\frac{1}{2} \sum_{t=0}^{T} \|y_t - H_t(M_t(x_0; \boldsymbol{\eta}))\|^2_{R_t^{-1}}}_{\text{observations}} + \underbrace{\frac{1}{2} \sum_{t=1}^{T} \|\eta_t\|^2_{Q_t^{-1}}}_{\text{model error (weak constraint only)}}.$$
 
 The model-error term is absent in strong-constraint 4DVar (chapter 6,
 control variable $x_0$ alone) and present in weak-constraint 4DVar

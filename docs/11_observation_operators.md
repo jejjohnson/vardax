@@ -6,26 +6,36 @@ protocol. This chapter goes deeper into the operator family vardax
 ships: masked identity, linear projection, averaging kernel, and
 multi-instrument fusion.
 
-All four satisfy `pipekit_cycle.ObservationOperator` (the first three
-directly; multi-instrument fusion via its `.to_observation_operator()`
-adapter — chapter 2). All four expose `__call__(x)` and `linearize(x)`,
-with the tangent-linear / adjoint contract enforced by the planned
-`tests/test_pipekit_protocols.py` conformance suite (Epic 1; not yet
-present in the v0.1.6 codebase).
+All four satisfy `pipekit_cycle.ObservationOperator` (the first three directly; multi-instrument fusion via its `.to_observation_operator()` adapter — chapter 2), which `tests/test_pipekit_protocols.py` checks. All four expose `__call__(x)` and `linearize(x)`; the adjoint test at the end of this chapter checks the tangent-linear contract.
+
+The Python blocks on this page run in order, each continuing the ones above it.
 
 ## Masked identity
 
-$$
-H(x) = m \odot x, \quad m \in \{0, 1\}^n.
-$$
+$$H(x) = m \odot x, \text{ with } m \in \{0, 1\}^n.$$
 
 ```python
-from vardax import MaskedIdentity
+import jax
+import jax.numpy as jnp
+import vardax as vdx
 
-obs_op = MaskedIdentity()
-y_pred = obs_op(x, mask=batch.mask)
-H_lin = obs_op.linearize(x)            # diag(m), via lineax.JacobianLinearOperator
+# Shapes: N = 6 grid cells
+
+key_state, key_mask = jax.random.split(jax.random.PRNGKey(0))
+state = jax.random.normal(key_state, (6,))  # (N,)
+# m ~ Bernoulli(0.5)
+mask = jax.random.bernoulli(key_mask, 0.5, (6,)).astype(jnp.float32)  # (N,)
+
+# today (vardax)
+obs_op = vdx.MaskedIdentity()
+# H(x) = m ⊙ x
+predicted = obs_op(state, mask=mask)  # (N,) → (N,)
+# H′(x) = I; the mask enters at call time, not in the tangent
+tangent = obs_op.linearize(state)  # (N, N) op
+print(type(tangent).__name__, bool(jnp.allclose(tangent.mv(mask), mask)))
 ```
+
+It prints `JacobianLinearOperator True`: the tangent is the identity, so masked residuals come from the cost, which multiplies by $m$.
 
 Use case: SSH altimetry along-track gaps, SST with cloud masks,
 sparse in-situ samples on a grid.
@@ -36,24 +46,32 @@ changes (a soft mask implicitly inflates $R$ where $m$ is small).
 
 ## Linear projection
 
-$$
-H(x) = H_\text{mat} \cdot x.
-$$
+$$H(x) = H_\text{mat} \cdot x.$$
 
 ```python
-from vardax import LinearObs
+import lineax as lx
 
-obs_op = LinearObs(operator=footprint_op)         # AbstractLinearOperator
-y_pred = obs_op(x)
-H_lin = obs_op.linearize(x)                    # the operator itself
+# Shapes: M = 3 receptors; N = 6 grid cells
+
+# H_mat = I₃ ⊗ [½ ½]: each receptor averages two neighbouring cells
+footprint = jnp.kron(jnp.eye(3), jnp.array([[0.5, 0.5]]))  # (M, N)
+
+# today (vardax)
+obs_op = vdx.LinearObs(operator=lx.MatrixLinearOperator(footprint))
+# H(x) = H_mat x
+predicted = obs_op(state)  # (N,) → (M,)
+# H′(x) = H_mat, the stored operator itself
+tangent = obs_op.linearize(state)  # (M, N) op
+print(predicted.shape, tangent is obs_op.operator)
 ```
+
+It prints `(3,) True`.
 
 Use cases:
 
 - **Lagrangian footprint** — particle simulator produces a footprint
   matrix mapping source field to receptor observation. The matrix is
-  often sparse (only cells with non-zero footprint contribute) — wrap
-  as a `lineax.SparseLinearOperator`.
+  often sparse (only cells with non-zero footprint contribute) — lineax has no sparse operator, so wrap the sparse product in a `lineax.FunctionLinearOperator`.
 - **Spectral filtering** — observe specific frequency bands. Store
   $H_\text{mat} = F^{-1} S F$ as a composition of `lineax`
   operators.
@@ -72,9 +90,7 @@ and validation.
 
 ### The math, restated
 
-$$
-\hat{y} = A\, (h \odot x + (1 - h) \odot x_a).
-$$
+$$\hat{y} = A (h \odot x + (1 - h) \odot x_a).$$
 
 The kernel matrix $A$ smooths the model state through the retrieval's
 sensitivity profile. The weighting vector $h$ tells you how much of
@@ -94,18 +110,48 @@ weighting as sidecar metadata in the netCDF / HDF5 file:
 
 ```python
 import xarray as xr
-import lineax as lx
-from vardax import AveragingKernel
 
-def averaging_kernel_from_l2(ds: xr.Dataset) -> AveragingKernel:
-    return AveragingKernel(
-        kernel_matrix=lx.MatrixLinearOperator(jnp.asarray(ds.averaging_kernel.values)),
-        prior_profile=jnp.asarray(ds.retrieval_prior.values),
-        pressure_weights=jnp.asarray(ds.weighting_vector.values),
+# Shapes: L = 4 retrieval levels
+
+
+# user
+def averaging_kernel_from_l2(dataset: xr.Dataset) -> vdx.AveragingKernel:
+    # A, dense from the sidecar matrix
+    kernel = lx.MatrixLinearOperator(  # (L, L) op
+        jnp.asarray(dataset["averaging_kernel"].values)
+    )
+    # today (vardax)
+    # H(x) = A (h ⊙ x + (1 − h) ⊙ x_a)
+    return vdx.AveragingKernel(
+        kernel_matrix=kernel,
+        prior_profile=jnp.asarray(dataset["retrieval_prior"].values),
+        pressure_weights=jnp.asarray(dataset["weighting_vector"].values),
     )
 
-tropomi = averaging_kernel_from_l2(tropomi_ds)
+
+# a toy L2 sidecar: smoothing kernel, flat prior, weights falling with height
+level_matrix = jnp.array(
+    [
+        [0.6, 0.3, 0.1, 0.0],
+        [0.2, 0.5, 0.2, 0.1],
+        [0.1, 0.2, 0.5, 0.2],
+        [0.0, 0.1, 0.3, 0.6],
+    ]
+)  # (L, L)
+l2_sidecar = xr.Dataset(
+    {
+        "averaging_kernel": (("level", "level_out"), level_matrix),
+        "retrieval_prior": ("level", jnp.full(4, 1.9)),
+        "weighting_vector": ("level", jnp.array([1.0, 0.9, 0.6, 0.2])),
+    }
+)
+tropomi = averaging_kernel_from_l2(l2_sidecar)
+column = jnp.full(4, 2.0)  # (L,)
+# ŷ = A (h ⊙ x + (1 − h) ⊙ x_a)
+print(tropomi(column))
 ```
+
+It prints `[1.993     1.979     1.962     1.9390001]`: each row of $A$ sums to one, so the output lies between the state $x = 2$ and the retrieval prior $x_a = 1.9$, closer to the prior where $h$ is small.
 
 ### Structured kernels
 
@@ -115,12 +161,32 @@ smoothing), use Kronecker structure:
 ```python
 import gaussx as gx
 
-A_kron = gx.KroneckerLinearOperator([
-    gx.MatrixLinearOperator(vertical_kernel),
-    gx.MatrixLinearOperator(horizontal_kernel),
-])
-ak = AveragingKernel(kernel_matrix=A_kron, prior_profile=xa, pressure_weights=h)
+# Shapes: L = 2 levels; C = 3 columns; N = L C = 6 cells
+
+vertical_kernel = jnp.array([[0.7, 0.3], [0.3, 0.7]])  # (L, L)
+horizontal_kernel = jnp.array(
+    [[0.8, 0.2, 0.0], [0.1, 0.8, 0.1], [0.0, 0.2, 0.8]]
+)  # (C, C)
+# today (gaussx)
+# A = A_v ⊗ A_h
+kronecker_kernel = gx.Kronecker(  # (N, N) op
+    lx.MatrixLinearOperator(vertical_kernel),
+    lx.MatrixLinearOperator(horizontal_kernel),
+)
+# today (vardax)
+# H(x) = A (h ⊙ x + (1 − h) ⊙ x_a)
+separable_ak = vdx.AveragingKernel(
+    kernel_matrix=kronecker_kernel,
+    prior_profile=jnp.zeros(6),
+    pressure_weights=jnp.full(6, 0.8),
+)
+# vec(A_v X A_hᵀ) without forming the (N, N) matrix
+smoothed = separable_ak(state)  # (N,) → (N,)
+dense_kernel = jnp.kron(vertical_kernel, horizontal_kernel)  # (N, N)
+print(bool(jnp.allclose(smoothed, dense_kernel @ (0.8 * state), atol=1e-6)))
 ```
+
+It prints `True`.
 
 Kronecker structure means $A$ never materialised; mat-vec
 $\mathrm{vec}(A \cdot X)$ becomes two small mat-vecs instead of one
@@ -130,8 +196,24 @@ For low-rank kernels (information content $\le$ rank), use low-rank
 operators:
 
 ```python
-A_lr = gx.LowRankLinearOperator(U=u, S=s, V=v)
+import einx
+
+# Shapes: N = 6 cells; K = 2 rank
+
+key_left, key_right = jax.random.split(jax.random.PRNGKey(1))
+left_vectors = jax.random.normal(key_left, (6, 2))  # U, (N, K)
+singular_values = jnp.array([0.9, 0.4])  # s, (K,)
+right_vectors = jax.random.normal(key_right, (6, 2))  # V, (N, K)
+# A = U diag(s) Vᵀ, composed lazily
+low_rank_kernel = (  # (N, N) op
+    lx.MatrixLinearOperator(left_vectors)
+    @ lx.DiagonalLinearOperator(singular_values)
+    @ lx.MatrixLinearOperator(einx.id("n k -> k n", right_vectors))
+)
+print(low_rank_kernel.mv(state).shape)
 ```
+
+It prints `(6,)`.
 
 Both saves memory and respects the underlying retrieval physics
 (retrievals with low DOF should have low-rank $A$).
@@ -156,36 +238,70 @@ cost.
 
 ## Multi-instrument fusion
 
-For multi-satellite inversions:
+For multi-satellite inversions, each instrument gets an `InstrumentSpec` with its own operator, mask and $R_i$. The toy below has a coarse TROPOMI-like instrument behind an averaging kernel and a fine EMIT-like one on the grid. `MultiInstrumentFusion` returns the per-instrument predictions; no shipped cost consumes them yet, so the block sums the per-instrument terms itself.
 
 ```python
-from vardax import (
-    MultiInstrumentFusion, InstrumentRegistry, InstrumentSpec,
-)
+from jaxtyping import Array, Float
 
-tropomi_spec = InstrumentSpec(
-    obs_op=AveragingKernel(kernel_matrix=A_t, prior_profile=xa_t, pressure_weights=h_t),
-    mask=tropomi_qa,
-    obs_cov_op=lx.DiagonalLinearOperator(tropomi_uncertainty),
+# Shapes: N = 6 grid cells; M_t = 3 TROPOMI pixels; M_e = 6 EMIT pixels
+
+key_tropomi, key_emit = jax.random.split(jax.random.PRNGKey(2))
+# today (vardax)
+# TROPOMI: coarse pixels through an averaging kernel, H_t(x) = A_t (h ⊙ x)
+tropomi_op = vdx.AveragingKernel(
+    kernel_matrix=lx.MatrixLinearOperator(footprint),
+    prior_profile=jnp.zeros(6),
+    pressure_weights=jnp.full(6, 0.9),
+)
+# today (vardax)
+tropomi_spec = vdx.InstrumentSpec(
+    obs_op=tropomi_op,
+    mask=jnp.array([1.0, 1.0, 0.0]),
+    obs_cov_op=lx.DiagonalLinearOperator(jnp.full(3, 0.04)),
     instrument_id="TROPOMI",
 )
-emit_spec = InstrumentSpec(
-    obs_op=AveragingKernel(kernel_matrix=A_e, prior_profile=xa_e, pressure_weights=h_e),
-    mask=emit_qa,
-    obs_cov_op=lx.DiagonalLinearOperator(emit_uncertainty),
+# today (vardax)
+# EMIT: fine pixels on the grid, H_e(x) = x
+emit_spec = vdx.InstrumentSpec(
+    obs_op=vdx.MaskedIdentity(),
+    mask=mask,
+    obs_cov_op=lx.DiagonalLinearOperator(jnp.full(6, 0.01)),
     instrument_id="EMIT",
 )
-
-fusion = MultiInstrumentFusion(
-    registry=InstrumentRegistry(entries={
-        "TROPOMI": tropomi_spec,
-        "EMIT": emit_spec,
-    }),
+# today (vardax)
+fusion = vdx.MultiInstrumentFusion(
+    registry=vdx.InstrumentRegistry(
+        entries={"TROPOMI": tropomi_spec, "EMIT": emit_spec}
+    ),
 )
+# ŷᵢ = Hᵢ(x), one entry per instrument
+predictions = fusion(state)  # (N,) → {TROPOMI: (M_t,), EMIT: (M_e,)}
+observations = {
+    "TROPOMI": predictions["TROPOMI"] + 0.2 * jax.random.normal(key_tropomi, (3,)),
+    "EMIT": predictions["EMIT"] + 0.1 * jax.random.normal(key_emit, (6,)),
+}
 
-# Returns dict[str, Array] — per-instrument predicted observations
-predictions = fusion(x, batch)
+
+# user
+def fused_obs_cost(
+    state: Float[Array, " n"], observations: dict[str, Float[Array, " m"]]
+) -> Float[Array, ""]:
+    total = jnp.zeros(())
+    for instrument_id, spec in fusion.registry.entries.items():
+        # dᵢ = mᵢ ⊙ (yᵢ − Hᵢ(x))
+        innovation = spec.mask * (observations[instrument_id] - spec.obs_op(state))
+        # Rᵢ⁻¹ dᵢ, a solve rather than an inverse
+        whitened = lx.linear_solve(spec.obs_cov_op, innovation).value
+        # J_obs = Σᵢ ½ dᵢᵀ Rᵢ⁻¹ dᵢ
+        total = total + 0.5 * jnp.vdot(innovation, whitened)
+    return total  # → ()
+
+
+print({name: value.shape for name, value in predictions.items()})
+print(f"J_obs at the truth {float(fused_obs_cost(state, observations)):.2f}")
 ```
+
+It prints `{'TROPOMI': (3,), 'EMIT': (6,)}` and `J_obs at the truth 6.44`.
 
 The fusion happens at the **likelihood level**: each instrument
 contributes a term to $J_\text{obs}$, with its own $H_i$, $m_i$, $R_i$.
@@ -193,9 +309,7 @@ No pre-regridding to a common grid. No assumption of independent vs.
 correlated cross-instrument errors (the default is independent;
 correlated errors require block-non-diagonal $R$).
 
-Per-pixel `instrument` index on `Batch*` selects the operator. Quality
-masks zero-weight bad pixels — they contribute zero log-likelihood but
-remain in the audit count.
+Each `InstrumentSpec` carries its own quality mask $m_i$, which zero-weights bad pixels in that instrument's term; `Batch*` has no per-pixel instrument index.
 
 ### Cross-instrument bias
 
@@ -208,16 +322,38 @@ For joint inversion with bias estimation (Epic 9), introduce a
 per-instrument bias state $b_i$:
 
 ```python
-class BiasedFusion(eqx.Module):
-    base: MultiInstrumentFusion
-    bias_prior: dict[str, GaussianPrior]    # b_i ~ N(0, σ_b²)
+import equinox as eqx
 
-    def __call__(self, x, bias_dict, batch):
-        return {
-            inst_id: self.base.registry.entries[inst_id].obs_op(x) + bias_dict[inst_id]
-            for inst_id in self.base.registry.entries
-        }
+# Shapes: N = 6 grid cells; one scalar bias bᵢ per instrument
+
+
+# user
+class BiasedFusion(eqx.Module):
+    """Per-instrument additive bias on top of a fusion, with prior bᵢ ~ 𝒩(0, σ_b²)."""
+
+    base: vdx.MultiInstrumentFusion
+    bias_std: dict[str, float]
+
+    def __call__(
+        self, state: Float[Array, " n"], bias: dict[str, Float[Array, ""]]
+    ) -> dict[str, Float[Array, " m"]]:
+        predictions = self.base(state)
+        # ŷᵢ = Hᵢ(x) + bᵢ
+        return {name: predictions[name] + bias[name] for name in predictions}
+
+    def bias_cost(self, bias: dict[str, Float[Array, ""]]) -> Float[Array, ""]:
+        # J_b = Σᵢ ½ bᵢ² / σ_b,ᵢ²
+        terms = [0.5 * (bias[name] / std) ** 2 for name, std in self.bias_std.items()]
+        return sum(terms)  # → ()
+
+
+biased = BiasedFusion(base=fusion, bias_std={"TROPOMI": 0.02, "EMIT": 0.01})
+bias = {"TROPOMI": jnp.float32(0.01), "EMIT": jnp.float32(0.0)}
+biased_predictions = biased(state, bias)  # (N,) → {TROPOMI: (M_t,), EMIT: (M_e,)}
+print(f"J_b = {float(biased.bias_cost(bias)):.3f}")
 ```
+
+It prints `J_b = 0.125`.
 
 `b_i` becomes a joint state variable; the analysis solves for $(x,
 \boldsymbol{b})$ together. The bias prior tames the
@@ -245,10 +381,7 @@ fixed count $n_\text{obs}$ so shapes stay static under `jit`:
 
 The observation cost is
 
-$$
-J_o = \tfrac{1}{2} \sum_i m_i \,
-      \frac{\big(y_i - \mathcal H(x)(s_i, t_i)\big)^2}{\sigma_i^2}.
-$$
+$$J_o = \frac{1}{2} \sum_i m_i \frac{\left(y_i - \mathcal H(x)(s_i, t_i)\right)^2}{\sigma_i^2}.$$
 
 Padding rows contribute exactly zero value **and** zero gradient.
 `point_obs_cost` masks the whitened residual with `jnp.where` *before*
@@ -281,19 +414,65 @@ together with a `NeuralFieldParameterization`, which evaluates the field
 at the observation coordinates without a grid. A leading batch axis on
 the batch's arrays is optional.
 
-```python
-import vardax
+The toy below has a decaying forward model $M(x) = x / 2$ on $N = 8$ cells, four observations spread over three window steps and one padding row.
 
-batch = vardax.PointObsBatch(
-    coords=track_xy, values=ssh, sigma=ssh_err, valid=valid,
-    time_index=step_of_obs, n_times=T + 1,
+```python
+# Shapes: N = 8 grid cells; M = 5 point observations, one of them padding;
+# D = 1 coordinate; T + 1 = 3 states in the window
+
+key_truth, key_noise = jax.random.split(jax.random.PRNGKey(3))
+cell_axis = jnp.arange(8.0)  # (N,)
+
+
+# user
+class Decay(eqx.Module):
+    """M(x) = x / 2, a forward model with a unit step."""
+
+    dt: float = 1.0
+
+    def step(self, state: Float[Array, " n"], dt: float) -> Float[Array, " n"]:
+        # x_{t+1} = x_t / 2
+        return 0.5 * state
+
+
+# x₀ ~ 𝒩(0, I)
+initial_truth = jax.random.normal(key_truth, (8,))  # (N,)
+# x_t = M^t(x₀) = 2⁻ᵗ x₀
+trajectory = einx.multiply(  # (T+1, N)
+    "t, n -> t n", 0.5 ** jnp.arange(3.0), initial_truth
 )
-model = vardax.StrongFourDVar(
-    forward=qg_model, obs_op=vardax.GridPointObs((y_axis, x_axis)),
-    prior_mean=x_b, prior_cov_op=B_op, obs_cov_op=None,
+# today (vardax)
+point_batch = vdx.PointObsBatch(
+    coords=jnp.array([[0.5], [2.0], [4.25], [6.5], [0.0]]),  # sᵢ, (M, D)
+    values=jnp.zeros(5),
+    sigma=jnp.full(5, 0.1),
+    valid=jnp.array([True, True, True, True, False]),
+    time_index=jnp.array([0, 1, 1, 2, 0]),  # τᵢ
+    n_times=3,
 )
-x0_star = model(batch)
+# today (vardax)
+point_op = vdx.GridPointObs((cell_axis,))
+# 𝓗(x_{τᵢ})(sᵢ), linear interpolation in the frame τᵢ
+truth_points = point_op(trajectory, point_batch)  # (T+1, N) → (M,)
+# yᵢ = 𝓗(x_{τᵢ})(sᵢ) + σ εᵢ, σ = 0.1
+ssh = truth_points + 0.1 * jax.random.normal(key_noise, (5,))  # (M,)
+point_batch = eqx.tree_at(lambda batch: batch.values, point_batch, ssh)
+
+# today (vardax)
+# J(x₀) = ½ ‖x₀ − x_b‖²_{B⁻¹} + ½ Σᵢ mᵢ (yᵢ − 𝓗(x_{τᵢ})(sᵢ))² / σᵢ²
+model = vdx.StrongFourDVar(
+    forward=Decay(),
+    obs_op=point_op,
+    prior_mean=jnp.zeros(8),
+    prior_cov_op=lx.IdentityLinearOperator(jax.ShapeDtypeStruct((8,), jnp.float32)),
+    obs_cov_op=None,
+)
+# x₀* = argmin J(x₀)
+x0_star = model(point_batch)  # → (N,)
+print(x0_star.shape)
 ```
+
+It prints `(8,)`.
 
 When the points cover every grid cell, the point cost equals the masked
 grid cost with $R = \mathrm{diag}(\sigma^2)$. The analyses then agree, and
@@ -304,25 +483,63 @@ batches too (`tests/test_point_observations.py`).
 
 Every observation operator's `linearize()` must pass the adjoint test:
 
-$$
-\langle H' u, v \rangle = \langle u, (H')^\top v \rangle, \quad \forall u, v.
-$$
+$$\langle H' u, v \rangle = \langle u, (H')^\top v \rangle, \text{ for all } u, v.$$
 
 Implementation:
 
 ```python
-def adjoint_test(obs_op, x, key, n_probes=10):
-    H_lin = obs_op.linearize(x)
-    for _ in range(n_probes):
-        u = jax.random.normal(key, x.shape)
-        v = jax.random.normal(key, H_lin(u).shape)
-        forward_inner = jnp.dot(H_lin @ u, v)
-        backward_inner = jnp.dot(u, H_lin.T @ v)
-        assert jnp.allclose(forward_inner, backward_inner, atol=1e-5)
+from typing import Any
+
+from jaxtyping import PRNGKeyArray
+
+# Shapes: N = 6 grid cells; M observations of each operator; P = 10 probe pairs
+
+
+# user
+def adjoint_test(
+    obs_op: Any,
+    state: Float[Array, " n"],
+    *,
+    n_probes: int = 10,
+    key: PRNGKeyArray,
+) -> bool:
+    # H′(x)
+    tangent = obs_op.linearize(state)  # (M, N) op
+    state_keys, obs_keys = jax.random.split(key, (2, n_probes))
+    for state_key, obs_key in zip(state_keys, obs_keys, strict=True):
+        # u ~ 𝒩(0, I) in state space
+        state_probe = jax.random.normal(state_key, state.shape)  # (N,)
+        # H′ u
+        tangent_probe = tangent.mv(state_probe)  # (N,) → (M,)
+        # v ~ 𝒩(0, I) in observation space
+        obs_probe = jax.random.normal(obs_key, tangent_probe.shape)  # (M,)
+        # (H′)ᵀ v
+        adjoint_probe = tangent.transpose().mv(obs_probe)  # (M,) → (N,)
+        # ⟨H′ u, v⟩
+        forward_inner = jnp.vdot(tangent_probe, obs_probe)  # → ()
+        # ⟨u, (H′)ᵀ v⟩
+        backward_inner = jnp.vdot(state_probe, adjoint_probe)  # → ()
+        if not jnp.allclose(forward_inner, backward_inner, rtol=1e-4, atol=1e-5):
+            return False
+    return True
+
+
+key_adjoint = jax.random.PRNGKey(4)
+operators = {
+    "MaskedIdentity": vdx.MaskedIdentity(),
+    "LinearObs": vdx.LinearObs(operator=lx.MatrixLinearOperator(footprint)),
+    "AveragingKernel": separable_ak,
+    "TROPOMI": tropomi_op,
+}
+passed = {
+    name: adjoint_test(op, state, key=key_adjoint) for name, op in operators.items()
+}
+print(passed)
 ```
 
-The test is in `tests/test_pipekit_protocols.py` and runs against every
-operator. Failure means the gradient computation through that operator
+It prints `{'MaskedIdentity': True, 'LinearObs': True, 'AveragingKernel': True, 'TROPOMI': True}`.
+
+The repository runs it in `tests/test_obs_operators.py` (averaging kernel), `tests/test_interp_obs.py` and `tests/test_callable_obs.py`. Failure means the gradient computation through that operator
 is wrong; any 4DVar built on it will take wrong steps.
 
 ## See also

@@ -15,11 +15,7 @@ between research and operations.
 Learn a conditional density $q_\phi(x \mid y)$ that approximates the
 exact Bayesian posterior $p(x \mid y) \propto p(y \mid x) p(x)$:
 
-$$
-\phi^* = \underset{\phi}{\arg\min}\;
-         \mathbb{E}_{y \sim p(y)}\;
-         \mathrm{KL}\big(q_\phi(\cdot \mid y) \,\|\, p(\cdot \mid y)\big).
-$$
+$$\phi^* = \underset{\phi}{\arg\min} \mathbb{E}_{y \sim p(y)} \mathrm{KL}\left(q_\phi(\cdot \mid y) \| p(\cdot \mid y)\right).$$
 
 When the prior and forward model are samplable (which they are when
 supplied by `somax` or `plumax`), the training distribution comes from
@@ -45,16 +41,11 @@ vardax `AmortizedPosterior` exposes three head choices via the
 Learn an invertible map $f_\phi$ from a base Gaussian to the
 posterior, conditioned on the observation context:
 
-$$
-x = f_\phi(z;\, c_\psi(y)), \quad z \sim \mathcal{N}(0, I).
-$$
+$$x = f_\phi(z; c_\psi(y)), \text{ with } z \sim \mathcal{N}(0, I).$$
 
 Density:
 
-$$
-\log q_\phi(x \mid y) = \log p_z\big(f_\phi^{-1}(x; c_\psi(y))\big) -
-                       \log \big| \det \partial f_\phi / \partial z \big|.
-$$
+$$\log q_\phi(x \mid y) = \log p_z\left(f_\phi^{-1}(x; c_\psi(y))\right) - \log \left| \det \partial f_\phi / \partial z \right|.$$
 
 Exact density, exact samples. Use `gauss_flows` for the flow
 implementation. Good for moderate-dimensional state (up to $\sim 10^4$).
@@ -64,15 +55,11 @@ Higher-dimensional flows are open research.
 
 Learn the score of a noise-perturbed posterior at noise scale $t$:
 
-$$
-s_\phi(x, t \mid y) \approx \nabla_x \log p_t(x \mid y).
-$$
+$$s_\phi(x, t \mid y) \approx \nabla_x \log p_t(x \mid y).$$
 
 Sampling via reverse SDE:
 
-$$
-d x = \big[\,f(x, t) - g(t)^2 s_\phi(x, t \mid y)\,\big]\, d t + g(t)\, d \bar{w}.
-$$
+$$d x = \left[f(x, t) - g(t)^2 s_\phi(x, t \mid y) \right] d t + g(t) d \bar{w}.$$
 
 No exact density (sampling-only). High capacity for multimodal
 posteriors — the diffusion process can represent disconnected
@@ -83,9 +70,7 @@ dimensions than flows.
 
 Predict Gaussian posterior parameters directly:
 
-$$
-q_\phi(x \mid y) = \mathcal{N}\big(x; \mu_\phi(y), \Sigma_\phi(y)\big).
-$$
+$$q_\phi(x \mid y) = \mathcal{N}\left(x; \mu_\phi(y), \Sigma_\phi(y)\right).$$
 
 Cheapest by far. Restricted to unimodal Gaussian posteriors. Useful
 when the posterior is known to be Gaussian (e.g., as a learned
@@ -96,51 +81,103 @@ MAP).
 
 For flow and regression heads — maximum likelihood on simulated pairs:
 
-$$
-\mathcal{L}_\text{MLE}(\phi) = -\mathbb{E}_{(x, y) \sim p_\text{sim}}\, \log q_\phi(x \mid y).
-$$
+$$\mathcal{L}_\text{MLE}(\phi) = -\mathbb{E}_{(x, y) \sim p_\text{sim}} \log q_\phi(x \mid y).$$
 
 For score heads — denoising score matching:
 
-$$
-\mathcal{L}_\text{DSM}(\phi) = \mathbb{E}_{t, x, y, \varepsilon}\,
-                                \big\| s_\phi(x_t, t \mid y) -
-                                       \nabla_{x_t} \log p_t(x_t \mid x) \big\|^2,
-$$
+$$\mathcal{L}_\text{DSM}(\phi) = \mathbb{E}_{t, x, y, \varepsilon} \left\| s_\phi(x_t, t \mid y) - \nabla_{x_t} \log p_t(x_t \mid x) \right\|^2,$$
 
 with $x_t = x + \sigma(t)\varepsilon$.
 
-Both reduce to a standard `train_step` over simulated minibatches —
-the vardax training infrastructure (chapter 9) applies.
+Both reduce to a standard training step over simulated minibatches: `amortized_train_step` is chapter 9's `train_step` with the negative log-likelihood in place of the reconstruction loss.
 
 ## Implementation in vardax
 
-```python
-from vardax import AmortizedPosterior
-from vardax import AmortizedConfig
-from vardax import train_step
+Only the regression head ships today: `ConditionalFlowHead` and `ScoreDiffusionHead` are stubs that raise `NotImplementedError` when constructed, so the example uses `RegressionHead`.
+The toy problem has a state of $T = 1$ time and $N = 4$ cells with prior $p(x) = \mathcal{N}(0, I)$ and observations $y = x + \sigma \varepsilon$, $\sigma = 0.5$, fully observed.
+Its exact posterior is $\mathcal{N}(y / (1 + \sigma^2), \sigma^2 / (1 + \sigma^2) I)$, which the trained head should recover.
+Each training step draws $S = 64$ fresh simulated pairs, and `amortized_train_step` minimises $\mathcal{L}_\text{MLE}$.
 
-model = AmortizedPosterior(
-    encoder=ConvObsEncoder(...),       # eqx.Module: (y, mask) → context
-    head=ConditionalFlowHead(...),     # gauss_flows-based head
-    config=AmortizedConfig(head_type="flow", n_samples=64),
+```python
+import equinox as eqx
+import jax
+import jax.numpy as jnp
+import optax
+import vardax as vdx
+from jaxtyping import Array, Float, PRNGKeyArray
+
+# Shapes: S = 64 simulated pairs; T = 1 time; N = 4 grid cells; C = 16 context
+
+key_encoder, key_head, key_train, key_test, key_samples = jax.random.split(
+    jax.random.PRNGKey(0), 5
+)
+obs_std = 0.5  # σ
+
+
+# user
+def sample_train_pair(
+    key: PRNGKeyArray,
+) -> tuple[Float[Array, "t n"], Float[Array, "t n"]]:
+    key_state, key_noise = jax.random.split(key)
+    # x ~ p(x) = 𝒩(0, I)
+    state = jax.random.normal(key_state, (1, 4))  # (T, N)
+    # y = x + σ ε, ε ~ 𝒩(0, I)
+    obs = state + obs_std * jax.random.normal(key_noise, (1, 4))  # (T, N)
+    return state, obs
+
+
+# user
+@eqx.filter_jit
+def simulate_batch(key: PRNGKeyArray) -> vdx.Batch1D:
+    pair_keys = jax.random.split(key, 64)
+    states, obs = jax.vmap(sample_train_pair)(pair_keys)  # (S, T, N)
+    # today (vardax)
+    return vdx.Batch1D(input=obs, mask=jnp.ones_like(obs), target=states)
+
+
+# today (vardax)
+# c = MLP([vec(y); vec(m)])
+encoder = vdx.MLPObsEncoder(input_size=4, context_dim=16, key=key_encoder)
+# today (vardax)
+# q_φ(x | y) = 𝒩(μ_φ(c), diag σ²_φ(c))
+head = vdx.RegressionHead(context_dim=16, state_shape=(1, 4), key=key_head)
+# today (vardax)
+model = vdx.AmortizedPosterior(
+    encoder=encoder,
+    head=head,
+    config=vdx.AmortizedConfig(head_type="regression", n_samples=64),
 )
 
-# Training data from simulation
-def sample_train_pair(key):
-    x = prior_distribution.sample(key)
-    y_clean = forward_model(x)
-    y = y_clean + obs_noise.sample(key)
-    return Batch2D(input=y, mask=quality_mask, target=x)
+# today (optax)
+optimizer = optax.adam(3e-3)
+opt_state = optimizer.init(eqx.filter(model, eqx.is_array))
+for batch_key in jax.random.split(key_train, 1000):
+    batch = simulate_batch(batch_key)
+    # today (vardax)
+    # ℒ_MLE(φ) = −mean log q_φ(x | y)
+    model, opt_state, loss = vdx.amortized_train_step(
+        model, batch, optimizer, opt_state
+    )
+print(f"final NLL {float(loss):.2f}")
 
-for batch in simulation_loader:
-    model, opt_state, loss = train_step(model, batch, optimizer, opt_state)
-
-# Inference — sub-second
-x_map = model(batch)                        # MAP / mode of q_φ(x | y)
-samples = model.sample(batch, key, n=200)   # posterior samples
-log_p = model.log_prob(x, batch)            # exact for flow, NotImplemented for score
+# inference: one forward pass per batch
+test_batch = simulate_batch(key_test)
+# today (vardax)
+# x* = μ_φ(y), the mode of q_φ(x | y)
+x_map = model(test_batch)  # → (S, T, N)
+# today (vardax)
+# xⱼ ~ q_φ(x | y), j = 1, …, 200
+samples = model.sample(test_batch, key_samples, n=200)  # → (S, 200, T, N)
+# today (vardax)
+# log q_φ(x | y), exact for the regression head
+log_density = model.log_prob(test_batch.target, test_batch)  # → (S,)
+# E[x | y] = y / (1 + σ²)
+exact_mean = test_batch.input / (1 + obs_std**2)  # (S, T, N)
+mean_error = jnp.max(jnp.abs(x_map - exact_mean))  # → ()
+print(samples.shape, log_density.shape, f"max mean error {float(mean_error):.2f}")
 ```
+
+It prints `final NLL 2.48` and `(64, 200, 1, 4) (64,) max mean error 0.37`; the exact posterior's NLL is $2 (\log(2 \pi \cdot 0.2) + 1) \approx 2.46$.
 
 ## Validation — the hard gates
 
@@ -155,27 +192,59 @@ The amortized MAP must fall within $1\sigma_\text{post}$ of an
 oracle MAP from a slower method (`StrongFourDVar` /
 `IncrementalFourDVar`):
 
-$$
-\frac{|x^*_\text{amort} - x^*_\text{oracle}|}{\sigma_\text{post, oracle}} \le 1.
-$$
+$$\frac{|x^*_\text{amort} - x^*_\text{oracle}|}{\sigma_\text{post, oracle}} \le 1.$$
+
+For the toy problem the oracle is `ThreeDVar` with $B = I$ and $R = \sigma^2 I$, whose Laplace posterior is exact here because the problem is linear-Gaussian.
+`assert_posterior_agreement` reads only the mean of the fast posterior, so the amortized MAP goes in a `Posterior` without a covariance.
+The block continues the one above.
 
 ```python
-from vardax import assert_posterior_agreement
+import lineax as lx
 
-for val_batch in val_loader:
-    p_amort = LaplaceCovariance()(model(val_batch), model.as_analysis_step(), val_batch)
-    p_oracle = oracle.posterior(val_batch)
-    assert_posterior_agreement(p_amort, p_oracle, tolerance_sigma=1.0)
+# Shapes: S = 1 window; T = 1 time; N = 4 grid cells
+
+key_val, key_sbc = jax.random.split(jax.random.PRNGKey(1))
+state_structure = jax.ShapeDtypeStruct((1, 4), jnp.float32)
+# B = I
+prior_cov = lx.IdentityLinearOperator(state_structure)  # (T N, T N) op
+# R = σ² I; tagged PSD so the default CG solve accepts it
+obs_cov = lx.TaggedLinearOperator(  # (T N, T N) op
+    jnp.float32(obs_std**2) * prior_cov, lx.positive_semidefinite_tag
+)
+# today (vardax)
+oracle = vdx.ThreeDVar(
+    obs_op=vdx.MaskedIdentity(),
+    prior_mean=jnp.zeros((1, 4)),
+    prior_cov_op=prior_cov,
+    obs_cov_op=obs_cov,
+)
+
+val_batch = simulate_batch(key_val)
+for window_index in range(4):
+    # today (vardax)
+    window = vdx.Batch1D(
+        input=val_batch.input[window_index : window_index + 1],
+        mask=val_batch.mask[window_index : window_index + 1],
+    )
+    # today (vardax)
+    # P* = (B⁻¹ + Hᵀ R⁻¹ H)⁻¹ at the 3DVar MAP
+    p_oracle = oracle.posterior(window)
+    # today (vardax)
+    p_amort = vdx.Posterior(mean=model(window)[0])
+    # today (vardax)
+    # |x*_amort − x*_oracle| / σ_oracle ≤ 1, cell by cell
+    vdx.assert_posterior_agreement(p_amort, p_oracle, tolerance_sigma=1.0)
+print("posterior agreement passed")
 ```
+
+It prints `posterior agreement passed`.
 
 ### 2. Adjoint calibration
 
 The amortized model's gradient with respect to observations must match
 the physics-based gradient:
 
-$$
-\frac{\|\partial x^*_\text{amort} / \partial y - \partial x^*_\text{oracle} / \partial y\|_\text{op}}{\|\partial x^*_\text{oracle} / \partial y\|_\text{op}} < 0.05.
-$$
+$$\frac{\|\partial x^*_\text{amort} / \partial y - \partial x^*_\text{oracle} / \partial y\|_\text{op}}{\|\partial x^*_\text{oracle} / \partial y\|_\text{op}} < 0.05.$$
 
 This is measured by random-vector probing — randomised tangent
 linearisation tests for operator agreement. Without this gate, the
@@ -190,20 +259,62 @@ rank of $x^{(j)}$ in the sample. If $q_\phi$ is calibrated, the ranks
 are uniform across the sample. Failure indicates over- or
 under-confident posteriors.
 
-```python
-from vardax import simulation_based_calibration
+`simulation_based_calibration` takes three callables (posterior sampler, prior sampler, simulator) rather than the model, and reduces each state to its $\ell_2$ norm before ranking it among the samples.
+With 19 samples per run the rank takes 20 values, grouped here into 5 bins of 4; a calibrated head gives about 20 runs per bin.
+The block continues the one above.
 
-ranks = simulation_based_calibration(
-    model, prior_distribution, forward_model, n_runs=200,
+```python
+import einx
+import jax.scipy.stats as jstats
+
+# Shapes: T = 1 time; N = 4 grid cells; J = 19 posterior samples per run
+
+
+# user
+@eqx.filter_jit
+def sample_posterior(
+    obs: Float[Array, "t n"], key: PRNGKeyArray, n: int
+) -> Float[Array, "j t n"]:
+    # today (vardax)
+    window = vdx.Batch1D(
+        input=einx.id("t n -> 1 t n", obs), mask=jnp.ones((1, *obs.shape))
+    )
+    # xⱼ ~ q_φ(x | y)
+    return model.sample(window, key, n)[0]  # (1, J, T, N) → (J, T, N)
+
+
+# user
+def sample_prior(key: PRNGKeyArray) -> Float[Array, "t n"]:
+    # x ~ 𝒩(0, I)
+    return jax.random.normal(key, (1, 4))
+
+
+# user
+def simulate_obs(state: Float[Array, "t n"], key: PRNGKeyArray) -> Float[Array, "t n"]:
+    # y = x + σ ε
+    return state + obs_std * jax.random.normal(key, (1, 4))
+
+
+# today (vardax)
+# rank of ‖x‖ among ‖xⱼ‖, xⱼ ~ q_φ(x | y), over 100 runs
+ranks = vdx.simulation_based_calibration(  # → (100,)
+    sample_posterior,
+    sample_prior,
+    simulate_obs,
+    key=key_sbc,
+    n_runs=100,
+    n_samples=19,
 )
-# Plot rank histogram; assert χ² uniformity test p > 0.01
+bin_counts = jnp.bincount(ranks // 4, length=5)  # (100,) → (5,)
+# χ² = Σ_b (n_b − 20)² / 20
+chi_square = jnp.sum((bin_counts - 20) ** 2) / 20  # → ()
+p_value = jstats.chi2.sf(chi_square, 4)  # → ()
+print(bin_counts.tolist(), f"chi2 p = {float(p_value):.3f}")
 ```
 
-All three gates are **planned** to ship as `assert_*` functions in
-`vardax._src.utils.validation` and to be wired into
-`tests/test_six_step_validation.py` as part of the v0.4 design target
-(Epic 8). Neither the module nor the test file exists in the v0.1.x
-codebase yet.
+It prints `[30, 21, 19, 18, 12] chi2 p = 0.075`: the lowest bin is over-full, but the $\chi^2$ test does not reject uniformity at the $p > 0.01$ threshold.
+
+All three gates ship in `vardax._src.utils.validation`, re-exported as `assert_posterior_agreement`, `assert_adjoint_calibrated` and `simulation_based_calibration`, and `tests/test_six_step_validation.py` tests them.
 
 ## When amortized inference helps
 

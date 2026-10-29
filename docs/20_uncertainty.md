@@ -115,13 +115,89 @@ treats "is it calibrated?" as a first-class question. The validation
 gates of the [six-step cycle](14_six_step_cycle.md) are the
 enforcement mechanism:
 
+The block below runs all three gates on a conjugate Gaussian toy: $x \sim \mathcal{N}(0, I)$ in two dimensions and $y = x + \sigma \varepsilon$ with $\sigma = 0.5$, whose exact posterior is $\mathcal{N}(\mu(y), s^2 I)$ with $\mu(y) = y / (1 + \sigma^2)$ and $s^2 = \sigma^2 / (1 + \sigma^2)$.
+
 ```python
-from vardax import (
-    simulation_based_calibration,   # SBC ranks must be uniform
-    assert_posterior_agreement,     # two adapters must agree
-    assert_adjoint_calibrated,      # cheap adjoint must track exact grad
+import einx
+import jax
+import jax.numpy as jnp
+import lineax as lx
+import vardax as vdx
+from jaxtyping import Array, Float, PRNGKeyArray
+
+# Shapes: N = 2 state; S = 50 posterior samples; K = 100 calibration runs
+
+key_calibration, key_truth, key_noise, key_probe = jax.random.split(
+    jax.random.PRNGKey(0), 4
 )
+noise_std = 0.5
+# s² = σ² / (1 + σ²), the conjugate posterior variance
+posterior_var = noise_std**2 / (1.0 + noise_std**2)  # → ()
+
+
+# user
+def sample_prior(key: PRNGKeyArray) -> Float[Array, " n"]:
+    # x ~ 𝒩(0, I)
+    return jax.random.normal(key, (2,))
+
+
+# user
+def simulate_obs(state: Float[Array, " n"], key: PRNGKeyArray) -> Float[Array, " n"]:
+    # y = x + σ ε, ε ~ 𝒩(0, I)
+    return state + noise_std * jax.random.normal(key, (2,))
+
+
+# user
+def posterior_mean(obs: Float[Array, " n"]) -> Float[Array, " n"]:
+    # μ(y) = y / (1 + σ²)
+    return obs / (1.0 + noise_std**2)
+
+
+# user
+def sample_posterior(
+    obs: Float[Array, " n"], key: PRNGKeyArray, n_samples: int
+) -> Float[Array, "s n"]:
+    # δ ~ 𝒩(0, I)
+    noise = jax.random.normal(key, (n_samples, 2))  # (S, N)
+    # x = μ(y) + s δ
+    return einx.add(
+        "n, s n -> s n", posterior_mean(obs), jnp.sqrt(posterior_var) * noise
+    )
+
+
+# today (vardax)
+# rank of ‖x‖ among ‖xˢ‖, xˢ ~ q(x | y), y ~ p(y | x), x ~ p(x)
+ranks = vdx.simulation_based_calibration(  # → (K,)
+    sample_posterior,
+    sample_prior,
+    simulate_obs,
+    key=key_calibration,
+    n_runs=100,
+    n_samples=50,
+)
+# rank counts in five bins of [0, 50]
+rank_counts = jnp.histogram(ranks, bins=5, range=(0, 50))[0]  # (5,)
+print(rank_counts)
+
+# y = x + σ ε for one fresh truth x
+obs = simulate_obs(sample_prior(key_truth), key_noise)  # (N,)
+# today (lineax)
+# Σ = s² I
+oracle_cov = lx.DiagonalLinearOperator(jnp.full((2,), posterior_var))  # (N, N) op
+# today (vardax)
+oracle = vdx.Posterior(mean=posterior_mean(obs), cov=oracle_cov)
+# today (vardax)
+# a fast mean off by 0.1, below the oracle σ = s ≈ 0.45
+fast = vdx.Posterior(mean=posterior_mean(obs) + 0.1)
+# today (vardax)
+# |μ_fast − μ_oracle| / σ_oracle ≤ 1
+vdx.assert_posterior_agreement(fast, oracle, tolerance_sigma=1.0)
+# today (vardax)
+# ‖J_fast v − J_oracle v‖ / ‖J_oracle v‖ < 0.05, J_fast = 0.79 I, J_oracle = 0.8 I
+vdx.assert_adjoint_calibrated(lambda y: 0.79 * y, posterior_mean, obs, key=key_probe)
 ```
+
+It prints the rank counts `[24. 12. 19. 23. 22.]`, roughly flat for 100 runs, and both assertions pass silently.
 
 Run simulation-based calibration before believing any posterior; if
 the rank histogram is not uniform, the reported uncertainty is

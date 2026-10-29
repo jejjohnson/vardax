@@ -11,11 +11,7 @@ exact and makes the initial state $x_0$ the control variable.
 Given observations $y_t$ at times $t = 0, 1, \ldots, T$, dynamics $M_t$
 propagating $x_0$ to time $t$, and obs operator $H_t$ at each time:
 
-$$
-J(x_0) =
-  \tfrac{1}{2} \|x_0 - x_b\|^2_{B^{-1}} +
-  \tfrac{1}{2} \sum_{t=0}^{T} \|y_t - H_t(M_t(x_0))\|^2_{R_t^{-1}}.
-$$
+$$J(x_0) = \frac{1}{2} \|x_0 - x_b\|^2_{B^{-1}} + \frac{1}{2} \sum_{t=0}^{T} \|y_t - H_t(M_t(x_0))\|^2_{R_t^{-1}}.$$
 
 **Strong-constraint** means the model is treated as exact: any $x_0$
 determines the trajectory $x_t = M_t(x_0)$ exactly. Model error is not
@@ -24,10 +20,7 @@ admitted. (If you need model error, use `WeakFourDVar` — chapter 7.)
 The gradient combines the background term with the adjoint of every
 forward step:
 
-$$
-\nabla J(x_0) = B^{-1}(x_0 - x_b) +
-                \sum_{t=0}^{T} (M'_t)^\top H'_t{}^\top R_t^{-1} (H_t(M_t(x_0)) - y_t).
-$$
+$$\nabla J(x_0) = B^{-1}(x_0 - x_b) + \sum_{t=0}^{T} (M'_t)^\top H'_t{}^\top R_t^{-1} (H_t(M_t(x_0)) - y_t).$$
 
 In hand-coded operational 4DVar, $(M'_t)^\top$ is the adjoint model —
 historically a major engineering effort (Talagrand and Courtier 1987,
@@ -35,23 +28,132 @@ Errico 1997). With `diffrax`, it's a constructor argument.
 
 ## Implementation in vardax
 
-```python
-import diffrax as dfx
-import optimistix as optx
-from vardax import StrongFourDVar
+The example below is Lorenz-96 on $N = 40$ sites with forcing $F = 8$, one RK4 step of $\Delta t = 0.05$ per call, over a window of $T = 11$ times (10 steps).
+The truth $x_\text{true}$ is a state on the attractor; the background is $x_b = x_\text{true} + L \xi$ with $B = L L^\top$ a Gaussian correlation of length scale $\ell = 2$ sites (plus a $10^{-3}$ jitter), and every second site is observed at every time, $y_t = M_t(x_\text{true}) + \varepsilon_t$, with $R = I$.
+$H_t$ is the identity on the observed sites, so the mask $m_t$ does the selection.
 
-model = StrongFourDVar(
-    forward=somax_model,                              # pipekit_cycle.ForwardModel
-    obs_op=MaskedIdentity(),                          # or AveragingKernel, etc.
-    prior_mean=x_b,
-    prior_cov_op=B_op,
-    obs_cov_op=R_op,
+```python
+import dataclasses
+
+import einx
+import equinox as eqx
+import jax
+import jax.numpy as jnp
+import lineax as lx
+import optimistix as optx
+import vardax as vdx
+from jaxtyping import Array, Float
+
+# Shapes: S = 1 window; T = 11 times; N = 40 sites
+
+key_spinup, key_background, key_noise, key_field = jax.random.split(
+    jax.random.PRNGKey(0), 4
+)
+
+
+# user
+class Lorenz96(eqx.Module):
+    """Lorenz-96 with forcing F = 8, one RK4 step of length dt per call."""
+
+    dt: float = 0.05
+
+    def tendency(self, state: Float[Array, " n"]) -> Float[Array, " n"]:
+        # (xₖ₊₁ − xₖ₋₂) xₖ₋₁
+        advection = (jnp.roll(state, -1) - jnp.roll(state, 2)) * jnp.roll(state, 1)
+        # dxₖ/dt = (xₖ₊₁ − xₖ₋₂) xₖ₋₁ − xₖ + F
+        return advection - state + 8.0
+
+    def step(self, state: Float[Array, " n"], dt: float) -> Float[Array, " n"]:
+        # k₁ … k₄, the RK4 stages
+        k1 = self.tendency(state)
+        k2 = self.tendency(state + 0.5 * dt * k1)
+        k3 = self.tendency(state + 0.5 * dt * k2)
+        k4 = self.tendency(state + dt * k3)
+        # x ← x + Δt/6 (k₁ + 2k₂ + 2k₃ + k₄)
+        return state + dt / 6 * (k1 + 2 * k2 + 2 * k3 + k4)
+
+
+forward = Lorenz96()
+
+
+# user
+def rollout(state: Float[Array, " n"], n_steps: int) -> Float[Array, "t n"]:
+    """Return the trajectory x₀, M(x₀), …, Mⁿ(x₀)."""
+
+    def advance(carry, _):
+        next_state = forward.step(carry, forward.dt)
+        return next_state, next_state
+
+    _, later_states = jax.lax.scan(advance, state, length=n_steps)
+    # [x₀; x₁ … xₙ]
+    return einx.id("n, t n -> (1 + t) n", state, later_states)
+
+
+site = jnp.arange(40.0)  # (N,)
+# |i − j|
+offset = jnp.abs(einx.subtract("i, j -> i j", site, site))  # (N, N)
+# dᵢⱼ = min(|i − j|, N − |i − j|), the distance round the ring
+distance = jnp.minimum(offset, 40.0 - offset)  # (N, N)
+# Bᵢⱼ = exp(−dᵢⱼ² / 2ℓ²) + 10⁻³ δᵢⱼ, ℓ = 2 sites
+background_corr = jnp.exp(-0.5 * (distance / 2.0) ** 2) + 1e-3 * jnp.eye(40)
+prior_cov = lx.MatrixLinearOperator(  # (N, N) op
+    background_corr, lx.positive_semidefinite_tag
+)
+# R = I
+obs_cov = lx.IdentityLinearOperator(jax.ShapeDtypeStruct((40,), jnp.float32))
+
+# x_true = M²⁰⁰(F + δ), δ ~ 𝒩(0, I): a state on the attractor
+spinup = rollout(8.0 + jax.random.normal(key_spinup, (40,)), 200)  # (201, N)
+truth_start = spinup[-1]  # (N,)
+# B = L Lᵀ
+background_chol = jnp.linalg.cholesky(background_corr)  # (N, N)
+# x_b = x_true + L ξ, ξ ~ 𝒩(0, I)
+background = truth_start + einx.dot(  # (N,)
+    "i j, j -> i", background_chol, jax.random.normal(key_background, (40,))
+)
+# yₜ = Mₜ(x_true) + εₜ, εₜ ~ 𝒩(0, I), t = 0 … 10
+truth_trajectory = rollout(truth_start, 10)  # (T, N)
+obs = truth_trajectory + jax.random.normal(key_noise, (11, 40))  # (T, N)
+# mₜ = 1 on every second site
+mask = jnp.zeros((11, 40)).at[:, ::2].set(1.0)  # (T, N)
+
+# today (vardax)
+# J(x₀) = ½ ‖x₀ − x_b‖²_{B⁻¹} + ½ Σₜ ‖mₜ ⊙ (yₜ − Mₜ(x₀))‖²_{R⁻¹}
+model = vdx.StrongFourDVar(
+    forward=forward,
+    obs_op=vdx.MaskedIdentity(),
+    prior_mean=background,
+    prior_cov_op=prior_cov,
+    obs_cov_op=obs_cov,
     minimiser=optx.NonlinearCG(rtol=1e-5, atol=1e-5),
     minimiser_adjoint=optx.ImplicitAdjoint(),
-    checkpoint=True,                                  # recompute steps in reverse mode
+    # recompute each step in reverse mode instead of storing it
+    checkpoint=True,
+    # this B is too ill-conditioned for the default CG solve
+    cov_solver=lx.Cholesky(),
 )
-x_0_star = model(batch)
+# today (vardax)
+batch = vdx.Batch1D(
+    input=einx.id("t n -> 1 t n", obs),  # (T, N) → (S, T, N)
+    mask=einx.id("t n -> 1 t n", mask),
+)
+# x₀* = argmin J(x₀)
+analysis = model(batch)  # → (S, N)
+
+
+# user
+def rmse(state: Float[Array, " n"]) -> Float[Array, ""]:
+    # (x − x_true)²
+    squared_error = (state - truth_start) ** 2  # (N,)
+    # √(mean (x − x_true)²)
+    return jnp.sqrt(einx.mean("n ->", squared_error))  # → ()
+
+
+print(f"RMSE of x_b {rmse(background):.2f}, of x₀* {rmse(analysis[0]):.2f}")
 ```
+
+It prints `RMSE of x_b 1.44, of x₀* 0.63`.
+With the default `lx.CG` covariance solver this $B$ (condition number about $5 \times 10^3$) makes the $B^{-1}$ solve return non-finite values, so the block passes `cov_solver=lx.Cholesky()`.
 
 Three slots control the gradient:
 
@@ -83,17 +185,28 @@ to a large irreducible misfit the cost change rounds to zero in float32
 long before $x$ converges.) An optional `polish` optimiser (e.g.
 `optax.lbfgs()`), with its own tight tolerances, finishes from there:
 
+The block continues the one above and swaps the minimiser on the same model:
+
 ```python
 import optax
-import vardax
 
-minimiser = vardax.OptaxMinimiser(
-    optimizer=optax.adam(1e-3), max_steps=5000, gtol=1e-6, patience=200,
-    polish=optax.lbfgs(), polish_steps=200,
+# today (vardax)
+minimiser = vdx.OptaxMinimiser(
+    optimizer=optax.adam(1e-2),
+    max_steps=2000,
+    gtol=1e-4,
+    patience=200,
+    polish=optax.lbfgs(),
+    polish_steps=200,
 )
-model = vardax.StrongFourDVar(..., minimiser=minimiser)
-result = minimiser.run(cost_fn, theta0, batch)   # value, cost, grad_norm, num_steps
+# today (vardax)
+# x₀* = argmin J(x₀), by Adam then L-BFGS
+optax_model = dataclasses.replace(model, minimiser=minimiser)
+optax_analysis = optax_model(batch)  # → (S, N)
+print(f"RMSE of x₀* {rmse(optax_analysis[0]):.2f}")
 ```
+
+It prints `RMSE of x₀* 0.26`; the NonlinearCG run above stops at its 200-step cap before it converges.
 
 `minimiser_adjoint` still applies. Its default, `ImplicitAdjoint`, is
 exact only at a stationary point, $\nabla J(x^\star) = 0$, which a
@@ -110,31 +223,45 @@ and returns exactly what the default model returns.
 pytree $\theta$, the initial state $x_0 = \psi(\theta)$, and its
 penalty replaces the background term,
 
-$$
-J(\theta) = \mathrm{pen}(\theta)
-  + \tfrac{1}{2} \sum_t \lVert y_t - H_t(M^t(\psi(\theta)))\rVert^2_{R_t^{-1}}.
-$$
+$$J(\theta) = \mathrm{pen}(\theta) + \frac{1}{2} \sum_t \lVert y_t - H_t(M^t(\psi(\theta)))\rVert^2_{R_t^{-1}}.$$
 
 `LinearParameterization(basis, x_b)` is the reduced-basis case
-($\psi(X) = x_b + \Phi X$, $\mathrm{pen}(X) = \tfrac12 X^\top Q^{-1} X$,
+($\psi(X) = x_b + \Phi X$, $\mathrm{pen}(X) = \frac{1}{2} X^\top Q^{-1} X$,
 identical to `ReducedBasisFourDVar(basis=...)`).
 `NeuralFieldParameterization(field, coords, weight_decay)` makes $x_0$ a
 coordinate network evaluated on the grid, with
-$\mathrm{pen}(\theta) = \tfrac{\alpha}{2}\lVert\theta\rVert^2$ and no $B$
+$\mathrm{pen}(\theta) = \frac{\alpha}{2}\lVert\theta\rVert^2$ and no $B$
 (the network's spectral bias is the prior); its weights are a control
 for `OptaxMinimiser`, not BFGS. Frozen arrays inside the field (random
 Fourier frequencies read through `stop_gradient`) must be excluded from
 the control with `filter_spec=`, or the weight decay shrinks them:
 
-```python
-import geonnax, optax, vardax
+The block continues the one above; the SIREN has no frozen arrays, so the default `filter_spec` is right:
 
-siren = geonnax.SIREN.init(2, 32, 1, depth=3, key=key)   # (cos, sin) on the ring
-model = vardax.StrongFourDVar(
-    ..., parameterization=vardax.NeuralFieldParameterization(siren, coords, 1e-4),
-    minimiser=vardax.OptaxMinimiser(optax.adam(1e-3), max_steps=2000),
+```python
+import geonnax as gnx
+
+# λₙ = 2π n / N
+angle = 2 * jnp.pi * site / 40  # (N,)
+# sₙ = (cos λₙ, sin λₙ), the sites on the unit circle
+coords = einx.id("n, n -> n (1 + 1)", jnp.cos(angle), jnp.sin(angle))  # (N, 2)
+# today (geonnax)
+siren = gnx.SIREN.init(2, 32, 1, depth=3, key=key_field)
+# today (vardax)
+# x₀ = ψ(θ) = [f_θ(sₙ)]ₙ, pen(θ) = α/2 ‖θ‖², α = 10⁻⁴
+field_param = vdx.NeuralFieldParameterization(siren, coords, 1e-4)
+# today (vardax)
+# J(θ) = pen(θ) + ½ Σₜ ‖mₜ ⊙ (yₜ − Mₜ(ψ(θ)))‖²_{R⁻¹}
+field_model = dataclasses.replace(
+    model,
+    parameterization=field_param,
+    minimiser=vdx.OptaxMinimiser(optax.adam(1e-2), max_steps=2000),
 )
+field_analysis = field_model(batch)  # → (S, N)
+print(f"RMSE of ψ(θ*) {rmse(field_analysis[0]):.2f}")
 ```
+
+It prints `RMSE of ψ(θ*) 1.82`, worse than the background: the network starts from its random initialisation, not from $x_b$.
 
 ## Reduced-basis 4DVar
 
@@ -145,18 +272,13 @@ coefficients, and $Q \in \mathbb{R}^{P \times P}$ their prior covariance
 (diagonal for every built-in basis). The initial state is
 $x_0 = x_b + \Phi X$, and the cost is
 
-$$
-J(X) = \tfrac{1}{2} X^\top Q^{-1} X
-  + \tfrac{1}{2} \sum_t \lVert m_t \odot \big(y_t - H_t(M^t(x_b + \Phi X))\big)\rVert^2_{R_t^{-1}}.
-$$
+$$J(X) = \frac{1}{2} X^\top Q^{-1} X + \frac{1}{2} \sum_t \lVert m_t \odot \left(y_t - H_t(M^t(x_b + \Phi X))\right)\rVert^2_{R_t^{-1}}.$$
 
 It is minimised directly, with no linearisation, outer loop or inner CG
 (that is [incremental 4DVar](08_incremental_4dvar.md)). The gradient is
 the state-space adjoint projected onto the basis,
 
-$$
-\nabla_X J = Q^{-1} X + \Phi^\top \lambda_0,
-$$
+$$\nabla_X J = Q^{-1} X + \Phi^\top \lambda_0,$$
 
 where $\lambda_0 = -\sum_t M_t'^\top H_t'^\top R_t^{-1} d_t$ is the
 adjoint state at $t = 0$ (the backward sweep below) and
@@ -187,7 +309,7 @@ steps, every second site observed at every time, $\sigma_o = \sigma_b = 1$,
 Gaussian-correlated $B$ (length scale 2 sites). The basis is the leading
 $P$ eigenvectors of $B$, the EOFs of the background error:
 
-| Control | Share of $\mathrm{tr}\,B$ | Analysis RMSE of $x_0$ |
+| Control | Share of $\mathrm{tr}(B)$ | Analysis RMSE of $x_0$ |
 |---|---:|---:|
 | background $x_b$ | — | 0.96 |
 | $P = 8$ | 79 % | 0.57 |
@@ -202,19 +324,42 @@ non-finite values during an aggressive line-search trial step, and the
 masked $R$-solve raises on them; if that happens, cap the step, shorten
 the window, or start from a better first guess.
 
-```python
-import jax.numpy as jnp
-import vardax
+The block continues the one above, with the problem of the implementation section (a different seed from the table, so different RMSEs).
+It uses `OptaxMinimiser`, because on this window the default BFGS takes a first trial step that sends the forward to non-finite values.
 
-eigvals, eigvecs = jnp.linalg.eigh(B)                 # ascending
-whitened = eigvecs[:, -16:] * jnp.sqrt(eigvals[-16:])  # Φ = U_P Λ_P^{1/2}
-model = vardax.ReducedBasisFourDVar(
-    forward=l96, obs_op=vardax.MaskedIdentity(), prior_mean=x_b,
-    prior_cov_op=B_op, obs_cov_op=R_op,
-    basis=vardax.linear_basis(whitened, variance=1.0),
-)
-x0_star = model(batch)
+```python
+# Shapes: N = 40 sites; P = 8 or 16 modes
+
+# B = U Λ Uᵀ, eigenvalues ascending
+eigvals, eigvecs = jnp.linalg.eigh(background_corr)  # (N,), (N, N)
+for n_modes in (8, 16):
+    # Φ = U_P Λ_P^{1/2}, so that Q = I
+    whitened = einx.multiply(  # (N, P)
+        "n p, p -> n p", eigvecs[:, -n_modes:], jnp.sqrt(eigvals[-n_modes:])
+    )
+    # tr(Λ_P) / tr(B)
+    trace_share = einx.sum("p ->", eigvals[-n_modes:]) / einx.sum("n ->", eigvals)
+    # today (vardax)
+    basis = vdx.linear_basis(whitened, variance=1.0)
+    # today (vardax)
+    # J(X) = ½ ‖X‖² + ½ Σₜ ‖mₜ ⊙ (yₜ − Mₜ(x_b + Φ X))‖²_{R⁻¹}
+    reduced = vdx.ReducedBasisFourDVar(
+        forward=forward,
+        obs_op=vdx.MaskedIdentity(),
+        prior_mean=background,
+        prior_cov_op=prior_cov,
+        obs_cov_op=obs_cov,
+        basis=basis,
+        minimiser=vdx.OptaxMinimiser(optax.adam(1e-2), max_steps=2000),
+        cov_solver=lx.Cholesky(),
+    )
+    # x₀* = x_b + Φ X*
+    reduced_analysis = reduced(batch)  # → (S, N)
+    reduced_rmse = rmse(reduced_analysis[0])  # → ()
+    print(f"P = {n_modes}: {trace_share:.0%} of tr B, RMSE {reduced_rmse:.2f}")
 ```
+
+It prints `P = 8: 79% of tr B, RMSE 0.64` and `P = 16: 99% of tr B, RMSE 0.27`, against 0.26 for the full-state control above.
 
 `ReducedBasisFourDVar` was called `Incremental4DVar` until vardax 0.1.10.
 The old name still works and emits a `DeprecationWarning`.
@@ -225,17 +370,11 @@ The gradient computation reads "integrate the trajectory forward,
 then propagate the observation residuals backward through the adjoint
 of the dynamics." In equations, this is the backward sweep
 
-$$
-\lambda_T = H'_T{}^\top R_T^{-1} (H_T(x_T) - y_T)
-$$
+$$\lambda_T = H'_T{}^\top R_T^{-1} (H_T(x_T) - y_T)$$
 
-$$
-\lambda_{t-1} = (M'_t)^\top \lambda_t + H'_{t-1}{}^\top R_{t-1}^{-1} (H_{t-1}(x_{t-1}) - y_{t-1})
-$$
+$$\lambda_{t-1} = (M'_t)^\top \lambda_t + H'_{t-1}{}^\top R_{t-1}^{-1} (H_{t-1}(x_{t-1}) - y_{t-1})$$
 
-$$
-\nabla_{x_0} J = B^{-1}(x_0 - x_b) + \lambda_0.
-$$
+$$\nabla_{x_0} J = B^{-1}(x_0 - x_b) + \lambda_0.$$
 
 This is exactly what `diffrax.RecursiveCheckpointAdjoint` or
 `BacksolveAdjoint` compute under the hood. Vardax just composes them
@@ -243,55 +382,126 @@ into the cost-gradient call.
 
 ## Algorithm
 
-```
-Inputs:
-   x_b, B_op, R_op           — prior and observation-error covariances
-   forward                   — pipekit_cycle.ForwardModel (M_t)
-   obs_op                    — pipekit_cycle.ObservationOperator (H_t)
-   batch                     — observations y_t for t = 0, …, T
-   minimiser                 — optimistix.AbstractMinimiser or vardax.Minimiser
-   minimiser_adjoint         — optimistix.AbstractAdjoint
-   forward_adjoint           — diffrax.AbstractAdjoint
+Written out, the cost rolls the trajectory forward, sums the whitened misfit over the window and adds the background term, and `optimistix.minimise` differentiates through the rollout by reverse mode, which is the backward sweep above.
+`StrongFourDVar` builds the same cost (with optional `jax.checkpoint` blocks and a `forward_adjoint`), so the hand-written one reaches the same minimum.
+The block continues the one above.
 
-def cost_fn(x_0, batch):
-    # Forward rollout via diffrax with forward_adjoint
-    trajectory = rollout(x_0, forward, n_steps=T, adjoint=forward_adjoint)
+```python
+# Shapes: T = 11 times; N = 40 sites
 
-    # Observation cost summed over time
-    j_obs = 0
-    for t in range(T + 1):
-        residual = batch.y[t] - obs_op(trajectory[t])
-        j_obs = j_obs + 0.5 * residual @ R_inv_op @ residual
+cov_solver = lx.Cholesky()
 
-    # Background term
-    j_b = 0.5 * (x_0 - x_b) @ B_inv_op @ (x_0 - x_b)
-    return j_b + j_obs
 
-# Iterate
-result = optimistix.minimise(
-    fn=cost_fn, solver=minimiser, y0=x_b, args=batch,
-    adjoint=minimiser_adjoint,
+# user
+def strong_cost(
+    initial_state: Float[Array, " n"],
+    window: tuple[Float[Array, "t n"], Float[Array, "t n"]],
+) -> Float[Array, ""]:
+    window_obs, window_mask = window
+    # xₜ = Mₜ(x₀), t = 0 … T − 1
+    trajectory = rollout(initial_state, 10)  # (T, N)
+    # rₜ = mₜ ⊙ (yₜ − Hₜ(xₜ)), Hₜ = I
+    residual = window_mask * (window_obs - trajectory)  # (T, N)
+    # R⁻¹ rₜ at every time
+    weighted_residual = jax.vmap(  # (T, N)
+        lambda r: lx.linear_solve(obs_cov, r, solver=cov_solver).value
+    )(residual)
+    # J_o = ½ Σₜ rₜᵀ R⁻¹ rₜ
+    obs_term = 0.5 * einx.dot("t n, t n ->", residual, weighted_residual)
+    # δx = x₀ − x_b
+    increment = initial_state - background  # (N,)
+    # B⁻¹ δx
+    prior_solve = lx.linear_solve(prior_cov, increment, solver=cov_solver)
+    # J_b = ½ δxᵀ B⁻¹ δx
+    background_term = 0.5 * einx.dot("n, n ->", increment, prior_solve.value)
+    # J(x₀) = J_b + J_o
+    return background_term + obs_term  # → ()
+
+
+# today (optimistix)
+# x₀* = argmin J(x₀), started at x_b
+solution = optx.minimise(
+    strong_cost,
+    optx.NonlinearCG(rtol=1e-5, atol=1e-5),
+    background,
+    args=(obs, mask),
+    adjoint=optx.ImplicitAdjoint(),
+    max_steps=200,
+    throw=False,
 )
-x_0_star = result.value
+print(bool(jnp.allclose(solution.value, analysis[0], atol=1e-3)))
+
+# today (vardax)
+# the same cost through the first-order minimiser, with its diagnostics
+result = minimiser.run(strong_cost, background, (obs, mask))
+print(f"J = {result.cost:.1f}, ‖∇J‖ = {result.grad_norm:.1e}")
 ```
+
+It prints `True` and `J = 133.5, ‖∇J‖ = 1.6e-04`.
 
 ## Linear-Gaussian agreement
 
 When $H_t$ and $M_t$ are linear and $T = 0$, `StrongFourDVar` reduces
 to `OptimalInterpolation`. The conformance test enforces this:
 
+The block continues the one above with a single-time window and $M = I$; `tests/test_linear_gaussian_agreement.py` enforces the agreement for every method:
+
 ```python
-def test_strong_4dvar_recovers_oi():
-    oi = OptimalInterpolation(linear_H, x_b, B_op, R_op)
-    strong = StrongFourDVar(
-        forward=static_forward,                # M_t = I for T = 0
-        obs_op=linear_H,
-        prior_mean=x_b, prior_cov_op=B_op, obs_cov_op=R_op,
-        minimiser=optx.NonlinearCG(rtol=1e-8),
-    )
-    batch = make_linear_gaussian_batch(T=0)
-    assert jnp.allclose(oi(batch), strong(batch), atol=1e-3)
+# Shapes: S = 1 window; T = 1 time; N = 40 sites
+
+
+# user
+class Static(eqx.Module):
+    """M(x) = x, so a single-time window reduces 4DVar to OI."""
+
+    dt: float = 1.0
+
+    def step(self, state: Float[Array, " n"], dt: float) -> Float[Array, " n"]:
+        return state
+
+
+psd = lx.positive_semidefinite_tag
+# B = 2 I, tagged PSD so the default CG solve accepts it
+state_prior_cov = lx.TaggedLinearOperator(  # (N, N) op
+    lx.DiagonalLinearOperator(jnp.full(40, 2.0)), psd
+)
+# R = I / 2
+state_obs_cov = lx.TaggedLinearOperator(  # (N, N) op
+    lx.DiagonalLinearOperator(jnp.full(40, 0.5)), psd
+)
+# the same B and R over OI's (T, N) state
+field_prior_cov = lx.TaggedLinearOperator(  # (T N, T N) op
+    lx.DiagonalLinearOperator(jnp.full((1, 40), 2.0)), psd
+)
+field_obs_cov = lx.TaggedLinearOperator(  # (T N, T N) op
+    lx.DiagonalLinearOperator(jnp.full((1, 40), 0.5)), psd
+)
+# today (vardax)
+# y₀ only, with the same mask
+first_time = vdx.Batch1D(input=batch.input[:, :1], mask=batch.mask[:, :1])
+# today (vardax)
+# J(x₀) = ½ ‖x₀‖²_{B⁻¹} + ½ ‖m₀ ⊙ (y₀ − x₀)‖²_{R⁻¹}
+strong_static = vdx.StrongFourDVar(
+    forward=Static(),
+    obs_op=vdx.MaskedIdentity(),
+    prior_mean=jnp.zeros(40),
+    prior_cov_op=state_prior_cov,
+    obs_cov_op=state_obs_cov,
+)
+# today (vardax)
+optimal_interpolation = vdx.OptimalInterpolation(
+    obs_op=vdx.MaskedIdentity(),
+    prior_mean=jnp.zeros((1, 40)),
+    prior_cov_op=field_prior_cov,
+    obs_cov_op=field_obs_cov,
+)
+# x_a = x_b + B Hᵀ (H B Hᵀ + R)⁻¹ (y − H x_b)
+closed_form = optimal_interpolation(first_time)  # → (S, T, N)
+iterative = strong_static(first_time)  # → (S, N)
+print(bool(jnp.allclose(closed_form[:, 0], iterative, atol=1e-3)))
 ```
+
+It prints `True`.
 
 Part of the Decision D14 invariant.
 
@@ -336,13 +546,22 @@ Lorenz). Strategies:
 
 ## Posterior
 
-Pair the analysis with a `PosteriorAdapter`:
+Pair the analysis with a `PosteriorAdapter`; the block continues the one above.
+It passes `solver=lx.Cholesky()` because the default CG solve of $B^{-1}$ reaches its step cap on this $B$; `model.posterior(batch, adapter=laplace)` is the same call.
 
 ```python
-from vardax import LaplaceCovariance
+# Shapes: N = 40 sites
 
-posterior = LaplaceCovariance()(x_0_star, model.as_analysis_step(), batch)
+# today (vardax)
+# P* = (B⁻¹ + Σₜ (Hₜ′ Mₜ′)ᵀ R⁻¹ (Hₜ′ Mₜ′))⁻¹ at x₀*
+laplace = vdx.LaplaceCovariance(solver=lx.Cholesky())
+posterior = laplace(analysis[0], model.as_analysis_step(), batch)
+# P* 1, one matrix-free product
+spread = posterior.cov.mv(jnp.ones(40))  # (N,) → (N,)
+print(posterior.mean.shape, spread.shape)
 ```
+
+It prints `(40,) (40,)`.
 
 The Laplace covariance involves $(B^{-1} + \sum_t (M'_t H'_t)^\top R_t^{-1} (M'_t H'_t))^{-1}$,
 computed by Krylov / Lanczos via `lineax.CG`. The mat-vec includes a
