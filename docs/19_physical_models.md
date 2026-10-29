@@ -98,7 +98,7 @@ where $\varphi_t(\cdot; \theta)$ integrates $f$ from the initial time to time $t
 The increment form tolerates model error accumulating over the window
 (weak-constraint flavour); the trajectory form is the hard-constraint
 propagation used by
-[`strong_variational_cost`](api/costs_priors.md).
+[`strong_variational_cost`](xref:api#vardax.strong_variational_cost).
 
 The example below runs on a ring of $N = 8$ sites over $T = 11$ times.
 
@@ -258,7 +258,7 @@ print(f"{temporal_residual:.2f} {weak_cost:.4f} {next_state.shape}")
 
 It prints `1.93 0.0169 (8,)`.
 
-`bind(ts)` closes over the window's time grid so the dynamical prior satisfies the one-argument [`Prior`](api/protocols.md) protocol, turning the $\lVert x - \varphi(x)\rVert^2$ term of [`variational_cost`](api/costs_priors.md) ([](#eq-4dvarnet-cost)) into a weak-constraint dynamical residual with no API change. `as_forward_model(dt)` adapts
+`bind(ts)` closes over the window's time grid so the dynamical prior satisfies the one-argument [`Prior`](xref:api#vardax.Prior) protocol, turning the $\lVert x - \varphi(x)\rVert^2$ term of [`variational_cost`](xref:api#vardax.variational_cost) ([](#eq-4dvarnet-cost)) into a weak-constraint dynamical residual with no API change. `as_forward_model(dt)` adapts
 the wrapped ODE to `pipekit_cycle.ForwardModel` (autonomous dynamics
 assumed), so the same physics can serve as the forward operator of
 [`StrongFourDVar`](06_strong_4dvar.md) or a `pipekit_cycle.DACycle`.
