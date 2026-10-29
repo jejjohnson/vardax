@@ -49,40 +49,25 @@ The latent counterpart of [chapter 5's 3DVar](05_threedvar.md) replaces
 the control vector $x$ with $z$ and the observation operator $H$ with
 $\tilde{H}$:
 
-$$
-\boxed{\;
-J_{3D}(z) \;=\;
-\underbrace{\tfrac{1}{2}\|z - z_b\|^2_{\mathbf{B}_z^{-1}}}_{\text{background, in } z}
-\;+\;
-\underbrace{\tfrac{1}{2}\|y - H(\psi(z))\|^2_{\mathbf{R}^{-1}}}_{\text{obs misfit, lifted}}.
-\;}
-$$
+$$J_{3D}(z) = \underbrace{\frac{1}{2}\|z - z_b\|^2_{\mathbf{B}_z^{-1}}}_{\text{background, in } z} + \underbrace{\frac{1}{2}\|y - H(\psi(z))\|^2_{\mathbf{R}^{-1}}}_{\text{obs misfit, lifted}}.$$
 
 ### 18.2.2  Gradient and Hessian
 
-Let $\tilde{H}'(z) := H'(\psi(z))\,\psi'(z)$ be the lifted tangent
+Let $\tilde{H}'(z) := H'(\psi(z)) \psi'(z)$ be the lifted tangent
 linear (chain rule). Then
 
-$$
-\nabla_z J_{3D}(z) = \mathbf{B}_z^{-1}(z - z_b)
-                   - \tilde{H}'(z)^\top \mathbf{R}^{-1}(y - \tilde{H}(z)),
-$$
+$$\nabla_z J_{3D}(z) = \mathbf{B}_z^{-1}(z - z_b) - \tilde{H}'(z)^\top \mathbf{R}^{-1}(y - \tilde{H}(z)),$$
 
 and the Gauss–Newton Hessian is
 
-$$
-\mathbf{H}_z(z) \;\approx\;
-\mathbf{B}_z^{-1} + \tilde{H}'(z)^\top \mathbf{R}^{-1} \tilde{H}'(z).
-$$
+$$\mathbf{H}_z(z) \approx \mathbf{B}_z^{-1} + \tilde{H}'(z)^\top \mathbf{R}^{-1} \tilde{H}'(z).$$
 
 When $\tilde{H}'$ is treated as constant near the linearisation point
 (the **incremental** form, cf. [chapter 8](08_incremental_4dvar.md)),
 the minimisation reduces to a linear solve and the Sherman–Morrison–
 Woodbury identity gives the closed form
 
-$$
-z^* = z_b + \mathbf{B}_z \tilde{H}'^\top \bigl(\tilde{H}' \mathbf{B}_z \tilde{H}'^\top + \mathbf{R}\bigr)^{-1}(y - \tilde{H}(z_b)).
-$$
+$$z^* = z_b + \mathbf{B}_z \tilde{H}'^\top \left(\tilde{H}' \mathbf{B}_z \tilde{H}'^\top + \mathbf{R}\right)^{-1}(y - \tilde{H}(z_b)).$$
 
 The $(N_y \times N_y)$ inverse matches the OI form (chapter 4); the
 difference is that the gain is now multiplied by $\mathbf{B}_z$
@@ -96,11 +81,7 @@ The variational solution is in $z$; the analysis in physical space is
 $x^* = \psi(z^*)$. The posterior covariance, when needed, comes from
 the Laplace approximation at $z^*$:
 
-$$
-\mathrm{cov}_z = \mathbf{H}_z(z^*)^{-1},
-\qquad
-\mathrm{cov}_x = \psi'(z^*) \,\mathrm{cov}_z\, \psi'(z^*)^\top.
-$$
+$$\mathrm{cov}_z = \mathbf{H}_z(z^*)^{-1} \text{ and } \mathrm{cov}_x = \psi'(z^*) \mathrm{cov}_z \psi'(z^*)^\top.$$
 
 The pushforward $\mathrm{cov}_x$ has rank at most $N_z$ — a low-rank
 object naturally represented by `lineax.LowRankUpdate`.
@@ -114,29 +95,14 @@ object naturally represented by `lineax.LowRankUpdate`.
 Control vector $z_0$; rollout $z_{k+1} = M_z(z_k)$ in the latent space;
 observation residuals via the lifted operator:
 
-$$
-\boxed{\;
-J_{4D}(z_0) \;=\;
-\tfrac{1}{2}\|z_0 - z_b\|^2_{\mathbf{B}_z^{-1}}
-\;+\;
-\tfrac{1}{2}\sum_{k=0}^{K}\|y_k - H(\psi(z_k))\|^2_{\mathbf{R}^{-1}},
-\quad z_{k+1} = M_z(z_k).
-\;}
-$$
+$$J_{4D}(z_0) = \frac{1}{2}\|z_0 - z_b\|^2_{\mathbf{B}_z^{-1}} + \frac{1}{2}\sum_{k=0}^{K}\|y_k - H(\psi(z_k))\|^2_{\mathbf{R}^{-1}}, \text{ with } z_{k+1} = M_z(z_k).$$
 
 ### 18.3.2  Gradient
 
 Backpropagation through the latent rollout yields, for each observation
 window $k$,
 
-$$
-\frac{\partial J_{4D}}{\partial z_0}
-=
-\mathbf{B}_z^{-1}(z_0 - z_b)
-- \sum_{k=0}^{K}
-\Bigl(\prod_{j=0}^{k-1} M_z'(z_j)\Bigr)^{\!\!\top}
-\tilde{H}'(z_k)^\top \mathbf{R}^{-1} (y_k - \tilde{H}(z_k)).
-$$
+$$\frac{\partial J_{4D}}{\partial z_0} = \mathbf{B}_z^{-1}(z_0 - z_b) - \sum_{k=0}^{K} \left(\prod_{j=0}^{k-1} M_z'(z_j)\right)^\top \tilde{H}'(z_k)^\top \mathbf{R}^{-1} (y_k - \tilde{H}(z_k)).$$
 
 For learned $M_z$ implemented as an `eqx.Module`, the tangent-linear
 operators come from JAX autodiff; no hand-coded adjoint is required.
@@ -167,27 +133,11 @@ and as the natural background space:
 
 ### 18.4.2  Cost
 
-$$
-\boxed{\;
-J_{H}(z_0) \;=\;
-\tfrac{1}{2}\|z_0 - z_b\|^2_{\mathbf{B}_z^{-1}}
-+ \tfrac{1}{2}\sum_{k=0}^{K}\|y_k - H(x_k)\|^2_{\mathbf{R}^{-1}},
-\quad
-x_0 = \psi(z_0),\;\; x_{k+1} = M_x(x_k).
-\;}
-$$
+$$J_{H}(z_0) = \frac{1}{2}\|z_0 - z_b\|^2_{\mathbf{B}_z^{-1}} + \frac{1}{2}\sum_{k=0}^{K}\|y_k - H(x_k)\|^2_{\mathbf{R}^{-1}}, \text{ with } x_0 = \psi(z_0), x_{k+1} = M_x(x_k).$$
 
 ### 18.4.3  Gradient
 
-$$
-\frac{\partial J_H}{\partial z_0}
-=
-\mathbf{B}_z^{-1}(z_0 - z_b)
-- \psi'(z_0)^\top
-\sum_{k=0}^{K}
-\Bigl(\prod_{j=0}^{k-1} M_x'(x_j)\Bigr)^{\!\!\top}
-H'(x_k)^\top \mathbf{R}^{-1}(y_k - H(x_k)).
-$$
+$$\frac{\partial J_H}{\partial z_0} = \mathbf{B}_z^{-1}(z_0 - z_b) - \psi'(z_0)^\top \sum_{k=0}^{K} \left(\prod_{j=0}^{k-1} M_x'(x_j)\right)^\top H'(x_k)^\top \mathbf{R}^{-1}(y_k - H(x_k)).$$
 
 The decoder Jacobian $\psi'(z_0)$ appears only **once**, at the start
 of the window. The expensive piece is the physics adjoint
@@ -210,10 +160,7 @@ The incremental algorithm of [chapter 8](08_incremental_4dvar.md)
 extends mutatis mutandis: outer Gauss–Newton loop produces a sequence
 of inner problems
 
-$$
-\min_{\delta z}\; \tfrac{1}{2}\|\delta z\|^2_{\mathbf{B}_z^{-1}}
-+ \tfrac{1}{2}\sum_k \|d_k - \tilde{H}_k' M_{z,k}' \delta z\|^2_{\mathbf{R}^{-1}},
-$$
+$$\min_{\delta z} \frac{1}{2}\|\delta z\|^2_{\mathbf{B}_z^{-1}} + \frac{1}{2}\sum_k \|d_k - \tilde{H}_k' M_{z,k}' \delta z\|^2_{\mathbf{R}^{-1}},$$
 
 with $d_k = y_k - \tilde{H}(z_k^{(n)})$ the innovation at outer
 iteration $n$ and primed quantities evaluated at the current outer
@@ -242,10 +189,7 @@ This is the canonical regression test for any implementation
 
 `FourDVarNet` minimises
 
-$$
-J_{NN}(x) = \alpha_{\text{obs}}\|y - H(x)\|^2_{\mathbf{R}^{-1}}
-          + \alpha_{\text{prior}}\|x - \psi(\varphi(x))\|^2.
-$$
+$$J_{NN}(x) = \alpha_{\text{obs}}\|y - H(x)\|^2_{\mathbf{R}^{-1}} + \alpha_{\text{prior}}\|x - \psi(\varphi(x))\|^2.$$
 
 This is **prior-only latent**: the AE appears as a reconstruction
 penalty but the control remains $x$. The latent methods of this

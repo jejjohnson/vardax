@@ -212,10 +212,12 @@ def test_default_config_uses_cvt():
 
 @pytest.mark.slow
 def test_docs_08_linear_gaussian_example_runs():
-    """The docs/08 example (once a TypeError: no cvt field) executes."""
+    """The docs/08 blocks (once a TypeError: no cvt field) run and agree with OI."""
     page = pathlib.Path(__file__).parents[1] / "docs" / "08_incremental_4dvar.md"
     blocks = re.findall(r"```python\n(.*?)```", page.read_text(), flags=re.S)
-    example = next(b for b in blocks if "def test_incremental_recovers_oi" in b)
+    # the page's blocks build on each other, so they run in one namespace
     namespace: dict = {}
-    exec(example, namespace)
-    namespace["test_incremental_recovers_oi"]()
+    exec("\n".join(blocks), namespace)
+    closed_form = namespace["closed_form"]
+    gauss_newton = namespace["gauss_newton"]
+    assert jnp.allclose(closed_form[:, 0], gauss_newton, atol=1e-3)

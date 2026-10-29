@@ -16,10 +16,7 @@ It is not the parent of classical 4DVar.
 
 The variational cost is structurally familiar:
 
-$$
-J(x) = \alpha_\text{obs}\,\tfrac{1}{2} \|H(x) - y\|^2_{R^{-1}} +
-       \alpha_\text{prior}\, \|x - \varphi_\theta(x)\|^2,
-$$
+$$J(x) = \alpha_\text{obs} \frac{1}{2} \|H(x) - y\|^2_{R^{-1}} + \alpha_\text{prior} \|x - \varphi_\theta(x)\|^2,$$
 
 with $\varphi_\theta$ a learned autoencoder. The Gaussian background
 term $\|x - x_b\|^2_{B^{-1}}$ is **replaced** (not added). The learned
@@ -33,9 +30,7 @@ dependencies).
 Classical 4DVar minimises $J$ via gradient descent or a quasi-Newton
 method. 4DVarNet replaces the inner step with a learned modulator:
 
-$$
-x_{k+1} = x_k - \Phi_\phi(\nabla_x J(x_k),\; h_k), \quad k = 0, \ldots, K-1
-$$
+$$x_{k+1} = x_k - \Phi_\phi(\nabla_x J(x_k), h_k), \text{ for } k = 0, \ldots, K-1$$
 
 where $\Phi_\phi$ is a small neural network (ConvLSTM, MLP, or
 attention) with parameters $\phi$ and a recurrent hidden state $h_k$.
@@ -51,9 +46,7 @@ forward, gradient, modulator, update — is differentiable end-to-end.
 The training objective minimises reconstruction error against
 ground-truth states:
 
-$$
-\mathcal{L}(\theta, \phi) = \mathbb{E}_{(y, x_\text{true})}\, \|x^*(\theta, \phi; y) - x_\text{true}\|^2.
-$$
+$$\mathcal{L}(\theta, \phi) = \mathbb{E}_{(y, x_\text{true})} \|x^*(\theta, \phi; y) - x_\text{true}\|^2.$$
 
 The training gradient $\nabla_{\theta, \phi} \mathcal{L}$ flows through
 the inner solver. This is where the adjoint choice (Decision D15)
@@ -87,9 +80,7 @@ the goal of upstreaming to `optimistix` once stable (Decision D6).
 **`ImplicitAdjoint`** — uses the implicit function theorem at the
 fixed point of the inner iteration:
 
-$$
-\frac{d x^*}{d \theta} = -\Big(I - \frac{\partial f}{\partial x}\Big)^{-1} \frac{\partial f}{\partial \theta},
-$$
+$$\frac{d x^*}{d \theta} = -\left(I - \frac{\partial f}{\partial x}\right)^{-1} \frac{\partial f}{\partial \theta},$$
 
 where $f$ is the inner-step map. Memory $O(1)$, gradient exact at
 convergence. Requires the inner solver to actually converge; if $K$ is
@@ -98,49 +89,80 @@ known to be a contraction.
 
 ## Implementation in vardax
 
+The example below trains a small `FourDVarNet2D` on $S = 4$ windows of $T = 3$ frames on an $8 \times 8$ grid, for a few optimiser steps only.
+The truth is a travelling wave $x_\text{true}(s, t, y, x) = \sin(0.8 y + 0.3 t + \varphi_s)$ with a random phase $\varphi_s$ per window, about half the cells are observed with mask $m$, and the observations are $m \odot x_\text{true}$.
+The model's cost is $J(x) = \|m \odot (x - y)\|^2 + \lambda \|x - \varphi_\theta(x)\|^2$, and `train_step` minimises the reconstruction loss $\mathcal{L}$ above.
+
 ```python
+import einx
 import equinox as eqx
 import jax
+import jax.numpy as jnp
 import optax
-from vardax import FourDVarNet2D
-from vardax import train_step
-from vardax.adjoints import OneStepAdjoint
+import vardax as vdx
 
-# builds a BilinAEPrior2D prior and a ConvLSTMGradMod2D modulator
-model = FourDVarNet2D(
-    n_time=10, height=64, width=64,
-    latent_dim=64, hidden_dim=64,
-    n_solver_steps=15, alpha=0.2, prior_weight=1.0,
-    solver_adjoint=OneStepAdjoint(),                # O(1) memory training
-    key=jax.random.PRNGKey(0),
+# Shapes: S = 4 samples; T = 3 times; Y = 8 rows; X = 8 columns
+
+key_model, key_phase, key_mask = jax.random.split(jax.random.PRNGKey(0), 3)
+
+rows = jnp.arange(8.0)  # (Y,)
+times = jnp.arange(3.0)  # (T,)
+# φₛ ~ U(0, 2π), one phase per window
+phase = jax.random.uniform(key_phase, (4,), maxval=2 * jnp.pi)  # (S,)
+# x_true(s, t, y) = sin(0.8 y + 0.3 t + φₛ)
+wave = jnp.sin(einx.add("y, t, s -> s t y", 0.8 * rows, 0.3 * times, phase))
+# the wave is constant along x
+target = einx.id("s t y -> s t y x", wave, x=8)  # (S, T, Y) → (S, T, Y, X)
+# m ~ Bernoulli(0.5)
+mask = jax.random.bernoulli(key_mask, 0.5, (4, 3, 8, 8)).astype(jnp.float32)
+# y = m ⊙ x_true
+obs = mask * target  # (S, T, Y, X)
+
+# today (vardax)
+batch = vdx.Batch2D(input=obs, mask=mask, target=target)
+# today (vardax)
+# x_{k+1} = x_k − α Φ_ϕ(∇J(x_k), h_k), K = 3, with a bilinear autoencoder φ_θ
+model = vdx.FourDVarNet2D(
+    n_time=3,
+    height=8,
+    width=8,
+    latent_dim=4,
+    hidden_dim=4,
+    n_solver_steps=3,
+    alpha=0.2,
+    prior_weight=1.0,
+    solver_adjoint=vdx.OneStepAdjoint(),
+    key=key_model,
 )
 
+# today (optax)
 optimizer = optax.adam(1e-3)
 opt_state = optimizer.init(eqx.filter(model, eqx.is_array))
-
-@eqx.filter_jit
-def step(model, opt_state, batch):
-    model, opt_state, loss = train_step(model, batch, optimizer, opt_state)
-    return model, opt_state, loss
-
-for epoch in range(100):
-    for batch in dataloader:
-        model, opt_state, loss = step(model, opt_state, batch)
+losses = []
+for _ in range(20):
+    # today (vardax)
+    # (θ, ϕ) ← adam step on ℒ(θ, ϕ) = mean (x*(θ, ϕ; y) − x_true)²
+    model, opt_state, loss = vdx.train_step(model, batch, optimizer, opt_state)
+    losses.append(float(loss))
+print(f"loss {losses[0]:.3f} -> {losses[-1]:.3f}")
 ```
+
+It prints `loss 0.263 -> 0.217`.
+`train_step` is already wrapped in `eqx.filter_jit`, so the loop calls it directly.
 
 After training, `model.as_analysis_step()` exposes the operational
 interface for `pipekit_cycle.DACycle`.
 
 ## The prior family
 
-`vardax.priors` ships:
+vardax ships these priors:
 
 | Prior | Form | When |
 |---|---|---|
 | `BilinAEPrior1D/2D/2DMultivar` | $\varphi(x) = \text{decode}(\text{ReLU}(Ax) \odot \tanh(Bx))$ | Standard 4DVarNet starting point |
 | `ConvAEPrior1D` | Periodic 1D convolutional AE | Periodic 1D fields (Lorenz-96) |
 | `MLPAEPrior1D` | Dense MLP AE | Low-dimensional states (Lorenz-63) |
-| `IdentityPrior` | $\varphi(x) = x$ | Pure obs-driven baseline; recovers classical 4DVar with `IdentityGradMod` |
+| `IdentityPrior` | $\varphi(x) = x$ | Pure obs-driven baseline; recovers classical 4DVar with a fixed-step modulator |
 | `DynamicalPrior` | $\varphi(x) = M^n(x)$ via somax / plumax forward | Physics-informed 4DVarNet |
 
 `DynamicalPrior` is interesting: it wraps any
@@ -151,19 +173,16 @@ dynamics uses the `forward_adjoint` slot (chapter 3).
 
 ## The gradient modulator family
 
-`vardax.grad_mod` ships:
+The modulators, shipped and planned:
 
 | Modulator | Form |
 |---|---|
 | `ConvLSTMGradMod1D/2D` | ConvLSTM over spatial dims, recurrent over solver iterations |
-| `MLPGradMod` | Dense MLP, dimension-agnostic via flatten |
+| `MLPGradMod` | Dense MLP, dimension-agnostic via flatten (planned) |
 | `AttentionGradMod` | Self-attention over spatial axis (planned) |
-| `IdentityGradMod` | $\text{update} = -\alpha \cdot \text{grad}$ — classical fixed-step descent |
+| `IdentityGradMod` | $\text{update} = -\alpha \cdot \text{grad}$ — classical fixed-step descent (planned) |
 
-`FourDVarNet(IdentityPrior, IdentityGradMod, n_steps=large)` is
-mathematically equivalent to gradient descent on the variational cost
-— it's the classical 4DVar baseline, useful for sanity-checking
-agreement with the linear-Gaussian baseline (Decision D14 invariant).
+`IdentityPrior` with a fixed-step modulator and many solver steps is gradient descent on the variational cost; it is the classical baseline, useful for checking agreement with the linear-Gaussian limit (Decision D14 invariant).
 
 Notebook [11](notebooks/11_gradient_learning_L63.py) trains a
 `ConvLSTMGradMod1D` on its own, with the prior frozen, and compares it
@@ -171,24 +190,70 @@ with that fixed-step baseline across solver-step budgets.
 
 ## Linear-Gaussian agreement
 
-With `IdentityPrior` (so $\varphi(x) = x$ and the prior cost vanishes
-to zero) and `IdentityGradMod(alpha=small)` and `n_steps=large`,
-`FourDVarNet` performs many small gradient-descent steps on the
-observation cost alone — and converges to the same answer as
-`OptimalInterpolation` in the linear-Gaussian limit:
+With `IdentityPrior` the prior cost $\|x - \varphi(x)\|^2$ is zero, and a modulator that passes the gradient through unchanged turns the solver into fixed-step gradient descent on $J(x) = \|m \odot (x - y)\|^2$.
+No such modulator ships, so the block defines one and hands it to `solve_4dvarnet_1d`; with step $\alpha = 0.05$ and $K = 200$ steps it converges to $m \odot y$.
+`OptimalInterpolation` with $x_b = 0$, $B = I$ and $R = \sigma^2 I$ gives the same field in the limit $\sigma \to 0$; here $\sigma = 0.01$ on $N = 8$ cells, about 60% of them observed.
+The block continues the one above.
 
 ```python
-def test_fourdvarnet_recovers_oi():
-    oi = OptimalInterpolation(linear_H, x_b, B_op, R_op)
-    net = FourDVarNet(
-        prior=IdentityPrior(),
-        obs_op=linear_H,
-        grad_mod=IdentityGradMod(alpha=0.05),
-        config=SolverConfig(n_steps=200, prior_weight=0.0),
-    )
-    batch = make_linear_gaussian_batch()
-    assert jnp.allclose(oi(batch), net(batch), atol=1e-2)
+from typing import Any
+
+import lineax as lx
+from jaxtyping import Array, Float
+
+# Shapes: S = 1 sample; T = 1 time; N = 8 grid cells
+
+key_truth, key_cells = jax.random.split(jax.random.PRNGKey(1))
+state_structure = jax.ShapeDtypeStruct((1, 8), jnp.float32)
+
+# B = I
+prior_cov = lx.IdentityLinearOperator(state_structure)  # (T N, T N) op
+# R = σ² I, σ = 0.01; tagged PSD so the default CG solve accepts it
+obs_cov = lx.TaggedLinearOperator(  # (T N, T N) op
+    jnp.float32(1e-4) * prior_cov, lx.positive_semidefinite_tag
+)
+# x_true ~ 𝒩(0, I)
+truth = jax.random.normal(key_truth, (1, 1, 8))  # (S, T, N)
+# m ~ Bernoulli(0.6)
+cell_mask = jax.random.bernoulli(key_cells, 0.6, (1, 1, 8)).astype(jnp.float32)
+# today (vardax)
+line_batch = vdx.Batch1D(input=cell_mask * truth, mask=cell_mask)
+
+
+# user
+class FixedStepGradMod(eqx.Module):
+    """Pass the gradient through unchanged, so the solver takes fixed steps."""
+
+    def __call__(
+        self, grad: Float[Array, "s t n"], state: Float[Array, "s t n"], carry: Any
+    ) -> tuple[Float[Array, "s t n"], Any]:
+        # Φ(∇J, h) = ∇J
+        return grad, carry
+
+
+# today (vardax)
+# x_{k+1} = x_k − α ∇J(x_k), with J(x) = ‖m ⊙ (x − y)‖²
+descent = vdx.solve_4dvarnet_1d(  # → (S, T, N)
+    line_batch,
+    vdx.IdentityPrior(),
+    FixedStepGradMod(),
+    n_steps=200,
+    hidden_dim=1,
+    alpha=0.05,
+)
+# today (vardax)
+optimal_interpolation = vdx.OptimalInterpolation(
+    obs_op=vdx.MaskedIdentity(),
+    prior_mean=jnp.zeros((1, 8)),
+    prior_cov_op=prior_cov,
+    obs_cov_op=obs_cov,
+)
+# x_a = x_b + B Hᵀ (H B Hᵀ + R)⁻¹ (y − H x_b)
+closed_form = optimal_interpolation(line_batch)  # → (S, T, N)
+print(bool(jnp.allclose(descent, closed_form, atol=1e-2)))
 ```
+
+It prints `True`.
 
 This is the floor. A trained `FourDVarNet` with a non-trivial prior
 and grad modulator typically does better in nonlinear regimes — but
@@ -215,19 +280,61 @@ Don't use `FourDVarNet` when:
 
 ## Posterior
 
-The Laplace approximation works the same way as for classical methods:
+`LaplaceCovariance` builds its Hessian from the model's `obs_op`, $B$ and $R$, which `FourDVarNet2D` does not have, so it raises `AttributeError` on this model.
+The Laplace approximation of the learned cost is assembled by hand instead: with residuals $r(x) = (m \odot (x - y), \sqrt{\lambda} (x - \varphi_\theta(x)))$ and Jacobian $J_r$ at the analysis $x^*$, the Gauss-Newton Hessian is $\nabla^2 J \approx 2 J_r^\top J_r$ and $P^* = (\nabla^2 J)^{-1}$, applied by a CG solve.
+The block continues the first one on this page, for its first window, with $\lambda = 1$.
 
 ```python
-from vardax import LaplaceCovariance
+# Shapes: S = 1 sample; T = 3 times; Y = 8 rows; X = 8 columns
 
-posterior = LaplaceCovariance()(model(batch), model.as_analysis_step(), batch)
+# today (vardax)
+one_window = vdx.Batch2D(input=obs[:1], mask=mask[:1])
+# x* = x_K
+analysis = model(one_window)  # → (S, T, Y, X)
+
+
+# user
+def residuals(
+    state: Float[Array, "s t y x"],
+) -> tuple[Float[Array, "s t y x"], Float[Array, "s t y x"]]:
+    # r_o = m ⊙ (x − y)
+    obs_residual = one_window.mask * (state - one_window.input)
+    # r_p = √λ (x − φ_θ(x)), λ = 1
+    prior_residual = state - model.prior(state)
+    return obs_residual, prior_residual
+
+
+# δx ↦ J_r δx at x*
+_, residual_jvp = jax.linearize(residuals, analysis)
+# δr ↦ J_rᵀ δr
+residual_vjp = jax.linear_transpose(residual_jvp, analysis)
+
+
+# user
+def precision_mv(direction: Float[Array, "s t y x"]) -> Float[Array, "s t y x"]:
+    # ∇²J δx ≈ 2 J_rᵀ J_r δx
+    (pulled_back,) = residual_vjp(residual_jvp(direction))
+    return 2.0 * pulled_back
+
+
+posterior_precision = lx.FunctionLinearOperator(  # (S T Y X, S T Y X) op
+    precision_mv,
+    jax.ShapeDtypeStruct(analysis.shape, analysis.dtype),
+    lx.positive_semidefinite_tag,
+)
+# today (lineax)
+# P* 1 = (∇²J)⁻¹ 1, one matrix-free solve
+spread = lx.linear_solve(  # (S, T, Y, X) → (S, T, Y, X)
+    posterior_precision,
+    jnp.ones_like(analysis),
+    solver=lx.CG(rtol=1e-5, atol=1e-5, max_steps=500),
+)
+print(spread.value.shape, int(spread.stats["num_steps"]))
 ```
 
-The Hessian assembled at MAP uses the learned prior's curvature, which
-may be poorly conditioned away from the training manifold. Validate
-the posterior via the six-step cycle gates (chapter 14): does the
-posterior diagonal agree with the spread of an ensemble of analyses
-from perturbed inputs?
+It prints `(1, 3, 8, 8) 7`.
+
+The Hessian uses the learned prior's curvature, which may be poorly conditioned away from the training manifold. Validate the posterior via the six-step cycle gates (chapter 14): does the posterior diagonal agree with the spread of an ensemble of analyses from perturbed inputs?
 
 ## A note on history
 

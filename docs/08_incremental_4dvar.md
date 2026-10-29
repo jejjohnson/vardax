@@ -15,22 +15,15 @@ window is long.
 
 Strong-constraint 4DVar minimises
 
-$$
-J(x_0) = \tfrac{1}{2} \|x_0 - x_b\|^2_{B^{-1}} +
-         \tfrac{1}{2} \sum_t \|y_t - H_t(M_t(x_0))\|^2_{R_t^{-1}}.
-$$
+$$J(x_0) = \frac{1}{2} \|x_0 - x_b\|^2_{B^{-1}} + \frac{1}{2} \sum_t \|y_t - H_t(M_t(x_0))\|^2_{R_t^{-1}}.$$
 
 Write $x^{(k)}$ for the outer iterate, starting from $x^{(0)} = x_b$.
 The background $x_b$ stays fixed across outer loops; only $x^{(k)}$
 moves. Linearise around $x^{(k)}$:
 
-$$
-M_t(x^{(k)} + \delta x) \approx M_t(x^{(k)}) + M'_t \delta x,
-$$
+$$M_t(x^{(k)} + \delta x) \approx M_t(x^{(k)}) + M'_t \delta x,$$
 
-$$
-H_t(z + \delta z) \approx H_t(z) + H'_t \delta z,
-$$
+$$H_t(z + \delta z) \approx H_t(z) + H'_t \delta z,$$
 
 where $M'_t = \partial M_t / \partial x|_{x^{(k)}}$ from
 `jax.linearize` and $H'_t$ is the tangent of $H_t$ at
@@ -38,28 +31,18 @@ $M_t(x^{(k)})$. With the innovation
 $d_t^{(k)} = y_t - H_t(M_t(x^{(k)}))$, the linearised (quadratic)
 cost of an increment $\delta x$ is
 
-$$
-\delta J(\delta x) = \tfrac{1}{2} \|x^{(k)} + \delta x - x_b\|^2_{B^{-1}} +
-                     \tfrac{1}{2} \sum_t \|d_t^{(k)} - H'_t M'_t \delta x\|^2_{R_t^{-1}}.
-$$
+$$\delta J(\delta x) = \frac{1}{2} \|x^{(k)} + \delta x - x_b\|^2_{B^{-1}} + \frac{1}{2} \sum_t \|d_t^{(k)} - H'_t M'_t \delta x\|^2_{R_t^{-1}}.$$
 
 The background term measures the *total* departure
 $x^{(k)} + \delta x - x_b$, not $\delta x$ alone. The Gauss-Newton
 Hessian is
 
-$$
-\mathbf{H}_\text{GN} = B^{-1} + \sum_t (H'_t M'_t)^\top R_t^{-1} (H'_t M'_t),
-$$
+$$\mathbf{H}_\text{GN} = B^{-1} + \sum_t (H'_t M'_t)^\top R_t^{-1} (H'_t M'_t),$$
 
 and setting $\nabla \delta J = 0$ gives the inner system that the CG /
 Lanczos solver solves for $\delta x^*$:
 
-$$
-\mathbf{H}_\text{GN}\, \delta x^* =
-  -B^{-1}\big(x^{(k)} - x_b\big)
-  + \sum_t (H'_t M'_t)^\top R_t^{-1} d_t^{(k)}
-  = -\nabla J\big(x^{(k)}\big).
-$$
+$$\mathbf{H}_\text{GN} \delta x^* = -B^{-1}\left(x^{(k)} - x_b\right) + \sum_t (H'_t M'_t)^\top R_t^{-1} d_t^{(k)} = -\nabla J\left(x^{(k)}\right).$$
 
 The right-hand side is the negative gradient of the full nonlinear cost
 at the current iterate. On the first outer loop $x^{(0)} = x_b$, so the
@@ -85,19 +68,13 @@ nested CG solve.
 The CVT changes variables. Let $S$ be a square root of $B$, $S S^\top = B$,
 and write the departure from the background as
 
-$$
-x_0 - x_b = S \chi .
-$$
+$$x_0 - x_b = S \chi .$$
 
-The background term becomes $\tfrac{1}{2}\|x_0 - x_b\|^2_{B^{-1}} =
-\tfrac{1}{2}\|\chi\|^2$, and the inner system at the outer iterate
+The background term becomes $\frac{1}{2}\|x_0 - x_b\|^2_{B^{-1}} =
+\frac{1}{2}\|\chi\|^2$, and the inner system at the outer iterate
 $\chi^{(k)}$ becomes
 
-$$
-\big(I + S^\top G'^\top R^{-1} G' S\big)\, \delta\chi^*
-  = -\nabla_\chi J\big(\chi^{(k)}\big)
-  = -\chi^{(k)} + S^\top G'^\top R^{-1} d^{(k)},
-$$
+$$\left(I + S^\top G'^\top R^{-1} G' S\right) \delta\chi^* = -\nabla_\chi J\left(\chi^{(k)}\right) = -\chi^{(k)} + S^\top G'^\top R^{-1} d^{(k)},$$
 
 where $G'$ stacks $H'_t M'_t$ over the window. Its eigenvalues are all
 $\ge 1$, close to 1 in directions the observations barely see, and no
@@ -131,28 +108,125 @@ $B$ the two are comparable.
 
 ## Implementation in vardax
 
+The example below is a $4 \times 5$ grid ($N = 20$ cells) over a window of $T = 4$ times, with a nonlinear forward $M(x) = x + 0.2 \sin(x)$ applied cell by cell.
+$B = B_y \otimes B_x$ is separable, each factor a Gaussian correlation of length scale 1.5 cells (plus a $10^{-1}$ jitter), and the background is $x_b = 0$.
+Every cell is observed through an averaging kernel $H(x) = A (h \odot x + (1 - h) \odot x_a)$ with $A = I$, $h = 0.8$ and $x_a = 0$, and $R = 0.04 I$.
+
 ```python
+import einx
+import equinox as eqx
 import gaussx as gx
+import jax
+import jax.numpy as jnp
 import lineax as lx
-from vardax import AveragingKernel, IncrementalConfig, IncrementalFourDVar
+import optimistix as optx
+import vardax as vdx
+from jaxtyping import Array, Float
 
-# separable B on an (ny, nx) grid: B = B_y ⊗ B_x, whose square root
-# gaussx.sqrt computes factor by factor
-B_op = gx.Kronecker(B_y_op, B_x_op)
+# Shapes: S = 1 window; T = 4 times; N = Y X = 20 cells; Y = 4 rows; X = 5 columns
 
-model = IncrementalFourDVar(
-    forward=somax_model,
-    obs_op=AveragingKernel(kernel_matrix=A, prior_profile=xa, pressure_weights=h),
-    prior_mean=x_b,
-    prior_cov_op=B_op,
-    obs_cov_op=lx.DiagonalLinearOperator(obs_uncertainty),
-    config=IncrementalConfig(n_outer=3, n_inner=20, cvt=True),
+key_truth, key_noise = jax.random.split(jax.random.PRNGKey(0))
+
+
+# user
+class SineDrift(eqx.Module):
+    """A toy nonlinear forward, M(x) = x + 0.2 sin(x), cell by cell."""
+
+    dt: float = 1.0
+
+    def step(self, state: Float[Array, " n"], dt: float) -> Float[Array, " n"]:
+        return state + 0.2 * dt * jnp.sin(state)
+
+
+# user
+def gaussian_corr(n_cells: int) -> lx.MatrixLinearOperator:
+    """Gaussian correlation of length scale 1.5 cells, plus a 10⁻¹ jitter."""
+    cell = jnp.arange(float(n_cells))
+    # dᵢⱼ = i − j
+    offset = einx.subtract("i, j -> i j", cell, cell)  # (n, n)
+    # Cᵢⱼ = exp(−dᵢⱼ² / 2ℓ²) + 10⁻¹ δᵢⱼ
+    corr = jnp.exp(-0.5 * (offset / 1.5) ** 2) + 1e-1 * jnp.eye(n_cells)
+    return lx.MatrixLinearOperator(corr, lx.positive_semidefinite_tag)
+
+
+forward = SineDrift()
+# today (gaussx)
+# B = B_y ⊗ B_x, whose square root gaussx.sqrt computes factor by factor
+prior_cov = gx.Kronecker(  # (N, N) op
+    gaussian_corr(4), gaussian_corr(5), tags=lx.positive_semidefinite_tag
 )
-x_star = model(batch)
+# today (vardax)
+# H(x) = A (h ⊙ x + (1 − h) ⊙ x_a), A = I, h = 0.8, x_a = 0
+obs_op = vdx.AveragingKernel(
+    kernel_matrix=lx.MatrixLinearOperator(jnp.eye(20)),
+    prior_profile=jnp.zeros(20),
+    pressure_weights=jnp.full(20, 0.8),
+)
+# R = 0.04 I, tagged PSD for the Cholesky solve below
+obs_cov = lx.TaggedLinearOperator(  # (N, N) op
+    lx.DiagonalLinearOperator(jnp.full(20, 0.04)), lx.positive_semidefinite_tag
+)
+# x_b = 0
+background = jnp.zeros(20)  # (N,)
+# x₀ = L ξ, ξ ~ 𝒩(0, I), B = L Lᵀ
+truth_start = einx.dot(  # (N,)
+    "i j, j -> i",
+    jnp.linalg.cholesky(prior_cov.as_matrix()),
+    jax.random.normal(key_truth, (20,)),
+)
 
+
+# user
+def advance(state: Float[Array, " n"], _) -> tuple[Array, Array]:
+    next_state = forward.step(state, forward.dt)  # (N,)
+    return next_state, next_state
+
+
+_, truth_later = jax.lax.scan(advance, truth_start, length=3)  # (T − 1, N)
+# [x₀; x₁ … x₃]
+truth = einx.id("n, t n -> (1 + t) n", truth_start, truth_later)  # (T, N)
+# yₜ = H(xₜ) + 0.2 εₜ, εₜ ~ 𝒩(0, I)
+obs = jax.vmap(obs_op)(truth) + 0.2 * jax.random.normal(key_noise, (4, 20))  # (T, N)
+
+# today (vardax)
+# x⁽ᵏ⁺¹⁾ = x⁽ᵏ⁾ + δx*, (I + Sᵀ G′ᵀ R⁻¹ G′ S) δχ* = −∇_χ J
+model = vdx.IncrementalFourDVar(
+    forward=forward,
+    obs_op=obs_op,
+    prior_mean=background,
+    prior_cov_op=prior_cov,
+    obs_cov_op=obs_cov,
+    config=vdx.IncrementalConfig(n_outer=3, n_inner=20, cvt=True),
+)
+# today (vardax)
+batch = vdx.Batch1D(
+    input=einx.id("t n -> 1 t n", obs),  # (T, N) → (S, T, N)
+    mask=jnp.ones((1, 4, 20)),
+)
+analysis = model(batch)  # → (S, N)
+
+# today (vardax)
+# the same cost, minimised directly
+strong = vdx.StrongFourDVar(
+    forward=forward,
+    obs_op=obs_op,
+    prior_mean=background,
+    prior_cov_op=prior_cov,
+    obs_cov_op=obs_cov,
+    minimiser=optx.BFGS(rtol=1e-6, atol=1e-6),
+    cov_solver=lx.Cholesky(),
+)
+strong_analysis = strong(batch)  # → (S, N)
+# max |x₀ⁱⁿᶜ − x₀ˢᵗʳᵒⁿᵍ|
+largest_gap = einx.max("s n ->", jnp.abs(analysis - strong_analysis))  # → ()
+print(f"largest gap to StrongFourDVar {largest_gap:.1e}")
+
+# today (vardax)
 # Gauss–Newton posterior at the analysis, with the model's B and R
 posterior = model.posterior(batch)
 ```
+
+It prints `largest gap to StrongFourDVar 2.0e-03`: three outer loops of at most 20 CG steps each land that close to the BFGS minimum of the same cost.
 
 `IncrementalConfig`:
 
@@ -166,52 +240,79 @@ posterior = model.posterior(batch)
 
 ## Algorithm
 
+Written out with the control-variable transform, each outer loop linearises the observed trajectory $G(x) = [H_t(M_t(x))]_t$ once and hands the inner system to CG; $x_b$ itself never changes.
+The block continues the one above and reproduces `model(batch)`.
+
+```python
+# Shapes: T = 4 times; N = 20 cells
+
+config = model.config
+covariance_solver = lx.CG(atol=config.covariance_tol, rtol=config.covariance_tol)
+inner_solver = lx.CG(atol=config.cg_atol, rtol=config.cg_rtol, max_steps=config.n_inner)
+state_struct = jax.ShapeDtypeStruct((20,), jnp.float32)
+# today (gaussx)
+# S Sᵀ = B, here S = S_y ⊗ S_x
+prior_sqrt = gx.sqrt(prior_cov)  # (N, N) op
+
+
+# user
+def observed_trajectory(state: Float[Array, " n"]) -> Float[Array, "t n"]:
+    # G(x) = [Hₜ(Mₜ(x))]ₜ
+    _, later_states = jax.lax.scan(advance, state, length=3)  # (T − 1, N)
+    trajectory = einx.id("n, t n -> (1 + t) n", state, later_states)  # (T, N)
+    return jax.vmap(obs_op)(trajectory)  # (T, N)
+
+
+# user
+def whiten(residual: Float[Array, "t n"]) -> Float[Array, "t n"]:
+    # R⁻¹ rₜ at every time
+    return jax.vmap(
+        lambda r: lx.linear_solve(obs_cov, r, solver=covariance_solver).value
+    )(residual)
+
+
+# χ⁽⁰⁾ = 0, so x⁽⁰⁾ = x_b
+control = jnp.zeros(20)  # (N,)
+for _ in range(config.n_outer):
+    # x⁽ᵏ⁾ = x_b + S χ⁽ᵏ⁾
+    state = background + prior_sqrt.mv(control)  # (N,)
+    # G(x⁽ᵏ⁾) and v ↦ G′ v, the tangent of the observed trajectory
+    predicted, tangent = jax.linearize(observed_trajectory, state)  # (T, N)
+    # w ↦ G′ᵀ w, its adjoint
+    adjoint = jax.linear_transpose(tangent, state)
+    # dᵏ = y − G(x⁽ᵏ⁾)
+    innovation = obs - predicted  # (T, N)
+    # G′ᵀ R⁻¹ dᵏ
+    (obs_gradient,) = adjoint(whiten(innovation))  # (N,)
+    # −∇_χ J(χ⁽ᵏ⁾) = −χ⁽ᵏ⁾ + Sᵀ G′ᵀ R⁻¹ dᵏ
+    rhs = -control + prior_sqrt.transpose().mv(obs_gradient)  # (N,)
+
+    # user
+    def hessian_mv(direction: Float[Array, " n"]) -> Float[Array, " n"]:
+        # G′ S v
+        observed_direction = tangent(prior_sqrt.mv(direction))  # (T, N)
+        # G′ᵀ R⁻¹ G′ S v
+        (back_projected,) = adjoint(whiten(observed_direction))  # (N,)
+        # (I + Sᵀ G′ᵀ R⁻¹ G′ S) v
+        return direction + prior_sqrt.transpose().mv(back_projected)  # (N,)
+
+    # I + Sᵀ G′ᵀ R⁻¹ G′ S, eigenvalues ≥ 1
+    inner_hessian = lx.FunctionLinearOperator(  # (N, N) op
+        hessian_mv, state_struct, lx.positive_semidefinite_tag
+    )
+    # δχ* from truncated CG
+    step = lx.linear_solve(inner_hessian, rhs, solver=inner_solver, throw=False)
+    # χ⁽ᵏ⁺¹⁾ = χ⁽ᵏ⁾ + δχ*
+    control = control + step.value  # (N,)
+
+# x₀* = x_b + S χ*
+analysis_by_hand = background + prior_sqrt.mv(control)  # (N,)
+print(bool(jnp.allclose(analysis_by_hand, analysis[0], atol=1e-4)))
 ```
-Inputs:
-   x_b           — background mean
-   B_op          — prior covariance; B^{1/2} from gaussx.sqrt or prior_sqrt_op
-   R_op          — observation-error covariance
-   forward       — pipekit_cycle.ForwardModel
-   obs_op        — pipekit_cycle.ObservationOperator
-   batch         — observations y_t for t = 0, …, T
-   config        — IncrementalConfig
 
-x ← x_b                       # x⁽⁰⁾ = x_b; x_b itself never changes
-for k in range(config.n_outer):
+It prints `True`.
 
-    # 1. Tangent of the observed trajectory G(x) = [H_t(M_t(x))]_t at x⁽ᵏ⁾
-    #    G'δx = [H'_t M'_t δx]_t   (jax.linearize; Gᵀ via jax.vjp)
-    G_x, G_lin = jax.linearize(observed_trajectory, x)
-
-    # 2. Innovations at the current iterate
-    #    d_tᵏ = y_t − H_t(M_t(x⁽ᵏ⁾))
-    d = batch.y - G_x
-
-    # 3. Right-hand side: the negative gradient of the full cost at x⁽ᵏ⁾
-    #    −∇J(x⁽ᵏ⁾) = −B⁻¹(x⁽ᵏ⁾ − x_b) + G'ᵀ R⁻¹ d
-    rhs = -B_inv @ (x - x_b) + G_lin.T @ (R_inv @ d)
-
-    # 4. Inner solve via lineax.CG
-    if config.cvt:
-        B_half = gaussx.sqrt(B_op)    # or prior_sqrt_op
-        # (I + B^{1/2}ᵀ G'ᵀ R⁻¹ G' B^{1/2}) δχ = B^{1/2}ᵀ (−∇J(x⁽ᵏ⁾))
-        preconditioned_hessian = identity_op + B_half.T @ GtRG @ B_half
-        chi = lineax.linear_solve(
-            preconditioned_hessian, B_half.T @ rhs,
-            solver=lineax.CG(atol=config.cg_atol, rtol=config.cg_rtol,
-                              max_steps=config.n_inner),
-        )
-        # δx = B^{1/2} δχ
-        dx = B_half @ chi
-    else:
-        # (B⁻¹ + G'ᵀ R⁻¹ G') δx = −∇J(x⁽ᵏ⁾)
-        dx = lineax.linear_solve(B_inv + GtRG, rhs, solver=lineax.CG(...))
-
-    # 5. Outer update: x⁽ᵏ⁺¹⁾ = x⁽ᵏ⁾ + δx*
-    x = x + dx
-
-return x
-```
+With `cvt=False` the inner system is $(B^{-1} + G'^\top R^{-1} G') \delta x = -\nabla J(x^{(k)})$ in state space instead, with $B^{-1}$ applied by a nested CG solve at every Hessian product.
 
 ## Why it's the operational fast path
 
@@ -241,41 +342,53 @@ relinearisation needed), and the inner CG produces the closed-form
 Kalman update:
 
 ```python
-import jax
-import jax.numpy as jnp
-import lineax as lx
-import vardax
+# Shapes: S = 1 window; T = 1 time; N = 4 cells
 
 
-class Static:
+# user
+class Static(eqx.Module):
     """M(x) = x: a single-time window reduces 4DVar to OI."""
 
-    dt = 1.0
+    dt: float = 1.0
 
-    def step(self, x, dt):
-        return x
+    def step(self, state: Float[Array, " n"], dt: float) -> Float[Array, " n"]:
+        return state
 
 
-def test_incremental_recovers_oi():
-    n = 4
-    x_b = jnp.zeros(n)
-    B_op = lx.DiagonalLinearOperator(jnp.full(n, 2.0))
-    R_op = lx.DiagonalLinearOperator(jnp.full(n, 0.5))
-    batch = vardax.Batch1D(
-        input=jnp.arange(1.0, n + 1)[None, None], mask=jnp.ones((1, 1, n))
-    )
-    oi = vardax.OptimalInterpolation(
-        obs_op=vardax.MaskedIdentity(), prior_mean=x_b[None],
-        prior_cov_op=lx.DiagonalLinearOperator(jnp.full((1, n), 2.0)),
-        obs_cov_op=lx.DiagonalLinearOperator(jnp.full((1, n), 0.5)),
-    )
-    inc = vardax.IncrementalFourDVar(
-        forward=Static(), obs_op=vardax.MaskedIdentity(),
-        prior_mean=x_b, prior_cov_op=B_op, obs_cov_op=R_op,
-        config=vardax.IncrementalConfig(n_outer=2, n_inner=50, cvt=True),
-    )
-    assert jnp.allclose(oi(batch)[0, 0], inc(batch)[0], atol=1e-3)
+# B = 2 I, over the (N,) state of 4DVar
+static_prior_cov = lx.DiagonalLinearOperator(jnp.full(4, 2.0))  # (N, N) op
+# R = I / 2
+static_obs_cov = lx.DiagonalLinearOperator(jnp.full(4, 0.5))  # (N, N) op
+# y = (1, 2, 3, 4)
+single_obs = jnp.arange(1.0, 5.0)  # (N,)
+# today (vardax)
+single_batch = vdx.Batch1D(
+    input=einx.id("n -> 1 1 n", single_obs),  # (N,) → (S, T, N)
+    mask=jnp.ones((1, 1, 4)),
+)
+# today (vardax)
+# x_a = x_b + B Hᵀ (H B Hᵀ + R)⁻¹ (y − H x_b), over OI's (T, N) state
+optimal_interpolation = vdx.OptimalInterpolation(
+    obs_op=vdx.MaskedIdentity(),
+    prior_mean=jnp.zeros((1, 4)),
+    prior_cov_op=lx.DiagonalLinearOperator(jnp.full((1, 4), 2.0)),
+    obs_cov_op=lx.DiagonalLinearOperator(jnp.full((1, 4), 0.5)),
+)
+# today (vardax)
+static_incremental = vdx.IncrementalFourDVar(
+    forward=Static(),
+    obs_op=vdx.MaskedIdentity(),
+    prior_mean=jnp.zeros(4),
+    prior_cov_op=static_prior_cov,
+    obs_cov_op=static_obs_cov,
+    config=vdx.IncrementalConfig(n_outer=2, n_inner=50, cvt=True),
+)
+closed_form = optimal_interpolation(single_batch)  # → (S, T, N)
+gauss_newton = static_incremental(single_batch)  # → (S, N)
+print(bool(jnp.allclose(closed_form[:, 0], gauss_newton, atol=1e-3)))
 ```
+
+The block continues the one above; it prints `True`.
 
 Part of the Decision D14 invariant.
 
@@ -296,9 +409,17 @@ loop's Hessian. `model.posterior(batch)` relinearises the rollout once at
 the analysis and returns its lazy inverse (chapter 13):
 
 ```python
-posterior = model.posterior(batch)              # batch: one window
-# Posterior(mean=x_star, cov=lazy (B⁻¹ + G'ᵀR⁻¹G')⁻¹, samples=None, provenance={...})
+# Shapes: N = 20 cells
+
+# today (vardax)
+# P* = (B⁻¹ + G′ᵀ R⁻¹ G′)⁻¹ at x₀*, a lazy operator
+posterior = model.posterior(batch)
+# P* 1, one matrix-free product
+spread = posterior.cov.mv(jnp.ones(20))  # (N,) → (N,)
+print(posterior.mean.shape, spread.shape, posterior.samples)
 ```
+
+The block continues the one above; it prints `(20,) (20,) None`.
 
 Pass `adapter=vardax.GaussNewtonHessian(n_krylov=...)` to set the Krylov
 budget of each covariance mat-vec.

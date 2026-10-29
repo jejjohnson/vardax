@@ -82,76 +82,128 @@ plume); the inference is vardax.
 
 ```python
 import jax.numpy as jnp
-import gaussx as gx
 import lineax as lx
 import plumax
 import vardax as vdx
 
+# Shapes: P = 4 source parameters (log Q, x₀, y₀, H_eff); M retrieved pixels
+
 # (1) Load satellite + met
+# not pinned (GeoCatalog)
 catalog = GeoCatalog.from_geoparquet("s3://catalog/overpasses.parquet")
+# not pinned (GeoCatalog)
 overpasses = catalog.query(
     geometry=event.bbox(buffer_km=50),
     interval=event.window(hours=2),
     instruments=["TROPOMI", "EMIT", "GHGSat"],
     quality_min="usable",
 )
+# user
 met = load_era5_at(event.time, event.bbox)
 
-# (2) Forward model — Tier I Gaussian plume
+# (2) Forward model, Tier I Gaussian plume
+# not pinned (plumax)
 plume = plumax.tier1.GaussianPlume(met=met, dispersion="MO")
-# plume satisfies pipekit_cycle.ForwardModel
 
 # (3) Multi-instrument observation operator
+# today (vardax)
 fusion = vdx.MultiInstrumentFusion(
-    registry=vdx.InstrumentRegistry(entries={
-        op.instrument: vdx.InstrumentSpec(
-            obs_op=averaging_kernel_from_l2(op.l2_ds),  # an AveragingKernel
-            mask=op.quality_mask,
-            obs_cov_op=lx.DiagonalLinearOperator(op.retrieval_variance),
-            instrument_id=op.instrument,
-        )
-        for op in overpasses
-    }),
+    # today (vardax)
+    registry=vdx.InstrumentRegistry(
+        entries={
+            # today (vardax)
+            overpass.instrument: vdx.InstrumentSpec(
+                # user; returns a vdx.AveragingKernel
+                # H_i(x) = A_i (h_i ⊙ x + (1 − h_i) ⊙ x_a,i)
+                obs_op=averaging_kernel_from_l2(overpass.l2_ds),
+                mask=overpass.quality_mask,
+                # R_i = diag(σ²_i)
+                obs_cov_op=lx.DiagonalLinearOperator(overpass.retrieval_variance),
+                instrument_id=overpass.instrument,
+            )
+            for overpass in overpasses
+        }
+    ),
 )
+# today (vardax)
+# H(x) = [H_i(x)]ᵢ, concatenated in sorted instrument order; the fusion itself
+# returns a dict per instrument, which the cost cannot take
+fused_obs_op = fusion.to_observation_operator()
 
-# (4) Prior: lognormal on Q from EDGAR inventory
-Q_prior_mu = jnp.log(edgar_lookup(event.facility_id))   # log-emission rate
-Q_prior_sigma_log = 1.0                                  # CV ~ 100 %
-B_op = gx.LogNormalLinearOperator(mu=Q_prior_mu, sigma=Q_prior_sigma_log)
+# (4) Prior: lognormal on Q from the EDGAR inventory, Gaussian on log Q
+# user
+# μ = log Q_EDGAR
+log_rate_prior_mean = jnp.log(edgar_lookup(event.facility_id))  # → ()
+# σ_log = 1, a coefficient of variation of about 100 %
+log_rate_prior_sd = 1.0
+# illustrative spreads on the source location and effective height
+position_prior_sd_m = 500.0
+height_prior_sd_m = 25.0
+# B = diag(σ²_log, σ²_x, σ²_y, σ²_H)
+prior_variance = jnp.array(  # (P,)
+    [
+        log_rate_prior_sd**2,
+        position_prior_sd_m**2,
+        position_prior_sd_m**2,
+        height_prior_sd_m**2,
+    ]
+)
+# today (lineax)
+prior_cov = lx.DiagonalLinearOperator(prior_variance)  # (P, P) op
 
-# (5) Block-diag R across instruments
-R_op = lx.BlockDiagonalLinearOperator([
-    spec.obs_cov_op for spec in fusion.registry.entries.values()
-])
+# (5) Block-diagonal R across instruments
+entries = fusion.registry.entries
+obs_variance = jnp.concatenate(  # (M,)
+    [entries[instrument].obs_cov_op.diagonal for instrument in sorted(entries)]
+)
+# today (lineax)
+# R = diag(R_i), in the sorted order of the fused observations; each R_i is
+# diagonal, and gaussx.BlockDiag lacks the lineax.linearise this model needs
+obs_cov = lx.DiagonalLinearOperator(obs_variance)  # (M, M) op
 
 # (6) Configure incremental 4DVar inversion
+# today* (vardax)
+# J(x) = ½ ‖x − x_b‖²_{B⁻¹} + ½ ‖m ⊙ (y − H(M(x)))‖²_{R⁻¹}
 inversion = vdx.IncrementalFourDVar(
-    forward=plume, obs_op=fusion,
-    prior_mean=jnp.array([Q_prior_mu, 0.0, 0.0, 50.0]),  # (logQ, x0, y0, H_eff)
-    prior_cov_op=B_op, obs_cov_op=R_op,
+    forward=plume,
+    obs_op=fused_obs_op,
+    # x_b = (log Q_EDGAR, 0, 0, 50 m)
+    prior_mean=jnp.array([log_rate_prior_mean, 0.0, 0.0, 50.0]),  # (P,)
+    prior_cov_op=prior_cov,
+    obs_cov_op=obs_cov,
     config=vdx.IncrementalConfig(n_outer=5, n_inner=20, cvt=True),
 )
 
-# (7) Build batch from overpasses (your glue: overpasses -> vdx.Batch1D)
+# (7) Build batch from overpasses
+# user; overpasses → vdx.Batch1D of shape (1, 1, M)
 batch = build_event_batch(overpasses, met=met)
 
 # (8) Invert
-x_star = inversion(batch)
+# x* = argminₓ J(x)
+analysis = inversion(batch)  # (1, P)
 
 # (9) Gauss-Newton posterior at the analysis (model's own B and R)
-posterior = inversion.posterior(batch)
-# Posterior(mean=x_star, cov=GN_Hessian_inv_op, samples=None, provenance={...})
+# today (vardax)
+# P* = (B⁻¹ + Gᵀ R⁻¹ G)⁻¹, G = H′ M′ at x*
+posterior = inversion.posterior(batch, adapter=vdx.GaussNewtonHessian())
+# Posterior(mean=x*, cov=lazy P*, samples=None, provenance={...})
 
 # (10) Export to population layer
+# today (vardax)
 mark = vdx.GaussianMarkLikelihood(
     posterior=posterior,
     event_metadata={
-        "event_id": event.id, "time": event.time, "geometry": event.geometry,
-        "instruments_used": list(fusion.registry.entries),
+        "event_id": event.id,
+        "time": event.time,
+        "geometry": event.geometry,
+        "instruments_used": list(entries),
         "met_source": f"era5_{event.time.isoformat()}",
     },
 )
-catalog.write_posterior(event.id, mark.to_dict())
+# today (vardax)
+mark_record = mark.to_dict()
+# not pinned (GeoCatalog)
+catalog.write_posterior(event.id, mark_record)
 ```
 
 ## What this exercises in vardax
@@ -163,8 +215,7 @@ catalog.write_posterior(event.id, mark.to_dict())
 - **`GaussNewtonHessian` posterior** — free from the last outer iteration
 - **`GaussianMarkLikelihood` export** — hand-off to Tier V population
   models (D10)
-- **`gaussx` structured prior + `lineax` block-diag obs cov** —
-  structured linear algebra throughout
+- **`lineax` diagonal prior and block-diagonal obs cov** — the per-instrument blocks are diagonal, so $R$ is one `DiagonalLinearOperator`
 - **`plumax.tier1.GaussianPlume`** as `pipekit_cycle.ForwardModel` (D8)
 - **GeoCatalog query → inference → write loop** — operational pattern
 
@@ -207,15 +258,25 @@ For population-level analysis (annual emissions from a basin, persistent
 super-emitters), aggregate per-event posteriors:
 
 ```python
+# Shapes: E events; P = 4 source parameters
+
+# not pinned (GeoCatalog)
 events = catalog.query_events(basin="permian", year=2024)
 posteriors = []
 for event in events:
+    # user
     batch = build_event_batch(event)
-    x_star = inversion(batch)
-    posteriors.append(inversion.posterior(batch))
+    # today (vardax)
+    # p(x | y) ≈ 𝒩(x*, P*), one per event
+    posteriors.append(inversion.posterior(batch, adapter=vdx.GaussNewtonHessian()))
 
 # Pass to TMTPP / hierarchical Bayesian model
-marks = [GaussianMarkLikelihood(p, e.metadata) for p, e in zip(posteriors, events)]
+marks = [
+    # today (vardax)
+    vdx.GaussianMarkLikelihood(posterior, event.metadata)
+    for posterior, event in zip(posteriors, events)
+]
+# not pinned (TMTPP)
 population_model = TMTPP(marks)
 ```
 

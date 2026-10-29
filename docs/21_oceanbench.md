@@ -77,27 +77,61 @@ maps — the first OceanBench edition, and the task chapter
 `IncrementalFourDVar`, learned `FourDVarNet`). The learned
 configuration in brief:
 
+The block below runs an untrained model on a toy SSH field, $\eta(t, y, x) = \sin(x - 0.2 t) \cos(y)$ on $16 \times 16$ cells, observed along diagonal ground tracks; a real configuration uses $128 \times 128$ patches, `latent_dim=32`, `hidden_dim=48` and 15 solver steps, and is trained before use (chapter [16](16_ssh_example.md)).
+
 ```python
+import einx
 import jax
-from vardax import Batch2D, FourDVarNet2D
+import jax.numpy as jnp
+import vardax as vdx
 
-model = FourDVarNet2D(
-    n_time=5,                # T: days in the assimilation window
-    height=128,              # H, W: regional lon-lat patch
-    width=128,
-    latent_dim=32,
-    hidden_dim=48,
-    n_solver_steps=15,
-    key=jax.random.PRNGKey(0),
+# Shapes: B = 1 patch; T = 5 days; H = W = 16 lat-lon cells
+
+key_model, key_noise = jax.random.split(jax.random.PRNGKey(0))
+cells = jnp.arange(16)  # (H,)
+grid = jnp.linspace(0.0, 2.0 * jnp.pi, 16)  # (H,)
+days = jnp.arange(5)  # (T,)
+
+# x − 0.2 t
+phase = einx.subtract("w, t -> t w", grid, 0.2 * days)  # (T, W)
+# η(t, y, x) = sin(x − 0.2 t) cos(y), a toy SSH field drifting west
+ssh_truth = einx.multiply(  # (T, H, W)
+    "t w, h -> t h w", jnp.sin(phase), jnp.cos(grid)
+)
+# i + j − 3t, the along-track coordinate of a diagonal ground track
+track_coord = einx.subtract(  # (T, H, W)
+    "h w, t -> t h w", einx.add("h, w -> h w", cells, cells), 3 * days
+)
+# m = 1 where i + j − 3t ≡ 0 (mod 8), 0 in the gaps
+track_mask = (track_coord % 8 == 0).astype(jnp.float32)  # (T, H, W)
+# y = m ⊙ (η + 0.02 ε), zero-filled gaps
+ssh_tracks = track_mask * (  # (T, H, W)
+    ssh_truth + 0.02 * jax.random.normal(key_noise, (5, 16, 16))
 )
 
-batch = Batch2D(
-    input=ssh_tracks,        # (B, T, H, W), zero-filled gaps
-    mask=track_mask,         # 1 on-track, 0 in gaps
-    target=ssh_truth,        # OSSE only
+# today (vardax)
+model = vdx.FourDVarNet2D(
+    n_time=5,  # T: days in the assimilation window
+    height=16,  # H, W: regional lat-lon patch
+    width=16,
+    latent_dim=8,
+    hidden_dim=8,
+    n_solver_steps=3,
+    key=key_model,
 )
-ssh_maps = model(batch)      # (B, T, H, W) gap-free reconstruction
+# today (vardax)
+batch = vdx.Batch2D(
+    input=einx.id("t h w -> 1 t h w", ssh_tracks),  # (T, H, W) → (B, T, H, W)
+    mask=einx.id("t h w -> 1 t h w", track_mask),  # 1 on-track, 0 in gaps
+    target=einx.id("t h w -> 1 t h w", ssh_truth),  # OSSE only
+)
+# x* = argminₓ U(x), unrolled by the learned solver
+ssh_maps = model(batch)  # → (B, T, H, W)
+observed_fraction = einx.mean("t h w ->", track_mask)  # → ()
+print(f"observed fraction {observed_fraction:.3f}, maps {ssh_maps.shape}")
 ```
+
+It prints `observed fraction 0.125, maps (1, 5, 16, 16)`.
 
 Real altimetry products carry `NaN` in the gaps rather than zeros —
 strip them with the NaN-safe observation costs

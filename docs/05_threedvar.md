@@ -9,22 +9,15 @@ and computes the MAP estimate iteratively.
 
 Minimise
 
-$$
-J(x) = \tfrac{1}{2} \|x - x_b\|^2_{B^{-1}}
-     + \tfrac{1}{2} \|y - H(x)\|^2_{R^{-1}}.
-$$
+$$J(x) = \frac{1}{2} \|x - x_b\|^2_{B^{-1}} + \frac{1}{2} \|y - H(x)\|^2_{R^{-1}}.$$
 
 The gradient:
 
-$$
-\nabla J(x) = B^{-1} (x - x_b) - H'(x)^\top R^{-1} (y - H(x)).
-$$
+$$\nabla J(x) = B^{-1} (x - x_b) - H'(x)^\top R^{-1} (y - H(x)).$$
 
 The Hessian (for Gauss-Newton):
 
-$$
-J''(x) \approx B^{-1} + H'(x)^\top R^{-1} H'(x).
-$$
+$$J''(x) \approx B^{-1} + H'(x)^\top R^{-1} H'(x).$$
 
 The Gauss-Newton approximation drops the second-derivative term in
 $H''(x)^\top R^{-1} (y - H(x))$, which vanishes at the MAP and is
@@ -47,29 +40,73 @@ For time series and dynamics, use `StrongFourDVar` (chapter 6).
 
 ## Implementation in vardax
 
-```python
-import optimistix as optx
-from vardax import ThreeDVar
+The example below has a nonlinear operator $H(x) = \exp(x)$, applied cell by cell, on a grid of $N = 8$ cells at a single time.
+The background is $x_b = 0$ with $B = I$, the truth is a draw around it, and the observations are $y = \exp(x_\text{true}) + \varepsilon$ with $R = \sigma^2 I$ and $\sigma = 0.1$.
+`ThreeDVar` takes a batch of $S$ samples, each of shape $(T, N)$.
 
-model = ThreeDVar(
-    obs_op=AveragingKernel(kernel_matrix=A, prior_profile=xa, pressure_weights=h),   # nonlinear via h ⊙ x
-    prior_mean=x_b,
-    prior_cov_op=B_op, obs_cov_op=R_op,
-    minimiser=optx.GaussNewton(rtol=1e-5, atol=1e-5),
-    minimiser_adjoint=optx.ImplicitAdjoint(),
+```python
+import einx
+import jax
+import jax.numpy as jnp
+import lineax as lx
+import optimistix as optx
+import vardax as vdx
+
+# Shapes: S = 1 sample; T = 1 time; N = 8 grid cells
+
+key_truth, key_noise = jax.random.split(jax.random.PRNGKey(0))
+state_structure = jax.ShapeDtypeStruct((1, 8), jnp.float32)
+
+# B = I
+prior_cov = lx.IdentityLinearOperator(state_structure)  # (T N, T N) op
+# R = σ² I, σ = 0.1; tagged PSD so the default CG solve accepts it
+obs_cov = lx.TaggedLinearOperator(  # (T N, T N) op
+    jnp.float32(0.01) * prior_cov, lx.positive_semidefinite_tag
 )
-x_star = model(batch)
+# x_b = 0
+background = jnp.zeros((1, 8))  # (T, N)
+# x_true = x_b + 0.3 δ,  δ ~ 𝒩(0, I)
+truth = background + 0.3 * jax.random.normal(key_truth, (1, 8))  # (T, N)
+# y = exp(x_true) + σ ε,  ε ~ 𝒩(0, I)
+obs = jnp.exp(truth) + 0.1 * jax.random.normal(key_noise, (1, 8))  # (T, N)
+
+# today (vardax)
+# H(x) = exp(x), elementwise
+obs_op = vdx.CallableObs(fn=jnp.exp)
+# today (vardax)
+# J(x) = ½ ‖x − x_b‖²_{B⁻¹} + ½ ‖y − H(x)‖²_{R⁻¹}
+model = vdx.ThreeDVar(
+    obs_op=obs_op,
+    prior_mean=background,
+    prior_cov_op=prior_cov,
+    obs_cov_op=obs_cov,
+    minimiser=optx.BFGS(rtol=1e-6, atol=1e-6),
+)
+# today (vardax)
+batch = vdx.Batch1D(
+    input=einx.id("t n -> 1 t n", obs),  # (T, N) → (S, T, N)
+    mask=jnp.ones((1, 1, 8)),
+)
+# x* = argminₓ J(x)
+analysis, result = model.analyse(batch)  # → (S, T, N)
+
+background_error = jnp.linalg.norm(background - truth)
+analysis_error = jnp.linalg.norm(analysis[0] - truth)
+print(f"background error {background_error:.2f}, analysis error {analysis_error:.2f}")
+print(f"converged {bool(result.converged[0])} in {int(result.num_steps[0])} steps")
 ```
 
-The minimiser is any `optimistix.AbstractMinimiser` — the choice
-depends on the cost function's geometry:
+It prints `background error 0.76, analysis error 0.40` and `converged True in 63 steps`.
+
+The minimiser is any `optimistix.AbstractMinimiser`, or a vardax `Minimiser` such as `OptaxMinimiser`; the choice depends on the cost function's geometry:
 
 | Minimiser | When |
 |---|---|
-| `optx.GaussNewton(...)` | Cost is approximately quadratic; obs operator's Jacobian is well-behaved |
-| `optx.BFGS(...)` | General-purpose; no special structure required |
+| `optx.BFGS(...)` | General-purpose; no special structure required (the default) |
 | `optx.NonlinearCG(...)` | Memory-constrained; many parameters |
-| `optx.LevenbergMarquardt(...)` | Highly nonlinear obs operator; needs damping |
+| `optx.NelderMead(...)` | Derivative-free; the cost has kinks |
+
+`optx.GaussNewton` and `optx.LevenbergMarquardt` are least-squares solvers, not minimisers, so `ThreeDVar` rejects them; the Gauss-Newton fast path is `IncrementalFourDVar` (chapter 8).
 
 The `minimiser_adjoint` controls how gradients flow through the
 minimiser if the model is itself differentiated through (e.g., for
@@ -79,28 +116,50 @@ gradients with $O(1)$ memory.
 
 ## Algorithm
 
-```
-Inputs:
-   x_b      — background mean
-   B_op     — prior covariance
-   R_op     — observation-error covariance
-   obs_op   — pipekit_cycle.ObservationOperator (linearize() required)
-   y        — observations
-   minimiser — optimistix.AbstractMinimiser
+Written out, the cost is two whitened quadratic forms, one per term of $J$, each applied with a CG solve rather than an inverse.
+`ThreeDVar` builds the same cost, with the residual masked where observations are missing (the mask here is all ones), and hands it to `optimistix.minimise`.
+The block continues the one above.
 
-# Define the cost (closure over batch)
-def cost_fn(x, batch):
-    return threedvar_cost(x, batch, obs_op, x_b, B_inv_op, R_inv_op)
+```python
+from jaxtyping import Array, Float
 
-# Iterate
-result = optimistix.minimise(
-    fn=cost_fn,
-    solver=minimiser,
-    y0=x_b,                                   # warm start at background
-    args=batch,
-    adjoint=minimiser_adjoint,
+# Shapes: T = 1 time; N = 8 grid cells
+
+cov_solver = lx.CG(atol=1e-6, rtol=1e-6)
+
+
+# user
+def threedvar_cost(
+    state: Float[Array, "t n"], obs: Float[Array, "t n"]
+) -> Float[Array, ""]:
+    # δx = x − x_b
+    increment = state - background  # (T, N)
+    # B⁻¹ δx
+    prior_solve = lx.linear_solve(prior_cov, increment, solver=cov_solver)
+    # ½ δxᵀ B⁻¹ δx
+    background_term = 0.5 * einx.dot("t n, t n ->", increment, prior_solve.value)
+    # d = y − H(x)
+    innovation = obs - obs_op(state)  # (T, N)
+    # R⁻¹ d
+    obs_solve = lx.linear_solve(obs_cov, innovation, solver=cov_solver)
+    # ½ dᵀ R⁻¹ d
+    obs_term = 0.5 * einx.dot("t n, t n ->", innovation, obs_solve.value)
+    # J(x) = ½ δxᵀ B⁻¹ δx + ½ dᵀ R⁻¹ d
+    return background_term + obs_term  # → ()
+
+
+# today (optimistix)
+# x* = argminₓ J(x), started at x_b
+solution = optx.minimise(
+    threedvar_cost,
+    optx.BFGS(rtol=1e-6, atol=1e-6),
+    background,
+    args=obs,
+    adjoint=optx.ImplicitAdjoint(),
+    max_steps=200,
 )
-return result.value                           # MAP estimate
+# the hand-written cost reaches the same minimum as ThreeDVar
+print(bool(jnp.allclose(solution.value, analysis[0], atol=1e-3)))
 ```
 
 Convergence is typically tens of iterations for well-conditioned
@@ -111,18 +170,27 @@ termination criteria internally.
 
 When $H$ is linear, `ThreeDVar` reduces to `OptimalInterpolation` —
 the iterative minimiser converges to the closed-form Kalman analysis.
-The conformance test enforces agreement:
+With $H = I$ the same background and covariances give the BLUE in closed form; `tests/test_linear_gaussian_agreement.py` enforces the agreement for every method:
 
 ```python
-def test_threedvar_recovers_oi_in_linear_limit():
-    oi = OptimalInterpolation(linear_H_op, x_b, B_op, R_op)
-    three = ThreeDVar(
-        obs_op=linear_H_op, prior_mean=x_b,
-        prior_cov_op=B_op, obs_cov_op=R_op,
-        minimiser=optx.GaussNewton(rtol=1e-8, atol=1e-8),
-    )
-    batch = make_linear_gaussian_batch()
-    assert jnp.allclose(oi(batch), three(batch), atol=1e-3)
+# today (vardax)
+linear_three = vdx.ThreeDVar(
+    obs_op=vdx.MaskedIdentity(),
+    prior_mean=background,
+    prior_cov_op=prior_cov,
+    obs_cov_op=obs_cov,
+)
+# today (vardax)
+optimal_interpolation = vdx.OptimalInterpolation(
+    obs_op=vdx.MaskedIdentity(),
+    prior_mean=background,
+    prior_cov_op=prior_cov,
+    obs_cov_op=obs_cov,
+)
+# x_a = x_b + B Hᵀ (H B Hᵀ + R)⁻¹ (y − H x_b)
+closed_form = optimal_interpolation(batch)  # → (S, T, N)
+iterative = linear_three(batch)  # → (S, T, N)
+print(bool(jnp.allclose(closed_form, iterative, atol=1e-3)))
 ```
 
 This is part of the Decision D14 invariant — all seven methods agree
@@ -133,17 +201,17 @@ wrong.
 
 For Gaussian likelihood near the MAP, the Laplace approximation gives
 
-$$
-p(x \mid y) \approx \mathcal{N}(x; x^*, P^*), \quad
-P^* = \big(B^{-1} + H'(x^*)^\top R^{-1} H'(x^*)\big)^{-1}.
-$$
+$$p(x \mid y) \approx \mathcal{N}(x; x^*, P^*), \text{ with } P^* = \left(B^{-1} + H'(x^*)^\top R^{-1} H'(x^*)\right)^{-1}.$$
 
-Compute via `LaplaceCovariance`:
+`ThreeDVar.posterior` runs the analysis and applies `LaplaceCovariance` with the model's $B$ and $R$; the covariance stays a lazy operator:
 
 ```python
-from vardax import LaplaceCovariance
-
-posterior = LaplaceCovariance()(x_star, model.as_analysis_step(), batch)
+# today (vardax)
+# P* = (B⁻¹ + H′(x*)ᵀ R⁻¹ H′(x*))⁻¹
+posterior = model.posterior(batch)
+# P* 1, one matrix-free product
+spread = posterior.cov.mv(jnp.ones((1, 8)))  # (T, N) → (T, N)
+print(posterior.mean.shape, spread.shape)
 ```
 
 For strongly-nonlinear obs operators, the Laplace approximation
