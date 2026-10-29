@@ -15,7 +15,7 @@
 # %% [markdown]
 # # 13 — Learning a Closure for Unresolved Physics on Two-Level Lorenz-96
 #
-# Notebook [12](12_weak_constraint_4dvar_L63.py) treated model error as
+# Notebook [12](12_weak_constraint_4dvar_L63.ipynb) treated model error as
 # something to *estimate*, window by window, with an increment $\eta_t$ at
 # every step. This notebook treats it as something to *learn*: if the
 # error has structure — it is a function of the resolved state — we can fit
@@ -95,8 +95,8 @@
 #   $\theta^{\text{on}} = \arg\min_\theta \sum_{\text{windows}} \sum_{t \le \tau}
 #   \|\varphi^\theta_t(x_0) - x_t\|^2$.
 #   This needs gradients through the ODE solve — the
-#   [`DynTrajectory`](../api/costs_priors.md) machinery of notebook
-#   [09](09_param_estimation_L63.py), with $\theta$ now a neural network's
+#   [`DynTrajectory`](xref:api#vardax.DynTrajectory) machinery of notebook
+#   [09](09_param_estimation_L63.ipynb), with $\theta$ now a neural network's
 #   weights threaded through `diffrax` as `args`.
 #
 # The offline objective is blind to how tendency errors *accumulate*: a
@@ -117,7 +117,7 @@
 # The full two-level system is a plain `diffrax` right-hand side; the
 # hybrid model is another, with the closure as its `args`; `DynTrajectory`
 # wraps either for rollouts, losses, and — through `as_forward_model` —
-# for use as the forward model of [`StrongFourDVar`](../api/models.md) in
+# for use as the forward model of [`StrongFourDVar`](xref:api#vardax.StrongFourDVar) in
 # the last section, where the learned closure is used inside 4DVar.
 
 # %%
@@ -448,7 +448,7 @@ for lead in (0.1, 0.25, 0.5):
 #
 # One practical detail: Lorenz-96 has quadratic terms, so a line-search
 # trial far outside the attractor overflows the rollout. The
-# [`SoftBoundedForward`](../api/utils.md) adapter leaves states untouched
+# [`SoftBoundedForward`](xref:api#vardax.SoftBoundedForward) adapter leaves states untouched
 # inside a box (the printed maximum $|x_k|$ is well inside it) and
 # saturates them smoothly outside, on the way into and out of every step;
 # a wild trial state still gets a large, finite cost and is rejected. (A
@@ -553,6 +553,6 @@ plt.show()
 #   The same `DynTrajectory` object serves as trainable model, forecast
 #   model, and 4DVar forward.
 #
-# Notebook [09](09_param_estimation_L63.py) is the scalar-parameter
-# version of the online fit; notebook [12](12_weak_constraint_4dvar_L63.py)
+# Notebook [09](09_param_estimation_L63.ipynb) is the scalar-parameter
+# version of the online fit; notebook [12](12_weak_constraint_4dvar_L63.ipynb)
 # handles the residual this notebook cannot learn.

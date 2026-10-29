@@ -69,7 +69,7 @@
 # which is the strong-constraint 4DVar cost of chapter
 # [6](../06_strong_4dvar.md) with the control variable extended from $u_0$
 # to $(u_0, \theta)$ — the *augmented state* trick of the data-assimilation
-# literature. In code it is [`strong_variational_cost`](../api/costs_priors.md)
+# literature. In code it is [`strong_variational_cost`](xref:api#vardax.strong_variational_cost)
 # with a `forward_fn` that closes over $\theta$. In this sum form the weights
 # $\alpha_{obs} = 1 / 2\sigma_{obs}^2$ and $\alpha_{bg} = 1 / 2\sigma_b^2$ are
 # the inverse error variances, and only their *ratio* matters for the
@@ -94,7 +94,7 @@
 #
 # and the Jacobians $\partial \varphi_t / \partial \theta$ obey their own ODE
 # (the tangent-linear model). `diffrax` never forms them: the
-# `RecursiveCheckpointAdjoint` used by [`DynTrajectory`](../api/costs_priors.md)
+# `RecursiveCheckpointAdjoint` used by [`DynTrajectory`](xref:api#vardax.DynTrajectory)
 # propagates the residuals backwards through the solve with the adjoint
 # model, at a memory cost logarithmic in the number of steps. Chapter
 # [12](../12_adjoint_methods.md) compares this with the continuous adjoint
@@ -360,7 +360,7 @@ plt.show()
 #
 # - **It is the same problem as 4DVar.** Chapter [6](../06_strong_4dvar.md)
 #   minimises over $u_0$ with $\theta$ fixed; notebook
-#   [01](01_model_based_4dvar_L63.py) does exactly that with
+#   [01](01_model_based_4dvar_L63.ipynb) does exactly that with
 #   `StrongFourDVar`. Adding $\theta$ to the control vector costs three more
 #   coordinates and nothing else, which is why "augmented state" is the
 #   standard DA route to parameter estimation.
@@ -470,7 +470,7 @@ print(f"trajectory MSE: first guess={mse_fg:.3f}, analysis={mse_an:.3f}")
 # ## 6. Weak-constraint variant — one-step increments
 #
 # When a *densely* sampled trajectory is available, the
-# [`DynIncrements`](../api/costs_priors.md) prior offers a cheaper route. Its
+# [`DynIncrements`](xref:api#vardax.DynIncrements) prior offers a cheaper route. Its
 # loss is the sum of one-step residuals,
 #
 # $$

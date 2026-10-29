@@ -19,7 +19,7 @@
 # **amortized** posterior pays that cost once, at training time, and
 # thereafter maps observations to a posterior in a single forward pass —
 # the difference between a research code and a real-time one. This
-# notebook trains vardax's [`AmortizedPosterior`](../api/amortized.md)
+# notebook trains vardax's [`AmortizedPosterior`](xref:api#vardax.AmortizedPosterior)
 # on simulated Lorenz-63 windows, compares it with a strong-constraint
 # 4DVar oracle, and runs the three validation gates of chapter
 # [14](../14_six_step_cycle.md) that decide whether such a model may be
@@ -47,16 +47,16 @@
 # limited family tends to be *wider* than the truth rather than
 # narrower, but only in expectation over $y$ and only within the family.
 #
-# The family here is the [`RegressionHead`](../api/amortized.md): a
+# The family here is the [`RegressionHead`](xref:api#vardax.RegressionHead): a
 # Gaussian with a mean and a diagonal covariance, both functions of a
-# context vector produced by an [`MLPObsEncoder`](../api/amortized.md)
+# context vector produced by an [`MLPObsEncoder`](xref:api#vardax.MLPObsEncoder)
 # from the observations and their mask. Its mean is trained toward the
 # posterior *mean* (a diagonal Gaussian's likelihood is maximised by
 # matching first and second moments), which for a symmetric posterior
 # coincides with the MAP that 4DVar computes and for a skewed one does
 # not. Its diagonal covariance cannot represent posterior correlations —
 # the strong $x$–$y$ correlation of notebook
-# [14](14_posterior_uncertainty_L63.py), for instance — and reports
+# [14](14_posterior_uncertainty_L63.ipynb), for instance — and reports
 # marginal variances only. Flow and score-based heads lift that
 # restriction; the regression head is the baseline against which they
 # should be judged.
@@ -218,7 +218,7 @@ plt.show()
 # For each test window the oracle minimises the 4DVar cost over the
 # initial state with a Gaussian prior fitted to the attractor's
 # climatology (its mean and per-component variance). The cost is the one
-# [`StrongFourDVar`](../api/models.md) minimises, written out here so
+# [`StrongFourDVar`](xref:api#vardax.StrongFourDVar) minimises, written out here so
 # that the minimiser can be started from eight points — the
 # climatological mean and seven draws from the prior — with the lowest
 # cost kept; a single start from the mean lands in a wrong basin on a
@@ -226,7 +226,7 @@ plt.show()
 # Laplace covariance pushed through the tangent-linear model to every
 # time in the window, exactly as in notebook 14. The amortized model's
 # posterior on the same window is its own Gaussian output. Both are
-# wrapped as [`Posterior`](../api/posterior.md) objects so the gates can
+# wrapped as [`Posterior`](xref:api#vardax.Posterior) objects so the gates can
 # consume them.
 
 # %%
@@ -547,6 +547,6 @@ plt.show()
 #   Jacobian, and distillation against the oracle for the mean.
 #
 # This closes the arc that began with notebook
-# [01](01_model_based_4dvar_L63.py): the same observations, the same
+# [01](01_model_based_4dvar_L63.ipynb): the same observations, the same
 # dynamics, and now a menu of estimators from exact-but-slow to
 # fast-but-audited, with the tools to say which is which.
