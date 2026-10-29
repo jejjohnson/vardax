@@ -135,7 +135,7 @@ It prints `observed fraction 0.125, maps (1, 5, 16, 16)`.
 
 Real altimetry products carry `NaN` in the gaps rather than zeros —
 strip them with the NaN-safe observation costs
-([`obs_cost_2d(..., nan_to_num=True)`](api/costs_priors.md)) or a
+([`obs_cost_2d(..., nan_to_num=True)`](xref:api#vardax.obs_cost_2d)) or a
 masking preprocessing step, per chapter [20](20_uncertainty.md).
 
 ### SSH forecasting
@@ -144,7 +144,7 @@ Propagate currently-assimilated maps forward in time (1 / 5 / 10-day
 leads), training on historical reanalysis so the model captures the
 blended physics-plus-observations signal. In vardax terms this is the
 `ForwardModel` seam's job: a learned surrogate trained on GLORYS
-drives a [`DACycle`](api/cycle.md) forward between assimilation
+drives a [`DACycle`](https://jejjohnson.github.io/vardax/reference/cycle/) forward between assimilation
 windows, and the analysis methods correct it as observations arrive.
 
 ### SSH surrogates
