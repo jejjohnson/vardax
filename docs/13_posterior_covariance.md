@@ -9,7 +9,7 @@ A MAP estimate $x^*$ is the start of the answer, not the end. Real DA needs a po
 
 ## The `Posterior` container
 
-Every analysis emits a `Posterior(mean, cov, samples, provenance)`:
+Every analysis emits a `Posterior(mean, cov, samples, provenance)`, plus the pieces of a linear control when it has one:
 
 ```{code-block} python
 :caption: Lists the fields of `vdx.Posterior`, which carries the mean x* and covariance P* of [](#eq-oi-posterior).
@@ -18,7 +18,7 @@ from typing import Any
 
 import equinox as eqx
 import lineax as lx
-from jaxtyping import Array, Float
+from jaxtyping import Array, Float, PRNGKeyArray
 
 # Shapes: M ensemble members; "..." is the state's own shape
 
@@ -32,9 +32,17 @@ class Posterior(eqx.Module):
     samples: Float[Array, "member ..."] | None = None
     # forward_model_id, n_iter, J_star, ...
     provenance: dict[str, Any] = eqx.field(default_factory=dict)
+    # Φ and P_θ of a linear control x = x* + Φθ, so that P* = Φ P_θ Φᵀ
+    basis: lx.AbstractLinearOperator | None = None
+    coefficient_cov: lx.AbstractLinearOperator | None = None
+
+    # x⁽ᵉ⁾ = x* + (P*)^{1/2} ξ⁽ᵉ⁾, ξ⁽ᵉ⁾ ~ 𝒩(0, I)
+    def sample(self, key: PRNGKeyArray, n_samples: int) -> Float[Array, "n_samples ..."]: ...
 ```
 
-The covariance is an `AbstractLinearOperator` and is never materialised. The mat-vec $P^* v$, the diagonal $\mathrm{diag}(P^*)$ and posterior samples $x^* + (P^*)^{1/2} \xi$ are computed on demand without building the dense $P^*$.
+The covariance is an `AbstractLinearOperator` and is never materialised. The mat-vec $P^* v$ and the diagonal $\mathrm{diag}(P^*)$ are computed on demand without building the dense $P^*$.
+
+`posterior.sample(key, n_samples)` draws $x^{(e)} = x^* + (P^*)^{1/2} \xi^{(e)}$ with $\xi^{(e)} \sim \mathcal{N}(0, I)$. The square root comes from `gaussx.sqrt`, which is closed form for structured operators and a dense eigendecomposition otherwise. When the posterior came from a linear control (a `LinearParameterization`, `ReducedBasisFourDVar(basis=...)` or `IncrementalFourDVar`'s whitened control), it draws in coefficient space instead, $x^{(e)} = x^* + \Phi P_\theta^{1/2} \xi^{(e)}$, which only factors the small $P_\theta$. A posterior that already holds `samples` returns a random subset of them.
 
 `OptimalInterpolation` and `IncrementalFourDVar` produce posteriors as
 part of the analysis call (closed-form / GN-Hessian reuse). The other
