@@ -410,3 +410,89 @@ def test_jac_is_validated_and_serialised():
     assert vdx.IncrementalConfig.from_config(config.get_config()).jac == "bwd"
     with pytest.raises(vdx.ConfigurationError, match="jac"):
         vdx.IncrementalConfig(jac="central")
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Reduced incremental 4D-Var: a rectangular square root G (#155)
+# ──────────────────────────────────────────────────────────────────────
+
+N_FEATURES = 5
+
+
+def _features():
+    """G, (N, R): the first R Fourier modes of the ring."""
+    sites = np.arange(N_STATE)
+    modes = [np.ones(N_STATE)]
+    for k in range(1, 3):
+        modes += [np.cos(2 * np.pi * k * sites / N_STATE)]
+        modes += [np.sin(2 * np.pi * k * sites / N_STATE)]
+    return jnp.asarray(np.stack(modes, axis=1)[:, :N_FEATURES])
+
+
+def _reduced_model(sqrt_op, B_op, R_op):
+    return vdx.IncrementalFourDVar(
+        forward=Shift(),
+        obs_op=vdx.MaskedIdentity(),
+        prior_mean=jnp.zeros(N_STATE),
+        prior_cov_op=B_op,
+        obs_cov_op=R_op,
+        prior_sqrt_op=sqrt_op,
+        config=vdx.IncrementalConfig(
+            n_outer=1, n_inner=200, cg_atol=1e-13, cg_rtol=1e-13, covariance_tol=1e-13
+        ),
+    )
+
+
+@pytest.mark.slow
+def test_reduced_control_matches_the_span_restricted_analysis(x64):
+    """B = G Gᵀ of rank R: x₀* = G (I + (𝒢G)ᵀ R⁻¹ 𝒢G)⁻¹ (𝒢G)ᵀ R⁻¹ y."""
+    features = _features()
+    prior_cov = features @ features.T
+    batch, B_op, R_op = _problem(prior_cov)
+    model = _reduced_model(lx.MatrixLinearOperator(features), B_op, R_op)
+    analysis = model(batch)[0]
+    transition = 0.9 * np.roll(np.eye(N_STATE), 1, axis=0)
+    mask = np.asarray(batch.mask[0])
+    window = np.concatenate(
+        [
+            np.diag(mask[t]) @ np.linalg.matrix_power(transition, t)
+            for t in range(N_STEPS + 1)
+        ]
+    )
+    reduced = window @ np.asarray(features)
+    y = np.asarray(batch.input[0]).reshape(-1)
+    precision = np.eye(N_FEATURES) + reduced.T @ reduced / 0.25
+    exact = np.asarray(features) @ np.linalg.solve(precision, reduced.T @ y / 0.25)
+    assert _relative_error(analysis, exact) < 1e-10
+    # the posterior is rank R, G P_u Gᵀ
+    posterior = model.posterior(batch)
+    cov = jax.vmap(posterior.cov.mv)(jnp.eye(N_STATE))
+    expected = np.asarray(features) @ np.linalg.inv(precision) @ np.asarray(features).T
+    assert _relative_error(cov, expected) < 1e-8
+    assert int(np.linalg.matrix_rank(np.asarray(cov), tol=1e-8)) == N_FEATURES
+
+
+@pytest.mark.slow
+def test_full_rank_square_root_reproduces_the_cvt_analysis(x64):
+    prior_cov = _smooth_background_cov()
+    batch, B_op, R_op = _problem(prior_cov)
+    cholesky = lx.MatrixLinearOperator(jnp.linalg.cholesky(prior_cov))
+    with_root = _reduced_model(cholesky, B_op, R_op)(batch)
+    default = _reduced_model(None, B_op, R_op)(batch)
+    np.testing.assert_allclose(with_root, default, rtol=1e-10, atol=1e-12)
+    assert _relative_error(with_root[0], _exact_analysis(prior_cov, batch)) < 1e-10
+
+
+@pytest.mark.slow
+def test_reduced_jit_and_vmap_match_a_loop(x64):
+    features = _features()
+    batch, B_op, R_op = _problem(features @ features.T)
+    model = _reduced_model(lx.MatrixLinearOperator(features), B_op, R_op)
+    stacked = vdx.Batch1D(
+        input=jnp.concatenate([batch.input, 2.0 * batch.input]),
+        mask=jnp.concatenate([batch.mask, batch.mask]),
+    )
+    batched = eqx.filter_jit(model)(stacked)
+    for i in range(2):
+        one = jax.tree.map(lambda a, i=i: a[i : i + 1], stacked)
+        np.testing.assert_allclose(batched[i], model(one)[0], rtol=1e-10)

@@ -20,8 +20,9 @@ that is the seam through which all seven plug into
 ## Classical methods
 
 Closed-form and optimisation-based analyses. `OptimalInterpolation` is the
-linear-Gaussian BLUE solution and refuses non-linear observation operators
-at construction; `ThreeDVar` minimises the same cost iteratively and accepts
+linear-Gaussian BLUE solution; given a non-linear observation operator it
+linearises it once at the background and returns that single update.
+`ThreeDVar` minimises the same cost iteratively and finds the MAP for
 non-linear operators; the three 4DVar variants extend the cost over a time
 window. `IncrementalConfig` collects the outer/inner-loop knobs of
 `IncrementalFourDVar`.
