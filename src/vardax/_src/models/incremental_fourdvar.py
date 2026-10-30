@@ -54,6 +54,7 @@ from vardax._src.obs_operators.point import (
     whitened_residual,
     window_steps,
 )
+from vardax._src.utils.covariance import as_covariance
 
 
 class IncrementalConfig(eqx.Module):
@@ -247,8 +248,8 @@ class IncrementalFourDVar(eqx.Module):
         self.forward = forward
         self.obs_op = obs_op
         self.prior_mean = prior_mean
-        self.prior_cov_op = prior_cov_op
-        self.obs_cov_op = obs_cov_op
+        self.prior_cov_op = as_covariance(prior_cov_op)
+        self.obs_cov_op = None if obs_cov_op is None else as_covariance(obs_cov_op)
         self.config = config or IncrementalConfig()
         self.prior_sqrt_op = prior_sqrt_op
         self.forward_adjoint = forward_adjoint
@@ -296,7 +297,7 @@ class IncrementalFourDVar(eqx.Module):
             )
 
         tol = self.config.covariance_tol
-        obs_cov = _as_covariance(require_obs_cov(self.obs_cov_op))
+        obs_cov = require_obs_cov(self.obs_cov_op)
 
         def apply_obs_precision(
             residuals: Float[Array, "T_plus_1 N"],
@@ -400,7 +401,7 @@ class IncrementalFourDVar(eqx.Module):
             def to_state(control: Float[Array, " N"]) -> Float[Array, " N"]:
                 return control
 
-            prior_cov = _as_covariance(self.prior_cov_op)
+            prior_cov = self.prior_cov_op
 
             def apply_prior_precision(direction: Float[Array, " N"]):
                 # B⁻¹ v
@@ -461,7 +462,7 @@ class IncrementalFourDVar(eqx.Module):
         """S with S Sᵀ = B: the given ``prior_sqrt_op``, else ``gaussx.sqrt(B)``."""
         if self.prior_sqrt_op is not None:
             return self.prior_sqrt_op
-        return gaussx.sqrt(_as_covariance(self.prior_cov_op))
+        return gaussx.sqrt(self.prior_cov_op)
 
     def posterior(self, batch: Batch1D, adapter: Any = None) -> Any:
         """Analyse one window and return its [`Posterior`][vardax.Posterior].
@@ -494,13 +495,6 @@ class IncrementalFourDVar(eqx.Module):
             missing and returns the analysed initial state.
         """
         return _IncrementalFourDVarAnalysisStep(self)
-
-
-def _as_covariance(operator: lx.AbstractLinearOperator) -> lx.AbstractLinearOperator:
-    """Tag a covariance operator PSD, so CG accepts e.g. a plain diagonal."""
-    if lx.is_positive_semidefinite(operator):
-        return operator
-    return lx.TaggedLinearOperator(operator, lx.positive_semidefinite_tag)
 
 
 class _IncrementalFourDVarAnalysisStep(eqx.Module):
