@@ -250,7 +250,7 @@ source = ["src/vardax"]
 output = "reports/coverage.xml"
 
 [tool.uv.sources]
-gaussx = { git = "https://github.com/jejjohnson/gaussx", rev = "cd6264c" }
+gaussx = { git = "https://github.com/jejjohnson/gaussx", tag = "v0.6.5" }
 geonnax = { git = "https://github.com/jejjohnson/geonnax", tag = "v0.0.10" }
 pipekit = { git = "https://github.com/jejjohnson/pipekit", subdirectory = "packages/pipekit" }
 pipekit-cycle = { git = "https://github.com/jejjohnson/pipekit", subdirectory = "packages/pipekit-cycle" }

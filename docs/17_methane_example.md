@@ -167,8 +167,7 @@ instrument_variances = [entries[name].obs_cov_op.diagonal for name in instrument
 # σ² = [σᵢ²]ᵢ, in the sorted order of the fused observations
 obs_variance = jnp.concatenate(instrument_variances)  # (Mᵢ,) each → (M,)
 # today (lineax)
-# R = diag(Rᵢ); each Rᵢ is diagonal, and gaussx.BlockDiag lacks the
-# lineax.linearise this model needs
+# R = diag(Rᵢ); each Rᵢ is diagonal, so R is one diagonal
 obs_cov = lx.DiagonalLinearOperator(obs_variance)  # (M, M) op
 
 # (6) Configure incremental 4DVar inversion
