@@ -247,7 +247,7 @@ The fix is to always use `AveragingKernel`. The cost is one extra mat-vec per ob
 
 ## Multi-instrument fusion
 
-For multi-satellite inversions, each instrument gets an `InstrumentSpec` with its own operator, mask and $R_i$. The toy below has a coarse TROPOMI-like instrument behind an averaging kernel and a fine EMIT-like one on the grid. `MultiInstrumentFusion` returns the per-instrument predictions; no shipped cost consumes them yet, so the block sums the terms of the fusion cost [](#eq-fusion-cost) itself, with $\alpha_i = 1$.
+For multi-satellite inversions, each instrument gets an `InstrumentSpec` with its own operator, mask and $R_i$. The toy below has a coarse TROPOMI-like instrument behind an averaging kernel and a fine EMIT-like one on the grid. `MultiInstrumentFusion` returns the per-instrument predictions, and its `cost` sums the terms of the fusion cost [](#eq-fusion-cost), here with $\alpha_i = 1$.
 
 ```{code-block} python
 :caption: Fuses a TROPOMI-like and an EMIT-like instrument and sums the fusion cost [](#eq-fusion-cost) with αᵢ = 1.
@@ -301,32 +301,9 @@ observations = {
     "EMIT": predictions["EMIT"] + 0.1 * emit_noise,
 }
 
-
-# user
-def fused_obs_cost(
-    state: Float[Array, " n"], observations: dict[str, Float[Array, " m"]]
-) -> Float[Array, ""]:
-    total = jnp.zeros(())
-    for instrument_id, spec in fusion.registry.entries.items():
-        # today (vardax)
-        # Hᵢ(x)
-        predicted = spec.obs_op(state)  # (N,) → (Mᵢ,)
-        # yᵢ − Hᵢ(x)
-        residual = observations[instrument_id] - predicted  # (Mᵢ,)
-        # dᵢ = mᵢ ⊙ (yᵢ − Hᵢ(x))
-        innovation = spec.mask * residual  # (Mᵢ,)
-        # Rᵢ⁻¹ dᵢ, a solve rather than an inverse
-        solution = lx.linear_solve(spec.obs_cov_op, innovation)
-        whitened = solution.value  # (Mᵢ,)
-        # dᵢᵀ Rᵢ⁻¹ dᵢ
-        quadratic = einx.dot("m, m ->", innovation, whitened)  # → ()
-        # J_obs = Σᵢ ½ dᵢᵀ Rᵢ⁻¹ dᵢ
-        total = total + 0.5 * quadratic
-    return total  # → ()
-
-
-# J_obs at the truth
-obs_cost = fused_obs_cost(state, observations)  # → ()
+# today (vardax)
+# J_obs = Σᵢ αᵢ ½ ‖mᵢ ⊙ (yᵢ − Hᵢ(x))‖²_{Rᵢ⁻¹}, with αᵢ = 1 at the truth
+obs_cost = fusion.cost(state, observations)  # → ()
 print({name: value.shape for name, value in predictions.items()})
 print(f"J_obs at the truth {float(obs_cost):.2f}")
 ```
