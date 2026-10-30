@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.2.1](https://github.com/jejjohnson/vardax/compare/v0.2.0...v0.2.1) (2026-10-30)
+
+
+### Features
+
+* add Rodgers optimal estimation with its posterior, averaging kernel and information content ([#187](https://github.com/jejjohnson/vardax/issues/187)) ([0deaaf8](https://github.com/jejjohnson/vardax/commit/0deaaf84b926268a6f62682e15352526be97efb6))
+* **models:** add a reverse-mode-only Gauss–Newton to IncrementalFourDVar ([#181](https://github.com/jejjohnson/vardax/issues/181)) ([0aab1c1](https://github.com/jejjohnson/vardax/commit/0aab1c1f6f11ff4adad506f8e615347e72841e94)), closes [#162](https://github.com/jejjohnson/vardax/issues/162)
+* **models:** add KalmanSmoother, a linear-Gaussian filter and RTS smoother over irregular times ([#180](https://github.com/jejjohnson/vardax/issues/180)) ([a8fd36b](https://github.com/jejjohnson/vardax/commit/a8fd36bee36dd5f5dc852e857c36430f0954dd43)), closes [#164](https://github.com/jejjohnson/vardax/issues/164)
+* **models:** add the state-space (information) form to OptimalInterpolation ([#179](https://github.com/jejjohnson/vardax/issues/179)) ([2f81e10](https://github.com/jejjohnson/vardax/commit/2f81e10093678f5f05dffdd502d1ceebd79f871e)), closes [#163](https://github.com/jejjohnson/vardax/issues/163)
+* **models:** reduced incremental 4D-Var through a rectangular control-variable transform ([#183](https://github.com/jejjohnson/vardax/issues/183)) ([4c6249e](https://github.com/jejjohnson/vardax/commit/4c6249e2c07112856c4a9c1d77e73ab5cd140039)), closes [#155](https://github.com/jejjohnson/vardax/issues/155)
+* **models:** reduced model error in weak-constraint 4D-Var ([#184](https://github.com/jejjohnson/vardax/issues/184)) ([3bd830b](https://github.com/jejjohnson/vardax/commit/3bd830b0b019fd8577fc919c73fe45aa2c272413)), closes [#156](https://github.com/jejjohnson/vardax/issues/156)
+* **obs:** make MultiInstrumentFusion.weights weight the fused cost and the flattened R ([#176](https://github.com/jejjohnson/vardax/issues/176)) ([b2920c3](https://github.com/jejjohnson/vardax/commit/b2920c33cf2438fad3c5bff884e0abb438a6e95b)), closes [#145](https://github.com/jejjohnson/vardax/issues/145)
+* **posterior:** draw samples from a Laplace or Gauss–Newton posterior ([#178](https://github.com/jejjohnson/vardax/issues/178)) ([ee11d85](https://github.com/jejjohnson/vardax/commit/ee11d85a42718219ba3a430ddc4d670608f14bf0)), closes [#165](https://github.com/jejjohnson/vardax/issues/165)
+
+
+### Bug Fixes
+
+* **deps:** pin gaussx to v0.6.5 so its structured covariances work in every model ([#166](https://github.com/jejjohnson/vardax/issues/166)) ([dbb7d44](https://github.com/jejjohnson/vardax/commit/dbb7d44cc74f0d7458aabaee45a28364ca282377)), closes [#141](https://github.com/jejjohnson/vardax/issues/141)
+* **models:** compute the OptimalInterpolation posterior in observation space ([#171](https://github.com/jejjohnson/vardax/issues/171)) ([6cf5690](https://github.com/jejjohnson/vardax/commit/6cf5690fdd460e45dda5c4cce9bf7e6be67c972f)), closes [#143](https://github.com/jejjohnson/vardax/issues/143)
+* **models:** ignore NaN in masked-out cells instead of returning the background ([#174](https://github.com/jejjohnson/vardax/issues/174)) ([102961d](https://github.com/jejjohnson/vardax/commit/102961d885f843cede3c91c6726ddc564a2a4a56)), closes [#147](https://github.com/jejjohnson/vardax/issues/147)
+* **models:** make the 4D-Var analysis steps analyse around the cycle's forecast ([#186](https://github.com/jejjohnson/vardax/issues/186)) ([0897786](https://github.com/jejjohnson/vardax/commit/089778660658de077a94bfb21cd82f3af07ae6db)), closes [#79](https://github.com/jejjohnson/vardax/issues/79)
+* **models:** tag covariance operators PSD at construction so the default CG accepts σ² I ([#167](https://github.com/jejjohnson/vardax/issues/167)) ([7498c66](https://github.com/jejjohnson/vardax/commit/7498c669e3db39a90d52162fecf9df8cbece072c)), closes [#146](https://github.com/jejjohnson/vardax/issues/146)
+* **posterior:** accept the (S, N) batches of (N,) states that OptimalInterpolation analyses ([#170](https://github.com/jejjohnson/vardax/issues/170)) ([0a48fd9](https://github.com/jejjohnson/vardax/commit/0a48fd935597adcdf864a1360bb2668ec963e25a)), closes [#142](https://github.com/jejjohnson/vardax/issues/142)
+* **posterior:** build the cvt IncrementalFourDVar posterior over the whitened control ([#172](https://github.com/jejjohnson/vardax/issues/172)) ([c69e9c0](https://github.com/jejjohnson/vardax/commit/c69e9c0ff90dcb507c70d3bd920325ee8598b62c)), closes [#161](https://github.com/jejjohnson/vardax/issues/161)
+* **priors:** differentiate DynTrajectory forward-model steps with DirectAdjoint ([#177](https://github.com/jejjohnson/vardax/issues/177)) ([1708d63](https://github.com/jejjohnson/vardax/commit/1708d6304e690c425cd1f1d6893a6b8803c65a9d)), closes [#148](https://github.com/jejjohnson/vardax/issues/148)
+
 ## [0.2.0](https://github.com/jejjohnson/vardax/compare/v0.1.13...v0.2.0) (2026-10-28)
 
 
