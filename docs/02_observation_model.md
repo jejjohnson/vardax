@@ -435,7 +435,7 @@ parameterisations:
 
 - **Diagonal**: `lineax.DiagonalLinearOperator(variances)`. The default for heteroscedastic retrievals (per-pixel σ from L2 metadata).
 - **Block-diagonal**: `gaussx.BlockDiag(*instrument_covs)`. Per-instrument diagonals when fusing.
-- **Structured**: `gaussx.ImplicitKernelOperator(matern, coords)` if observation errors are spatially correlated (rare, but it matters for high-resolution imaging spectrometers).
+- **Structured**: `kernellib.ImplicitKernelOperator(matern, coords)` if observation errors are spatially correlated (rare, but it matters for high-resolution imaging spectrometers).
 
 The models' solves reject gaussx operators until they are wrapped as a `lx.FunctionLinearOperator`, as [chapter 4](04_oi_blue.md#why-the-matrices-are-never-materialised) does for $B$.
 

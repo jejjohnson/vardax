@@ -345,7 +345,7 @@ truth_l96 = batch_l96.target[0]  # (S, W, K) → (W, K)
 This is the realistic operational scenario: structured spatial prior, incremental solver ([chapter 8](08_incremental_4dvar.md)), AK-style or masked observations.
 
 The Matérn-3/2 covariance on the periodic grid depends only on the ring distance $d_{ij} = \min(|i - j|, K - |i - j|)$, so it is circulant; here it is a dense $40 \times 40$ matrix.
-`gaussx.Toeplitz` would store it by its first column, but it does not implement `lineax.linearise`, which `IncrementalFourDVar` needs.
+`gaussx.Toeplitz` would store it by its first column; the dense matrix keeps the example short.
 The forward model is one RK4 step written on the page, which forward- and reverse-mode autodiff both see through, as the Gauss-Newton loop needs.
 The background is the true initial state plus noise drawn from the same scale as $B$.
 

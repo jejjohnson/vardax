@@ -53,9 +53,9 @@ vardax always solves the observation-space system $(H B H^\top + R) v = y - H x_
 ## Why the matrices are never materialised
 
 Both forms require solving a linear system, not inverting a matrix
-explicitly. `gaussx` supplies structured factorisations:
+explicitly. `kernellib` and `gaussx` supply structured operators:
 
-- $B$ as a Matérn covariance: `gaussx.ImplicitKernelOperator(matern, coords)` applies it matrix-free with $O(N)$ memory, and `gaussx.Kronecker` exploits separable grids. gaussx operators do not register `lineax.linearise`, so wrap one as `lx.FunctionLinearOperator(op.mv, structure, lx.positive_semidefinite_tag)` before handing it to a vardax model.
+- $B$ as a Matérn covariance: `kernellib.ImplicitKernelOperator(matern, coords)` applies it matrix-free with $O(N)$ memory, and `gaussx.Kronecker` exploits separable grids. Both can be passed to a vardax model directly when the state is a single $(N,)$ vector; for a $(T, N)$ state, wrap the mat-vec as `lx.FunctionLinearOperator(apply, structure, lx.positive_semidefinite_tag)`, as the example below does.
 - $R$ as `lineax.DiagonalLinearOperator(variances)`, which is diagonal and trivial.
 - $H B H^\top$ is never materialised; only $v \mapsto H B H^\top v$ is needed, which is one mat-vec each with $H^\top$, $B$ and $H$.
 
@@ -82,9 +82,9 @@ The example is a toy along-track problem: $N = 20$ cells every 10 km on one trac
 :caption: Computes the OI analysis [](#eq-blue-mean) and posterior covariance [](#eq-blue-cov) of a toy along-track problem and reads two marginal standard deviations off P*.
 :label: code-oi-blue-along-track
 import einx
-import gaussx as gx
 import jax
 import jax.numpy as jnp
+import kernellib as kl
 import lineax as lx
 import vardax as vdx
 from jaxtyping import Array, Float
@@ -128,11 +128,11 @@ coords = einx.id("n -> n 1", positions)  # (N,) → (N, D)
 # rows of I at the sampled cells
 along_track = jnp.eye(20)[jnp.array([1, 5, 9, 13, 17])]  # (M, N)
 
-# today (gaussx)
+# today (kernellib)
 # B = [k(sᵢ, sⱼ)]ᵢⱼ, never materialised
-kernel_op = gx.ImplicitKernelOperator(matern32, coords)  # (N, N) op
+kernel_op = kl.ImplicitKernelOperator(matern32, coords)  # (N, N) op
 # today (lineax)
-# B on (T, N) states; wrapped because gaussx operators do not register lx.linearise
+# B on (T, N) states, applied at each time
 prior_cov = lx.FunctionLinearOperator(  # (T N, T N) PSD op
     apply_prior_cov, state_structure, lx.positive_semidefinite_tag
 )

@@ -149,7 +149,7 @@ The model error covariance $Q$ is a separate input. Three common
 parameterisations:
 
 - **Diagonal**: `lineax.DiagonalLinearOperator(variances)`, white Gaussian model noise. Simple but rarely realistic.
-- **Matérn spatial**: `gaussx.ImplicitKernelOperator(matern, coords)` with a Matérn kernel function, for spatially correlated model error.
+- **Matérn spatial**: `kernellib.ImplicitKernelOperator(matern, coords)` with a Matérn kernel function, for spatially correlated model error.
 - **Markovian time-correlated**: Ornstein-Uhlenbeck $Q_t$ with correlation timescale $\tau$. The error decorrelates over $\tau$ steps, which is physically motivated.
 
 The choice of $Q$ is the single most important tuning choice in weak-constraint 4DVar. Too tight, and the result reverts to strong; too loose, and the observations dominate the analysis to the exclusion of the dynamics.
