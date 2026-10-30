@@ -87,6 +87,7 @@ from vardax._src.model import (
 from vardax._src.models import (
     IncrementalConfig,
     IncrementalFourDVar,
+    KalmanSmoother,
     OptimalInterpolation,
     ReducedBasisFourDVar,
     SpaceTimeFieldResult,
@@ -296,6 +297,7 @@ __all__ = [
     # Classical DA methods (Decision D14)
     "IncrementalConfig",
     "IncrementalFourDVar",
+    "KalmanSmoother",
     "OptimalInterpolation",
     "ReducedBasisFourDVar",
     "SpaceTimeFieldResult",
