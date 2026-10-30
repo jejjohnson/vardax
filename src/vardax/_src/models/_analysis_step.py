@@ -1,11 +1,12 @@
-"""Shared plumbing for the single-time ``AnalysisStep`` adapters (OI, 3D-Var).
+"""Shared plumbing for the ``AnalysisStep`` adapters.
 
 ``pipekit_cycle.AnalysisStep`` hands an adapter the forecast $x_b$, the
 observations $y$, the observation operator $H$ and the observation-error
-covariance $R$. ``OptimalInterpolation`` and ``ThreeDVar`` carry their own
-background, $H$ and $R$ for standalone use; their adapters analyse around
-the forecast instead, with the $H$ and $R$ the cycle passes. The helper
-here maps the cycle's arguments onto the models' representation.
+covariance $R$. The models carry their own background, $H$ and $R$ for
+standalone use; their adapters analyse around the forecast instead, with
+the $H$ and $R$ the cycle passes. ``analyse_forecast`` does this for the
+single-time models (OI, 3D-Var) and ``analyse_window`` for the 4D-Var
+models, which see a window of observations.
 """
 
 from __future__ import annotations
@@ -13,13 +14,17 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
+import einx
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 from jaxtyping import Array, Float
 import lineax as lx
 
+from vardax._src._types import Batch1D
 from vardax._src.errors import InputTypeError, ShapeError
 from vardax._src.obs_operators.point import require_obs_cov
+from vardax._src.utils.covariance import as_covariance
 
 #: ``analyse_one(x_b, y, mask, obs_op, obs_cov_op)`` for one sample.
 AnalyseOne = Callable[
@@ -148,3 +153,79 @@ def _resolve_obs_err_cov(
     return lx.TaggedLinearOperator(
         lx.DiagonalLinearOperator(variances), lx.positive_semidefinite_tag
     )
+
+
+def analyse_window(
+    model: Any,
+    end_of_window: Callable[[Any, Any, int], Float[Array, " N"]],
+    *,
+    forecast: Any,
+    obs: Any,
+    obs_op: Any,
+    obs_err_cov: Any,
+) -> Float[Array, " N"]:
+    r"""Cycled 4D-Var: analyse a window around the forecast, return its end state.
+
+    ``SmootherCycle`` passes length-$W$ lists, the forecast and the
+    observations at each step of the window; ``DACycle`` passes one state
+    and one observation, a one-time window.
+
+    Algorithm:
+        1. Take the forecast at the start of the window as the background
+           $x_b$, and stack the observations to ``(1, W, M)``; ``NaN``
+           entries are missing.
+        2. Swap $x_b$, and the cycle's $H$ and $R$ when given, into the
+           model (one $H$ and $R$ at every time of the window).
+        3. Analyse, then propagate the analysis to the end of the window,
+           the state the cycle steps forward from.
+
+    Args:
+        model: A 4D-Var model with ``prior_mean``, ``obs_op`` and
+            ``obs_cov_op``.
+        end_of_window: ``(model, analysis, n_steps) ↦`` the analysed state
+            ``n_steps`` steps after the window start.
+        forecast: The forecasts of the window (a list), or one state.
+        obs: The observations of the window (a list), or one sample.
+        obs_op: $H$ from the cycle, or ``None`` for the model's.
+        obs_err_cov: $R$ from the cycle, as in ``analyse_forecast``, or
+            ``None`` for the model's.
+
+    Returns:
+        The analysed state at the end of the window.
+    """
+    if isinstance(obs, (list, tuple)):
+        obs_stack = jnp.stack([jnp.asarray(sample) for sample in obs])
+    else:
+        obs_stack = einx.id("m... -> 1 m...", jnp.asarray(obs))
+    n_times = obs_stack.shape[0]
+    background = jnp.asarray(
+        forecast[0] if isinstance(forecast, (list, tuple)) else forecast
+    )
+    finite = jnp.isfinite(obs_stack)
+    mask = finite.astype(obs_stack.dtype)
+    observed = jnp.where(finite, obs_stack, jnp.zeros((), obs_stack.dtype))
+    batch = Batch1D(
+        input=einx.id("t m... -> 1 t m...", observed),
+        mask=einx.id("t m... -> 1 t m...", mask),
+        target=None,
+    )
+
+    swapped = eqx.tree_at(lambda m: m.prior_mean, model, background)
+    if obs_op is not None:
+        swapped = eqx.tree_at(lambda m: m.obs_op, swapped, obs_op)
+    if obs_err_cov is not None:
+        obs_cov = as_covariance(
+            _resolve_obs_err_cov(
+                obs_err_cov, None, obs_stack.shape[1:], obs_stack.dtype
+            )
+        )
+        swapped = eqx.tree_at(
+            lambda m: m.obs_cov_op, swapped, obs_cov, is_leaf=lambda x: x is None
+        )
+    analysis = swapped(batch)
+    return end_of_window(swapped, analysis, n_times - 1)
+
+
+def rollout_end(model: Any, analysis: Array, n_steps: int) -> Float[Array, " N"]:
+    """The analysed initial state of one window, stepped ``n_steps`` forward."""
+    return model._rollout(analysis[0], n_steps)[-1]

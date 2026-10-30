@@ -41,6 +41,7 @@ import lineax as lx
 
 from vardax._src._types import Batch1D, PointObsBatch
 from vardax._src.errors import ConfigurationError
+from vardax._src.models._analysis_step import analyse_window, rollout_end
 from vardax._src.models._observations import fill_gaps
 from vardax._src.models._rollout import (
     checkpoint_every,
@@ -561,7 +562,12 @@ class IncrementalFourDVar(eqx.Module):
 
 
 class _IncrementalFourDVarAnalysisStep(eqx.Module):
-    """``pipekit_cycle.AnalysisStep`` adapter for ``IncrementalFourDVar``."""
+    """``pipekit_cycle.AnalysisStep`` adapter for ``IncrementalFourDVar``.
+
+    Analyses the window around the cycle's forecast, with the cycle's $H$
+    and $R$ when given, and returns the analysed state at the end of the
+    window, the state the cycle steps forward from (``analyse_window``).
+    """
 
     model: IncrementalFourDVar
 
@@ -573,7 +579,11 @@ class _IncrementalFourDVarAnalysisStep(eqx.Module):
         obs_op: Any,
         obs_err_cov: Any,
     ) -> Float[Array, ...]:
-        mask = jnp.where(jnp.isfinite(obs), 1.0, 0.0)
-        obs_clean = jnp.nan_to_num(obs)
-        batch = Batch1D(input=obs_clean, mask=mask, target=None)
-        return self.model(batch)
+        return analyse_window(
+            self.model,
+            rollout_end,
+            forecast=forecast,
+            obs=obs,
+            obs_op=obs_op,
+            obs_err_cov=obs_err_cov,
+        )

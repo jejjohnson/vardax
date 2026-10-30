@@ -36,6 +36,7 @@ from vardax._src._types import Batch1D, PointObsBatch
 from vardax._src.basis.model_error import ModelErrorBasis
 from vardax._src.errors import ConfigurationError
 from vardax._src.minimisers import minimise
+from vardax._src.models._analysis_step import analyse_window
 from vardax._src.models._observations import fill_gaps
 from vardax._src.models._rollout import checkpoint_every, resolve_forward, rollout
 from vardax._src.obs_operators.point import (
@@ -303,11 +304,10 @@ class WeakFourDVar(eqx.Module):
         # T_plus_1 timesteps in the batch ⇒ T model-error steps.
         n_times = batch.input.shape[1]
         n_steps = n_times - 1
-        state_dim = batch.input.shape[2]
 
         def _one(
-            window_obs: Float[Array, "T_plus_1 N"],
-            window_mask: Float[Array, "T_plus_1 N"],
+            window_obs: Float[Array, "T_plus_1 M"],
+            window_mask: Float[Array, "T_plus_1 M"],
         ):
             def traj_obs_cost(
                 trajectory: Float[Array, "T_plus_1 N"],
@@ -519,11 +519,23 @@ def _accepts_mask(obs_op: Any) -> bool:
         return False
 
 
+def _weak_rollout_end(
+    model: WeakFourDVar, analysis: tuple[Array, Array], n_steps: int
+) -> Float[Array, " N"]:
+    """xₜ = M(xₜ₋₁) + ηₜ from the analysed (x₀, η) of one window, at its end."""
+    initial_states, errors = analysis
+    basis = model.model_err_basis
+    # η, or χ W Φᵀ for a reduced model error
+    model_errors = errors[0] if basis is None else basis.pattern(errors[0])
+    return model._rollout_with_error(initial_states[0], model_errors)[n_steps]
+
+
 class _WeakFourDVarAnalysisStep(eqx.Module):
     """``pipekit_cycle.AnalysisStep`` adapter for ``WeakFourDVar``.
 
-    Returns the analysis initial state only (the model-error
-    trajectory is also available via direct ``model(batch)`` calls).
+    Analyses the window around the cycle's forecast (``analyse_window``)
+    and returns the state at its end, rolled out with the analysed model
+    errors; the model errors themselves come from a direct ``model(batch)``.
     """
 
     model: WeakFourDVar
@@ -536,8 +548,11 @@ class _WeakFourDVarAnalysisStep(eqx.Module):
         obs_op: Any,
         obs_err_cov: Any,
     ) -> Float[Array, ...]:
-        mask = jnp.where(jnp.isfinite(obs), 1.0, 0.0)
-        obs_clean = jnp.nan_to_num(obs)
-        batch = Batch1D(input=obs_clean, mask=mask, target=None)
-        analysis, _ = self.model(batch)
-        return analysis
+        return analyse_window(
+            self.model,
+            _weak_rollout_end,
+            forecast=forecast,
+            obs=obs,
+            obs_op=obs_op,
+            obs_err_cov=obs_err_cov,
+        )

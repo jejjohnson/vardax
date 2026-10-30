@@ -47,7 +47,6 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-import einx
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -58,6 +57,7 @@ import optimistix as optx
 from vardax._src._types import Batch1D, PointObsBatch
 from vardax._src.errors import ConfigurationError
 from vardax._src.minimisers import minimise
+from vardax._src.models._analysis_step import analyse_window, rollout_end
 from vardax._src.models._observations import fill_gaps
 from vardax._src.models._rollout import checkpoint_every, resolve_forward, rollout
 from vardax._src.obs_operators.point import (
@@ -295,8 +295,8 @@ class ReducedBasisFourDVar(eqx.Module):
         n_steps = batch.input.shape[1] - 1
 
         def _one(
-            window_obs: Float[Array, "T_plus_1 N"],
-            window_mask: Float[Array, "T_plus_1 N"],
+            window_obs: Float[Array, "T_plus_1 M"],
+            window_mask: Float[Array, "T_plus_1 M"],
         ) -> Float[Array, " N"]:
             def _obs_cost(
                 trajectory: Float[Array, "T_plus_1 N"],
@@ -478,37 +478,11 @@ class _ReducedBasisFourDVarAnalysisStep(eqx.Module):
         obs_op: Any,
         obs_err_cov: Any,
     ) -> Float[Array, ...]:
-        if isinstance(obs, list):
-            obs_stack = jnp.stack([jnp.asarray(obs_sample) for obs_sample in obs])
-            window = len(obs)
-        else:
-            obs_stack = einx.id("s... -> 1 s...", jnp.asarray(obs))
-            window = 1
-        mask = jnp.where(jnp.isfinite(obs_stack), 1.0, 0.0)
-        obs_clean = jnp.nan_to_num(obs_stack)
-        # one sample: add the batch axis
-        obs_batch = einx.id("s... -> 1 s...", obs_clean)
-        mask_batch = einx.id("s... -> 1 s...", mask)
-        batch = Batch1D(input=obs_batch, mask=mask_batch, target=None)
-
-        background = (
-            jnp.asarray(forecast[0])
-            if isinstance(forecast, list)
-            else jnp.asarray(forecast)
+        return analyse_window(
+            self.model,
+            rollout_end,
+            forecast=forecast,
+            obs=obs,
+            obs_op=obs_op,
+            obs_err_cov=obs_err_cov,
         )
-        swapped = eqx.tree_at(lambda model: model.prior_mean, self.model, background)
-        if obs_op is not None:
-            swapped = eqx.tree_at(lambda model: model.obs_op, swapped, obs_op)
-        if obs_err_cov is not None:
-            swapped = eqx.tree_at(lambda model: model.obs_cov_op, swapped, obs_err_cov)
-
-        analysed = swapped(batch)[0]
-        if window > 1:
-            dt = swapped.forward.dt
-
-            def _step(state, _):
-                return swapped.forward.step(state, dt), None
-
-            final, _ = jax.lax.scan(_step, analysed, None, length=window - 1)
-            return final
-        return analysed
