@@ -33,6 +33,7 @@ import lineax as lx
 
 from vardax._src._types import Batch1D
 from vardax._src.models._analysis_step import analyse_forecast
+from vardax._src.models._observations import fill_gaps
 from vardax._src.posterior.container import Posterior
 from vardax._src.utils.covariance import as_covariance
 
@@ -139,7 +140,7 @@ class OptimalInterpolation(eqx.Module):
                 self.prior_mean, sample_obs, sample_mask, self.obs_op, self.obs_cov_op
             )
 
-        return jax.vmap(_one)(batch.input, batch.mask)
+        return jax.vmap(_one)(fill_gaps(batch.input, batch.mask), batch.mask)
 
     def _analyse(
         self,

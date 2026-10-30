@@ -40,6 +40,7 @@ from jaxtyping import Array, Float
 import lineax as lx
 
 from vardax._src._types import Batch1D, PointObsBatch
+from vardax._src.models._observations import fill_gaps
 from vardax._src.models._rollout import (
     checkpoint_every,
     observed_trajectory,
@@ -325,7 +326,7 @@ class IncrementalFourDVar(eqx.Module):
 
             return self._gauss_newton(residual, apply_obs_precision)
 
-        return jax.vmap(analyse_one)(batch.input, batch.mask)
+        return jax.vmap(analyse_one)(fill_gaps(batch.input, batch.mask), batch.mask)
 
     def _analyse_points(self, batch: PointObsBatch, n_steps: int) -> Float[Array, " N"]:
         r"""GN outer + CG inner on a point batch.

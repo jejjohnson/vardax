@@ -34,6 +34,7 @@ from vardax._src._types import Batch1D, PointObsBatch
 from vardax._src.errors import InputTypeError
 from vardax._src.minimisers import MinimiseResult, minimise, minimise_with_result
 from vardax._src.models._analysis_step import analyse_forecast
+from vardax._src.models._observations import fill_gaps
 from vardax._src.obs_operators.point import (
     FieldPointObs,
     check_point_obs_cov,
@@ -226,7 +227,7 @@ class ThreeDVar(eqx.Module):
                 self.prior_mean, sample_obs, sample_mask, self.obs_op, obs_cov_op
             )
 
-        return jax.vmap(_one)(batch.input, batch.mask)
+        return jax.vmap(_one)(fill_gaps(batch.input, batch.mask), batch.mask)
 
     def analyse(
         self, batch: Batch1D | PointObsBatch
@@ -266,7 +267,7 @@ class ThreeDVar(eqx.Module):
                 with_result=True,
             )
 
-        return jax.vmap(_one)(batch.input, batch.mask)
+        return jax.vmap(_one)(fill_gaps(batch.input, batch.mask), batch.mask)
 
     def _analyse(
         self,
