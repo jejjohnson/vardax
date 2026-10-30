@@ -77,6 +77,22 @@ class TestLaplaceCovariance:
         cov_v = post.cov.mv(v)
         assert jnp.allclose(cov_v, v / 2, atol=1e-2)
 
+    def test_sample_batch_of_unbatched_states(self):
+        """``(S, N)`` batches of ``(N,)`` states, as ``__call__`` accepts (#142)."""
+        eye = lx.IdentityLinearOperator(jax.ShapeDtypeStruct((4,), jnp.float32))
+        oi = OptimalInterpolation(
+            obs_op=MaskedIdentity(),
+            prior_mean=jnp.zeros(4),
+            prior_cov_op=eye,
+            obs_cov_op=eye,
+        )
+        mask = jnp.array([[1.0, 1.0, 1.0, 0.0]])
+        post = oi.posterior(Batch1D(input=jnp.ones((1, 4)), mask=mask))
+        assert post.mean.shape == (4,)
+        # P* = (I + M)⁻¹: 1/2 where observed, 1 at the missing cell
+        expected = jnp.array([0.5, 0.5, 0.5, 1.0])
+        assert jnp.allclose(post.cov.mv(jnp.ones(4)), expected, atol=1e-4)
+
 
 class TestGaussNewtonHessian:
     def test_returns_posterior(self, linear_gaussian_oi):
