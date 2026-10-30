@@ -111,6 +111,7 @@ from vardax._src.obs_operators import (
     interp_obs_from_coords,
     point_obs_cost,
 )
+from vardax._src.optimal_estimation import OEResult, optimal_estimation
 from vardax._src.parameterization import (
     LinearParameterization,
     NeuralFieldParameterization,
@@ -301,6 +302,8 @@ __all__ = [
     "IncrementalFourDVar",
     "KalmanSmoother",
     "OptimalInterpolation",
+    "OEResult",
+    "optimal_estimation",
     "ReducedBasisFourDVar",
     "SpaceTimeFieldResult",
     "SpaceTimeFieldVar",
