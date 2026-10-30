@@ -18,6 +18,8 @@ Classical methods:
   with the control in a reduced basis, control = X with x_0 = x_b + ΦX
 - [`SpaceTimeFieldVar`][vardax.SpaceTimeFieldVar] — neural-field 4DVar,
   control = the weights of one space-time field (no rollout, no B)
+- [`KalmanSmoother`][vardax.KalmanSmoother] — exact linear-Gaussian
+  filter and RTS smoother of a Gauss–Markov control over irregular times
 
 Learned methods live alongside in ``vardax._src.model`` (the
 ``FourDVarNet*`` classes). They satisfy the same protocol contract.
@@ -30,6 +32,7 @@ by ``tests/test_linear_gaussian_agreement.py``.
 from __future__ import annotations
 
 from .incremental_fourdvar import IncrementalConfig, IncrementalFourDVar
+from .kalman_smoother import KalmanSmoother
 from .optimal_interpolation import OptimalInterpolation
 from .reduced_basis_fourdvar import ReducedBasisFourDVar
 from .spacetime_field import SpaceTimeFieldResult, SpaceTimeFieldVar
@@ -40,6 +43,7 @@ from .weak_fourdvar import WeakFourDVar
 __all__ = [
     "IncrementalConfig",
     "IncrementalFourDVar",
+    "KalmanSmoother",
     "OptimalInterpolation",
     "ReducedBasisFourDVar",
     "SpaceTimeFieldResult",

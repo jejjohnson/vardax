@@ -32,6 +32,16 @@ window. `IncrementalConfig` collects the outer/inner-loop knobs of
       show_root_toc_entry: false
       members: [OptimalInterpolation, ThreeDVar, StrongFourDVar, WeakFourDVar, IncrementalFourDVar, IncrementalConfig, ReducedBasisFourDVar]
 
+## Kalman smoother
+
+`KalmanSmoother` is the exact linear-Gaussian filter and Rauch–Tung–Striebel smoother of a control that evolves as a Gauss–Markov process between irregular observation times. It runs gaussx's `kalman_filter` and `rts_smoother`, and `from_sde` discretises a gaussx SDE kernel over the actual gaps.
+
+::: vardax
+    options:
+      show_root_heading: false
+      show_root_toc_entry: false
+      members: [KalmanSmoother]
+
 ## Neural-field 4DVar
 
 [`SpaceTimeFieldVar`](https://jejjohnson.github.io/vardax/neural-field-4dvar/) fits one continuous

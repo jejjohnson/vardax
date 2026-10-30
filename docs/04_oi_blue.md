@@ -324,14 +324,38 @@ $$\begin{aligned} \text{forecast: } & x^f_t = M_t x^a_{t-1}, \text{ and } P^f_t 
 where $x^f_t$ and $P^f_t$ are the forecast mean and covariance, $x^a_t$ and $P^a_t$ the analysis mean and covariance, $M_t$ the linear dynamics and $Q$ the model-error covariance. The analysis lines are [](#eq-blue-mean) and the first form of [](#eq-blue-cov).
 
 The analysis step is exactly `OptimalInterpolation(prior_mean=x^f_t,
-prior_cov_op=P^f_t, obs_cov_op=R, obs_op=H)`. The forecast step lives
-in `filterax` (it's about propagating uncertainty through dynamics, not
-about inference per se).
+prior_cov_op=P^f_t, obs_cov_op=R, obs_op=H)`.
 
-This means `filterax`'s Kalman filter can be built compositionally:
-forecast via `filterax`, analysis via vardax `OptimalInterpolation`,
-update covariance via `filterax`. The interfaces line up because both
-libraries respect the same protocols.
+For a linear-Gaussian state-space model, `KalmanSmoother` runs the whole recursion exactly: the filter above, then the Rauch–Tung–Striebel smoother backwards, so each $x_t$ is conditioned on every observation in the window. Its transitions act over the actual gaps between observation times, so irregular times need no regridding, and `KalmanSmoother.from_sde` builds them from a gaussx SDE kernel. The block below smooths an Ornstein–Uhlenbeck process observed at four irregular times, the third missing, and prints the smoothed means.
+
+```{code-block} python
+:caption: Smooths an OU process at irregular times with one missing observation.
+import gaussx as gx
+import jax.numpy as jnp
+import vardax as vdx
+
+# Shapes: T = 4 times; D_x = D_y = 1
+
+times = jnp.array([0.0, 0.5, 2.0, 2.2])  # (T,)
+# today (gaussx)
+# OU process: σ² = 1, ℓ = 1
+sde = gx.MaternSDE(variance=jnp.asarray(1.0), lengthscale=jnp.asarray(1.0), order=0)
+# today (vardax)
+# Fₖ = e^{−Δtₖ/ℓ}, Σ_η,ₖ = σ² (1 − e^{−2Δtₖ/ℓ}) on the gaps Δtₖ = tₖ − tₖ₋₁
+smoother = vdx.KalmanSmoother.from_sde(
+    sde, times, obs_op=jnp.ones((1, 1)), obs_cov=0.1 * jnp.ones((1, 1))
+)
+obs = jnp.array([[[1.0], [0.8], [jnp.nan], [-0.2]]])  # (S, T, D_y)
+mask = jnp.array([[[1.0], [1.0], [0.0], [1.0]]])  # (S, T, D_y)
+# today (vardax)
+# μₖ|T, k = 1 … T
+smoothed = smoother(vdx.Batch1D(input=obs, mask=mask))  # (S, T, D_y) → (S, T, D_x)
+print(" ".join(f"{mean:.2f}" for mean in smoothed[0, :, 0]))
+```
+
+It prints `0.93 0.76 -0.08 -0.17`: the missing third time is filled from its neighbours, pulled towards the close fourth observation.
+
+The forecast step of an ensemble or nonlinear filter lives in `filterax`, which composes with `OptimalInterpolation` for the analysis in the same way.
 
 ## When OI is the right answer
 
