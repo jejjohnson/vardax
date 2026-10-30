@@ -208,6 +208,17 @@ def _masked_tangent(
     return mask_op @ tangent
 
 
+def _whitened_control(model: Any) -> bool:
+    """Whether ``model`` solves over the whitened control x₀ = x_b + S z.
+
+    ``IncrementalFourDVar`` with ``config.cvt`` never applies B⁻¹, so its
+    posterior is built over z as well, where the prior precision is I.
+    """
+    from vardax._src.models.incremental_fourdvar import IncrementalFourDVar
+
+    return isinstance(model, IncrementalFourDVar) and model.config.cvt
+
+
 def _marginalises_masked_obs(model: Any) -> bool:
     """Whether ``model``'s cost weights masked residuals by (R_oo)⁻¹.
 
@@ -270,7 +281,9 @@ def gauss_newton_covariance(
 
         A linear control x = x* + Φθ (``LinearParameterization`` or a
         ``basis=``) replaces B⁻¹ by Q⁻¹ and G' by G'Φ in steps 1–2, and
-        returns P_x = Φ P_θ Φᵀ.
+        returns P_x = Φ P_θ Φᵀ. ``IncrementalFourDVar`` with
+        ``config.cvt`` takes the same path with Φ = S (S Sᵀ = B) and
+        Q = I, unless the adapter is given its own ``prior_cov_op``.
 
     Args:
         analysis: The analysis of one window: x₀*, or (x₀*, η*) for weak
@@ -303,24 +316,30 @@ def gauss_newton_covariance(
     if rollout and hasattr(underlying, "_rollout_with_error"):
         _check_state_space_control(underlying)
     basis = _linear_control(underlying)
-    if basis is None:
-        prior_cov_op = _model_covariance(prior_cov_op, underlying, "prior_cov_op")
-        prior_precision = inverse_operator(prior_cov_op, solver)
-    obs_cov_op = _model_covariance(obs_cov_op, underlying, "obs_cov_op")
-    obs_precision = inverse_operator(obs_cov_op, solver)
+    basis_op = None
     if basis is not None:
         # x = x* + Φθ: the precision lives in θ, with prior Q⁻¹
         basis_op = _basis_operator(basis, analysis)
         coefficient_prior = lx.FunctionLinearOperator(
             basis.prior_inv, basis_op.in_structure(), lx.positive_semidefinite_tag
         )
+    elif prior_cov_op is None and _whitened_control(underlying):
+        # x₀ = x* + S z with S Sᵀ = B, the control the inner loop solves
+        # over: Φ = S and Q = I, so B⁻¹ is never applied
+        basis_op = underlying._prior_sqrt()
+        coefficient_prior = lx.IdentityLinearOperator(basis_op.in_structure())
+    else:
+        prior_cov_op = _model_covariance(prior_cov_op, underlying, "prior_cov_op")
+        prior_precision = inverse_operator(prior_cov_op, solver)
+    obs_cov_op = _model_covariance(obs_cov_op, underlying, "obs_cov_op")
+    obs_precision = inverse_operator(obs_cov_op, solver)
 
     # --- 1. single time ---
     if not rollout:
         # H' at the analysis; the cost observes M ⊙ H(x), so the tangent is
         # M H' (missing entries carry no information)
         tangent = _masked_tangent(underlying.obs_op.linearize(analysis), batch)
-        if basis is None:
+        if basis_op is None:
             # P*⁻¹ = H'ᵀ R⁻¹ H' + B⁻¹
             precision = tangent.transpose() @ obs_precision @ tangent + prior_precision
             tagged = lx.TaggedLinearOperator(precision, lx.positive_semidefinite_tag)
@@ -372,7 +391,7 @@ def gauss_newton_covariance(
 
     # --- 2. strong 4DVar ---
     observed = observed_trajectory(underlying, mask)
-    if basis is not None:
+    if basis_op is not None:
         # G'Φ at x₀*: linearise θ ↦ G(x₀* + Φθ) at θ = 0
         def observed_coefficients(theta: Array) -> Array:
             return observed(analysis + basis_op.mv(theta))
