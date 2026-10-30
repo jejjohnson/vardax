@@ -51,6 +51,11 @@ def test_linear_gaussian_is_the_closed_form(x64, dense_noise):
     np.testing.assert_allclose(result.S_hat.as_matrix(), S_hat, rtol=1e-12)
     np.testing.assert_allclose(result.averaging_kernel, A, rtol=1e-12, atol=1e-14)
     np.testing.assert_allclose(result.dofs, jnp.trace(A), rtol=1e-12)
+    # S_m = G S_ε Gᵀ, the R to pair with the averaging-kernel operator
+    gain = S_hat @ K.T @ S_e_inv
+    np.testing.assert_allclose(
+        result.retrieval_noise_cov.as_matrix(), gain @ S_e @ gain.T, rtol=1e-10
+    )
     information = 0.5 * jnp.linalg.slogdet(S_a @ jnp.linalg.inv(S_hat))[1]
     np.testing.assert_allclose(result.information, information, rtol=1e-12)
     assert bool(result.converged)
@@ -127,3 +132,14 @@ def test_as_observation_operator_is_the_affine_retrieval(x64):
     state = jnp.ones(N_STATE)
     expected = x_a + result.averaging_kernel @ (state - x_a)
     np.testing.assert_allclose(obs_op(state), expected, rtol=1e-12)
+
+
+def test_retrieval_noise_is_the_assimilation_r(x64):
+    """Scalar K = S_a = S_ε = 1: A = ½, Ŝ = ½, and the retrieval noise is ¼."""
+    one = lx.DiagonalLinearOperator(jnp.ones(1))
+    result = vdx.optimal_estimation(lambda x: x, jnp.ones(1), jnp.zeros(1), one, one)
+    np.testing.assert_allclose(result.averaging_kernel, [[0.5]], rtol=1e-10)
+    np.testing.assert_allclose(result.S_hat.as_matrix(), [[0.5]], rtol=1e-10)
+    np.testing.assert_allclose(
+        result.retrieval_noise_cov.as_matrix(), [[0.25]], rtol=1e-10
+    )

@@ -35,7 +35,7 @@ window. `IncrementalConfig` collects the outer/inner-loop knobs of
 
 ## Optimal estimation
 
-`optimal_estimation` is the Rodgers (2000) retrieval of a small state from many measurements: the MAP by Levenberg–Marquardt on the whitened residual, with the retrieval covariance, averaging kernel, degrees of freedom for signal and information content in an `OEResult`. `OEResult.as_observation_operator()` is the retrieval's view of the state, $x_a + A (x - x_a)$, for assimilating it downstream.
+`optimal_estimation` is the Rodgers (2000) retrieval of a small state from many measurements: the MAP by Levenberg–Marquardt on the whitened residual, with the retrieval covariance, averaging kernel, degrees of freedom for signal and information content in an `OEResult`. `OEResult.as_observation_operator()` is the retrieval's view of the state, $x_a + A (x - x_a)$, for assimilating it downstream with `OEResult.retrieval_noise_cov` as its $R$.
 
 ::: vardax
     options:

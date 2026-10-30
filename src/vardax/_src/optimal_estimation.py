@@ -53,6 +53,11 @@ class OEResult(eqx.Module):
             still be unmet (``n_iter`` at ``max_steps``) once the step
             left is this small in posterior units.
         prior_mean: $x_a$, kept for ``as_observation_operator``.
+        retrieval_noise_cov: $S_m = G S_\varepsilon G^\top$ with the gain
+            $G = \hat S K^\top S_\varepsilon^{-1}$, which equals $A \hat S$:
+            the measurement-noise part of the retrieval error. It is the
+            $R$ to pair with ``as_observation_operator``, whose $A$ already
+            carries the smoothing error (Rodgers 2000, §3.2).
     """
 
     x_hat: Float[Array, " n"]
@@ -65,13 +70,17 @@ class OEResult(eqx.Module):
     n_iter: Int[Array, ""]
     converged: Bool[Array, ""]
     prior_mean: Float[Array, " n"]
+    retrieval_noise_cov: lx.AbstractLinearOperator
 
     def as_observation_operator(self) -> CallableObs:
         r"""The retrieval as an observation of the state, $x \mapsto x_a + A (x - x_a)$.
 
         Returns:
             A [`CallableObs`][vardax.CallableObs] to assimilate $\hat x$
-            with $R = \hat S$ (Rodgers 2000, §3.1.3).
+            with $R = S_m$, ``retrieval_noise_cov``. Not $\hat S$: that
+            also counts the smoothing error $(A - I)(x - x_a)$, which the
+            operator models through $A$, so using it would underweight the
+            retrieval (Rodgers 2000, §3.2).
         """
         prior_mean = self.prior_mean
         kernel = self.averaging_kernel
@@ -185,6 +194,9 @@ def optimal_estimation(
     covariance = 0.5 * (covariance + covariance.T)
     # A = Ŝ Kᵀ S_ε⁻¹ K
     averaging_kernel = covariance @ data_precision
+    # S_m = G S_ε Gᵀ = Ŝ Kᵀ S_ε⁻¹ K Ŝ = A Ŝ, with G = Ŝ Kᵀ S_ε⁻¹
+    retrieval_noise = averaging_kernel @ covariance
+    retrieval_noise = 0.5 * (retrieval_noise + retrieval_noise.T)
     # H = ½ ln det(S_a Ŝ⁻¹) = ½ (ln det S_a + ln det Ŝ⁻¹)
     logdet_precision = 2.0 * jnp.sum(jnp.log(jnp.diag(precision_factor)))
     information = 0.5 * (logdet_a + logdet_precision)
@@ -208,6 +220,9 @@ def optimal_estimation(
         n_iter=jnp.asarray(solution.stats["num_steps"]),
         converged=jnp.all(jnp.isfinite(x_hat)) & (d2 < convergence_tol * n_state),
         prior_mean=x_a,
+        retrieval_noise_cov=lx.MatrixLinearOperator(
+            retrieval_noise, lx.positive_semidefinite_tag
+        ),
     )
 
 
