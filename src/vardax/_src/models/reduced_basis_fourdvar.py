@@ -67,6 +67,7 @@ from vardax._src.obs_operators.point import (
     window_steps,
 )
 from vardax._src.protocols import Minimiser, StateParameterization
+from vardax._src.utils.covariance import as_covariance
 from vardax._src.utils.shapes import as_shape
 
 
@@ -224,8 +225,8 @@ class ReducedBasisFourDVar(eqx.Module):
         self.forward = forward
         self.obs_op = obs_op
         self.prior_mean = prior_mean
-        self.prior_cov_op = prior_cov_op
-        self.obs_cov_op = obs_cov_op
+        self.prior_cov_op = as_covariance(prior_cov_op)
+        self.obs_cov_op = None if obs_cov_op is None else as_covariance(obs_cov_op)
         if basis is not None and parameterization is not None:
             raise ConfigurationError(
                 "Pass basis= or parameterization=, not both; "

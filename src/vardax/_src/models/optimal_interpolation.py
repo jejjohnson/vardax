@@ -33,6 +33,7 @@ import lineax as lx
 
 from vardax._src._types import Batch1D
 from vardax._src.models._analysis_step import analyse_forecast
+from vardax._src.utils.covariance import as_covariance
 
 
 class OptimalInterpolation(eqx.Module):
@@ -113,8 +114,8 @@ class OptimalInterpolation(eqx.Module):
 
     obs_op: Any  # ObservationOperator (linear)
     prior_mean: Float[Array, "*state"]
-    prior_cov_op: lx.AbstractLinearOperator
-    obs_cov_op: lx.AbstractLinearOperator
+    prior_cov_op: lx.AbstractLinearOperator = eqx.field(converter=as_covariance)
+    obs_cov_op: lx.AbstractLinearOperator = eqx.field(converter=as_covariance)
     cg_atol: float = eqx.field(static=True, default=1e-6)
     cg_rtol: float = eqx.field(static=True, default=1e-6)
     cg_max_steps: int = eqx.field(static=True, default=200)
