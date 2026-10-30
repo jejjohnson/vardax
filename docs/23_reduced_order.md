@@ -15,7 +15,7 @@ This gives a ladder of eight methods, which we write in the same language as the
 | Strong-constraint 4DVar | the initial state, $N$ values | `StrongFourDVar` (chapter [6](06_strong_4dvar.md)) |
 | Reduced strong-constraint 4DVar | coefficients of the initial increment, $P$ values | `ReducedBasisFourDVar(basis=...)` |
 | Incremental 4DVar | as strong-constraint, solved by Gauss-Newton | `IncrementalFourDVar` (chapter [8](08_incremental_4dvar.md)) |
-| Reduced incremental 4DVar | as reduced strong-constraint, solved by Gauss-Newton | proposed, [#155](https://github.com/jejjohnson/vardax/issues/155) |
+| Reduced incremental 4DVar | as reduced strong-constraint, solved by Gauss-Newton | `IncrementalFourDVar(prior_sqrt_op=...)` with a rectangular square root |
 | Weak-constraint 4DVar | the initial state and every model error, $N(T + 1)$ values | `WeakFourDVar` (chapter [7](07_weak_4dvar.md)) |
 | Reduced weak-constraint 4DVar | the initial state and a few model-error coefficients, $N + CP$ values | partly: `parameterization=` reduces $x_0$ only; the model-error basis is proposed, [#156](https://github.com/jejjohnson/vardax/issues/156) |
 
@@ -331,17 +331,17 @@ $$\left(I + \sum_t (H'_t M'_t \Phi)^\top R_t^{-1} (H'_t M'_t \Phi)\right) \delta
 
 which is the CVT system [](#eq-cvt-system) with the square root $S$ replaced by the rectangular $\Phi$. Being $P \times P$, it is small enough to factor directly instead of iterating. The outer update is $u^{(k+1)} = u^{(k)} + \delta u^*$, and the analysis is $x_0^* = x_b + \Phi u^*$, the same minimiser as [](#eq-reduced-basis-cost).
 
-vardax does not ship this yet: `IncrementalFourDVar`'s CVT always has $N$ unknowns. The proposal in [#155](https://github.com/jejjohnson/vardax/issues/155) is to accept a rectangular `prior_sqrt_op`, which makes the reduced form a strict generalisation of today's CVT. Until then, `ReducedBasisFourDVar` minimises the same cost by quasi-Newton or a first-order minimiser.
+In vardax this is `IncrementalFourDVar` with a rectangular `prior_sqrt_op`: the control takes the input size of the square root, so passing $\Phi$ in place of $S$ makes the reduced form a strict generalisation of the CVT. `ReducedBasisFourDVar` minimises the same cost by quasi-Newton or a first-order minimiser instead.
 
 ```{code-block} python
-:caption: The proposed reduced incremental solve of [](#eq-reduced-incremental-system), with a rectangular square root Φ in place of S in [](#eq-cvt).
+:caption: The reduced incremental solve of [](#eq-reduced-incremental-system), with a rectangular square root Φ in place of S in [](#eq-cvt).
 :label: code-reduced-incremental
 # Shapes: S = 1 window; N = 40 sites; P = 16 modes
 
 # today (lineax)
 # Φ = G, the whitened P = 16 basis, as an (N, P) operator
 basis_sqrt = lx.MatrixLinearOperator(bases[16].design_matrix)  # (N, P) op
-# proposed (#155)
+# today (vardax)
 # x₀ = x_b + Φ u, u ~ 𝒩(0, I_P): the inner system is P × P
 reduced_incremental = vdx.IncrementalFourDVar(
     forward=truth_model,
@@ -352,10 +352,13 @@ reduced_incremental = vdx.IncrementalFourDVar(
     prior_sqrt_op=basis_sqrt,
     config=vdx.IncrementalConfig(n_outer=3, n_inner=20, cvt=True),
 )
-# proposed (#155)
+# today (vardax)
 # x₀* = x_b + Φ u*
 reduced_incremental_analysis = reduced_incremental(window)  # → (S, N)
+print(f"incremental 4D-Var, P = 16: RMSE {rmse(reduced_incremental_analysis[0]):.2f}")
 ```
+
+It prints `incremental 4D-Var, P = 16: RMSE 0.28`: three Gauss-Newton outer loops over the same 16 coefficients land close to the first-order minimiser's 0.27.
 
 ## Reduced weak-constraint 4DVar
 

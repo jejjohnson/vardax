@@ -177,7 +177,12 @@ class IncrementalFourDVar(eqx.Module):
             ``gaussx.sqrt(B, lanczos_order=k)`` for a large unstructured
             $B$. Default ``None``: ``gaussx.sqrt(prior_cov_op)``, closed
             form for diagonal / Kronecker / block-diagonal $B$ and a dense
-            eigendecomposition otherwise.
+            eigendecomposition otherwise. It may be rectangular,
+            $G: \mathbb{R}^R \to \mathbb{R}^N$ with $B \approx G G^\top$
+            (e.g. ``lx.MatrixLinearOperator(basis.design_matrix)``): the
+            control is then $x_0 = x_b + G u$ with $R$ coefficients $u$,
+            each inner system is $R \times R$, and the analysis stays in
+            $x_b + \operatorname{span}(G)$ (reduced incremental 4D-Var).
         forward_adjoint: As in [`StrongFourDVar`][vardax.StrongFourDVar]:
             a ``diffrax.AbstractAdjoint`` for a forward implementing
             [`SupportsForwardAdjoint`][vardax.SupportsForwardAdjoint].
@@ -238,6 +243,27 @@ class IncrementalFourDVar(eqx.Module):
 
         >>> post = one.posterior(window)
         >>> bool(jnp.allclose(post.cov.mv(jnp.ones(3)), 1 / 2.25, atol=1e-3))
+        True
+
+        A rectangular square root restricts the increment to its span
+        (reduced incremental 4D-Var). With one constant feature
+        $G = (1, 1, 1)^\top$, $x_0 = G u$ and the inner system
+        $(1 + G^\top G) u = G^\top y$ is $1 \times 1$, so
+        $y = (1, 2, 3)$ gives $u^* = 6 / 4$ at every cell:
+
+        >>> constant = lx.MatrixLinearOperator(jnp.ones((3, 1)))
+        >>> reduced = vardax.IncrementalFourDVar(
+        ...     forward=Identity(),
+        ...     obs_op=vardax.MaskedIdentity(),
+        ...     prior_mean=jnp.zeros(3),
+        ...     prior_cov_op=eye,
+        ...     obs_cov_op=eye,
+        ...     prior_sqrt_op=constant,
+        ... )
+        >>> ramp = vardax.Batch1D(
+        ...     input=jnp.array([[[1.0, 2.0, 3.0]]]), mask=jnp.ones((1, 1, 3))
+        ... )
+        >>> bool(jnp.allclose(reduced(ramp), 1.5, atol=1e-4))
         True
     """
 
@@ -404,42 +430,43 @@ class IncrementalFourDVar(eqx.Module):
         if config.cvt:
             prior_sqrt = self._prior_sqrt()
 
-            def to_state(control: Float[Array, " N"]) -> Float[Array, " N"]:
+            def to_state(control: Float[Array, " C"]) -> Float[Array, " N"]:
                 # x₀ = x_b + S χ
                 return background + prior_sqrt.mv(control)
 
-            def background_cost(control: Float[Array, " N"]) -> Float[Array, ""]:
+            def background_cost(control: Float[Array, " C"]) -> Float[Array, ""]:
                 # ½ ‖χ‖²
                 return 0.5 * jnp.sum(control**2)
 
-            def apply_prior_precision(direction: Float[Array, " N"]):
+            def apply_prior_precision(direction: Float[Array, " C"]):
                 # the prior Hessian in χ is the identity
                 return direction
 
-            control = jnp.zeros_like(background)
+            # χ has the input size of S: N for a square root, R ≪ N for features
+            control = jnp.zeros(prior_sqrt.in_structure().shape, background.dtype)
         else:
 
-            def to_state(control: Float[Array, " N"]) -> Float[Array, " N"]:
+            def to_state(control: Float[Array, " C"]) -> Float[Array, " N"]:
                 return control
 
             prior_cov = self.prior_cov_op
 
-            def apply_prior_precision(direction: Float[Array, " N"]):
+            def apply_prior_precision(direction: Float[Array, " C"]):
                 # B⁻¹ v
                 solver = lx.CG(atol=tol, rtol=tol)
                 return lx.linear_solve(prior_cov, direction, solver=solver).value
 
-            def background_cost(control: Float[Array, " N"]) -> Float[Array, ""]:
+            def background_cost(control: Float[Array, " C"]) -> Float[Array, ""]:
                 # ½ (x₀ - x_b)ᵀ B⁻¹ (x₀ - x_b)
                 departure = control - background
                 return 0.5 * jnp.sum(departure * apply_prior_precision(departure))
 
             control = background
 
-        def control_residual(control: Float[Array, " N"]) -> Array:
+        def control_residual(control: Float[Array, " C"]) -> Array:
             return residual(to_state(control))
 
-        def cost(control: Float[Array, " N"]) -> Float[Array, ""]:
+        def cost(control: Float[Array, " C"]) -> Float[Array, ""]:
             # J = background + ½ rᵀ W r
             misfit = control_residual(control)
             weighted = apply_obs_precision(misfit)
@@ -456,10 +483,10 @@ class IncrementalFourDVar(eqx.Module):
             )
 
             def hessian_mv(
-                direction: Float[Array, " N"],
+                direction: Float[Array, " C"],
                 tangent: Callable = residual_tangent,
                 adjoint: Callable = residual_adjoint,
-            ) -> Float[Array, " N"]:
+            ) -> Float[Array, " C"]:
                 # (P + r'ᵀ W r') v
                 weighted = apply_obs_precision(tangent(direction))
                 (data_term,) = adjoint(weighted)
