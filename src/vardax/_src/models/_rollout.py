@@ -252,3 +252,41 @@ def observed_trajectory(
         return jax.vmap(observe)(trajectory, mask)
 
     return observed
+
+
+def linearise(
+    fn: Callable[[Any], Array], point: Any, jac: str = "fwd"
+) -> tuple[Callable[[Any], Array], Callable[[Array], tuple[Any]]]:
+    """Tangent v ↦ f'(p) v and adjoint w ↦ (f'(p)ᵀ w,) of ``fn`` at ``point``.
+
+    ``jac="fwd"`` uses ``jax.linearize`` and ``jax.vjp``, matrix-free.
+    ``jac="bwd"`` forms the Jacobian with ``jax.jacrev`` (one VJP per
+    output) and applies it as a dense array, for maps that define only a
+    reverse-mode rule (a ``jax.custom_vjp``, such as a diffrax solve under
+    ``RecursiveCheckpointAdjoint``); ``point`` must then be one array.
+
+    Args:
+        fn: The map f.
+        point: Where to linearise, p.
+        jac: ``"fwd"`` or ``"bwd"``.
+
+    Returns:
+        ``(tangent, adjoint)``; ``adjoint`` returns a one-tuple, as
+        ``jax.vjp``'s pullback does.
+    """
+    if jac == "fwd":
+        _, tangent = jax.linearize(fn, point)
+        _, adjoint = jax.vjp(fn, point)
+        return tangent, adjoint
+    # J = ∂f/∂p, shape (*out, *in)
+    jacobian = jax.jacrev(fn)(point)
+
+    def dense_tangent(direction: Array) -> Array:
+        # J v
+        return jnp.tensordot(jacobian, direction, axes=direction.ndim)
+
+    def dense_adjoint(cotangent: Array) -> tuple[Array]:
+        # Jᵀ w
+        return (jnp.tensordot(cotangent, jacobian, axes=cotangent.ndim),)
+
+    return dense_tangent, dense_adjoint
