@@ -33,6 +33,7 @@ import lineax as lx
 
 from vardax._src._types import Batch1D
 from vardax._src.models._analysis_step import analyse_forecast
+from vardax._src.posterior.container import Posterior
 from vardax._src.utils.covariance import as_covariance
 
 
@@ -149,6 +150,27 @@ class OptimalInterpolation(eqx.Module):
         obs_cov_op: lx.AbstractLinearOperator,
     ) -> Float[Array, "*state"]:
         """BLUE analysis of one sample around the ``background``."""
+        masked_obs, obs_jacobian, inner_op, solver = self._innovation_system(
+            background, sample_mask, obs_op, obs_cov_op
+        )
+        # d = m ⊙ y − m ⊙ H(x_b)
+        innovation = (sample_obs * sample_mask) - masked_obs(background)
+        # v = (H B Hᵀ + R)⁻¹ d
+        dual_weights = lx.linear_solve(inner_op, innovation, solver=solver).value
+
+        # xₐ = x_b + B Hᵀ v
+        return background + self.prior_cov_op.mv(
+            obs_jacobian.transpose().mv(dual_weights)
+        )
+
+    def _innovation_system(
+        self,
+        background: Float[Array, "*state"],
+        sample_mask: Float[Array, "*obs"],
+        obs_op: Any,
+        obs_cov_op: lx.AbstractLinearOperator,
+    ) -> tuple[Any, lx.AbstractLinearOperator, lx.AbstractLinearOperator, Any]:
+        """m ⊙ H(·), its tangent at ``background``, H B Hᵀ + R and its solver."""
 
         # The effective observation operator is mask ⊙ H(·) — apply the
         # mask both to the predicted obs (innovation) AND to the
@@ -163,10 +185,6 @@ class OptimalInterpolation(eqx.Module):
                 else obs_op(state)
             )
             return sample_mask * raw
-
-        predicted_obs = masked_obs(background)
-        # d = m ⊙ y − m ⊙ H(x_b)
-        innovation = (sample_obs * sample_mask) - predicted_obs
 
         # Build (H B H^T + R) as a composed lineax operator. We
         # tag it positive-semidefinite so lineax.CG accepts it
@@ -186,21 +204,16 @@ class OptimalInterpolation(eqx.Module):
             rtol=self.cg_rtol,
             max_steps=self.cg_max_steps,
         )
-        # v = (H B Hᵀ + R)⁻¹ d
-        dual_weights = lx.linear_solve(inner_op, innovation, solver=solver).value
-
-        # xₐ = x_b + B Hᵀ v
-        return background + self.prior_cov_op.mv(
-            obs_jacobian.transpose().mv(dual_weights)
-        )
+        return masked_obs, obs_jacobian, inner_op, solver
 
     def posterior(self, batch: Batch1D, adapter: Any = None) -> Any:
-        """Analyse one window and return its [`Posterior`][vardax.Posterior].
+        r"""Analyse one window and return its [`Posterior`][vardax.Posterior].
 
-        Runs the analysis, then ``adapter(analysis, self, batch)``; the
-        default adapter is [`LaplaceCovariance`][vardax.LaplaceCovariance]
-        with this model's $B$ and $R$, and with this model's ``solver``
-        when one is set.
+        Runs the analysis, then ``adapter(analysis, self, batch)``. Without
+        an adapter the covariance is the observation-space form
+        $P^* = B - B H^\top (H B H^\top + R)^{-1} H B$: it solves the
+        innovation system the analysis solved, with the same solver, and
+        never applies $B^{-1}$, which CG cannot invert on a smooth $B$.
 
         Args:
             batch: A ``Batch1D`` holding one window.
@@ -216,10 +229,8 @@ class OptimalInterpolation(eqx.Module):
         """
         from vardax._src.posterior._precision import model_posterior
 
-        if adapter is None and self.solver is not None:
-            from vardax._src.posterior.laplace import LaplaceCovariance
-
-            adapter = LaplaceCovariance(solver=self.solver)
+        if adapter is None:
+            adapter = _ObservationSpaceCovariance()
         return model_posterior(self, batch, adapter)
 
     def as_analysis_step(self) -> _OIAnalysisStep:
@@ -244,6 +255,51 @@ def _accepts_mask(obs_op: Any) -> bool:
         return "mask" in inspect.signature(obs_op.__call__).parameters
     except (TypeError, ValueError):
         return False
+
+
+class _ObservationSpaceCovariance(eqx.Module):
+    r"""OI posterior $P^* = B - B H^\top (H B H^\top + R)^{-1} H B$, lazily.
+
+    $H$ is the masked tangent at the background, the one the analysis
+    used, so for a linear ``obs_op`` this is the exact BLUE covariance.
+    """
+
+    def __call__(
+        self,
+        analysis: Float[Array, "*state"],
+        model: OptimalInterpolation,
+        batch: Batch1D,
+    ) -> Posterior:
+        # the one window's mask, (T, N) or (N,)
+        mask = batch.mask[0]
+        _, obs_jacobian, inner_op, solver = model._innovation_system(
+            model.prior_mean, mask, model.obs_op, model.obs_cov_op
+        )
+        prior_cov = model.prior_cov_op
+        obs_adjoint = obs_jacobian.transpose()
+
+        def covariance_mv(direction: Float[Array, "*state"]) -> Float[Array, "*state"]:
+            # B v
+            prior_direction = prior_cov.mv(direction)
+            # (H B Hᵀ + R)⁻¹ H B v
+            weights = lx.linear_solve(
+                inner_op, obs_jacobian.mv(prior_direction), solver=solver
+            ).value
+            # B v − B Hᵀ (H B Hᵀ + R)⁻¹ H B v
+            return prior_direction - prior_cov.mv(obs_adjoint.mv(weights))
+
+        covariance = lx.FunctionLinearOperator(
+            covariance_mv, prior_cov.in_structure(), lx.positive_semidefinite_tag
+        )
+        return Posterior(
+            mean=analysis,
+            cov=covariance,
+            samples=None,
+            provenance={
+                "adapter": "OptimalInterpolation",
+                "structure": "observation_space",
+            },
+        )
 
 
 class _OIAnalysisStep(eqx.Module):

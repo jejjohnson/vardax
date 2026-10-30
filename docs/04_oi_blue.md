@@ -67,7 +67,7 @@ $B$) can exhaust the cap. When the innovation system is small enough to
 factor, pass a direct solver instead:
 `OptimalInterpolation(..., solver=lx.Cholesky())` (or
 `lx.AutoLinearSolver(well_posed=True)`) gives the BLUE to machine
-precision, and `posterior()` then uses the same solver for its Laplace
+precision, and `posterior()` then uses the same solver for its
 covariance.
 
 A full OI on a 2D Matérn prior with 50,000 grid cells and 5,000
@@ -199,7 +199,7 @@ print(f"background error {background_error:.3f}, analysis error {analysis_error:
 print(f"posterior std {observed_var**0.5:.3f} observed, {gap_var**0.5:.3f} in a gap")
 ```
 
-It prints `background error 0.316, analysis error 0.095` and `posterior std 0.019 observed, 0.035 in a gap`. The Cholesky solver is there because the default CG returns non-finite values for $B^{-1}$ in the posterior of this smooth prior.
+It prints `background error 0.316, analysis error 0.095` and `posterior std 0.019 observed, 0.035 in a gap`. The Cholesky solver makes the analysis and the posterior exact; the posterior solves the same innovation system as the analysis and never applies $B^{-1}$.
 
 The `posterior.cov` is an `AbstractLinearOperator` representing $P^*$.
 Sampling from the posterior is a mat-vec in $(P^*)^{1/2}$; the diagonal
