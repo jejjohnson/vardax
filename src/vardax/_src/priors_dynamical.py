@@ -145,8 +145,12 @@ class DynamicalPrior(eqx.Module):
         saveat: dfx.SaveAt,
         dt: float | None,
         params: PyTree | None,
+        adjoint: Adjoint | None = None,
     ) -> PyTree:
-        """Integrate ``model`` from ``ts[0]`` to ``ts[-1]`` starting at ``y0``."""
+        """Integrate ``model`` from ``ts[0]`` to ``ts[-1]`` starting at ``y0``.
+
+        ``adjoint`` overrides this prior's ``adjoint`` for one call.
+        """
         start_time = ts[0]
         end_time = ts[-1]
         initial_step = ts[1] - ts[0] if dt is None else dt
@@ -158,7 +162,7 @@ class DynamicalPrior(eqx.Module):
             dt0=initial_step,
             y0=y0,
             saveat=saveat,
-            adjoint=self.adjoint,
+            adjoint=self.adjoint if adjoint is None else adjoint,
             stepsize_controller=self.stepsize,
             args=params if params is not None else self.params,
         )
@@ -247,7 +251,9 @@ class DynamicalPrior(eqx.Module):
         """
         return _BoundTemporalPrior(prior=self, ts=ts, params=params)
 
-    def as_forward_model(self, dt: float) -> _DynamicalForwardModel:
+    def as_forward_model(
+        self, dt: float, adjoint: Adjoint | None = None
+    ) -> _DynamicalForwardModel:
         r"""Adapt this prior's dynamics to ``pipekit_cycle.ForwardModel``.
 
         The returned adapter exposes ``step(state, dt)``, ``dt``, and
@@ -259,8 +265,18 @@ class DynamicalPrior(eqx.Module):
         (time-shift invariant), which holds for the standard testbeds
         (Lorenz-63/96) and any RHS that ignores ``t``.
 
+        Each step integrates one short interval, so the adapter
+        differentiates it with ``diffrax.DirectAdjoint``, which supports
+        forward mode (``jax.linearize``, as
+        [`IncrementalFourDVar`][vardax.IncrementalFourDVar] needs) as
+        well as reverse mode. The prior's own ``adjoint`` (by default
+        ``RecursiveCheckpointAdjoint``, reverse mode only) still drives
+        its long-window ``__call__``.
+
         Args:
             dt: Default integration step $\Delta t$ advertised as the adapter's ``dt``.
+            adjoint: Diffrax adjoint of each step. Default ``None``:
+                ``diffrax.DirectAdjoint()``.
 
         Returns:
             A ``ForwardModel``-conforming adapter around this prior.
@@ -284,7 +300,11 @@ class DynamicalPrior(eqx.Module):
             >>> bool(jnp.allclose(fwd.step(x, 0.0), x))
             True
         """
-        return _DynamicalForwardModel(prior=self, dt=dt)
+        return _DynamicalForwardModel(
+            prior=self,
+            dt=dt,
+            adjoint=dfx.DirectAdjoint() if adjoint is None else adjoint,
+        )
 
 
 class DynIncrements(DynamicalPrior):
@@ -609,12 +629,15 @@ class _DynamicalForwardModel(eqx.Module):
 
     prior: DynamicalPrior
     dt: float
+    adjoint: Adjoint
 
     def step(self, state: Array, dt: float) -> Array:
         """Advance ``state`` by ``dt`` through the wrapped ODE."""
         ts = jnp.asarray([0.0, dt])
         saveat = dfx.SaveAt(t1=True)
-        saved_states = self.prior._integrate(state, ts, saveat, dt, None)
+        saved_states = self.prior._integrate(
+            state, ts, saveat, dt, None, adjoint=self.adjoint
+        )
         return saved_states[-1]
 
     @property

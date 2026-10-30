@@ -86,7 +86,7 @@ the adjoint to, so passing `forward_adjoint=` with one raises
 | `diffrax.ForwardMode()` | $O(P)$ in parameters | One extra forward per param | None | Few parameters (parameter estimation) |
 | `diffrax.DirectAdjoint()` | $O(K)$ steps | Standard reverse | None | Short windows where memory is cheap |
 
-**Default**: `RecursiveCheckpointAdjoint`. Standard autodiff with recursive checkpointing, which balances memory and recompute.
+**Default**: `RecursiveCheckpointAdjoint`. Standard autodiff with recursive checkpointing, which balances memory and recompute. It supports reverse mode only, so `as_forward_model(dt)` differentiates each one-step solve with `DirectAdjoint` instead, which `IncrementalFourDVar`'s forward-mode tangent-linear model needs; pass `as_forward_model(dt, adjoint=...)` to choose another.
 
 **For long assimilation windows**: `BacksolveAdjoint`. Solves the continuous adjoint ODE [](#eq-adjoint-ode) backwards in time, with constant memory in the forward-trajectory length. Caveat: the reverse-time ODE may be stiff even when the forward ODE is not (diffusion-dominated problems, for example). If forward uses `Tsit5`, backward should typically use the same, and if the reverse problem is stiff, switch to an implicit solver; the `diffrax` docs list stable integrators.
 

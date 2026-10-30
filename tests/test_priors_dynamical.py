@@ -220,3 +220,38 @@ class TestAsForwardModel:
         for t in range(1, 4):
             x = fwd.step(x, 0.1)
             assert jnp.allclose(x, traj[t], atol=1e-4)
+
+    def test_step_supports_forward_mode(self):
+        """The default prior adjoint is reverse-mode only; the step is not (#148)."""
+        prior = DynTrajectory(model=decay, stepsize=dfx.ConstantStepSize())
+        assert isinstance(prior.adjoint, dfx.RecursiveCheckpointAdjoint)
+        fwd = prior.as_forward_model(dt=0.1)
+        x = jnp.array([1.0, 2.0])
+        # ∂/∂x of x e^{−Δt} is e^{−Δt} I, in forward and reverse mode
+        _, tangent = jax.jvp(lambda z: fwd.step(z, 0.1), (x,), (jnp.ones(2),))
+        (cotangent,) = jax.grad(lambda z: jnp.sum(fwd.step(z, 0.1)), argnums=(0,))(x)
+        assert jnp.allclose(tangent, jnp.exp(-0.1), atol=1e-4)
+        assert jnp.allclose(cotangent, jnp.exp(-0.1), atol=1e-4)
+
+    def test_step_adjoint_override(self):
+        prior = DynTrajectory(model=decay)
+        fwd = prior.as_forward_model(dt=0.1, adjoint=dfx.RecursiveCheckpointAdjoint())
+        assert isinstance(fwd.adjoint, dfx.RecursiveCheckpointAdjoint)
+
+    def test_incremental_fourdvar_with_the_default_trajectory(self):
+        """The documented pairing runs without passing adjoint= (#148)."""
+        import lineax as lx
+
+        import vardax as vdx
+
+        eye = lx.IdentityLinearOperator(jax.ShapeDtypeStruct((2,), jnp.float32))
+        model = vdx.IncrementalFourDVar(
+            forward=DynTrajectory(model=decay).as_forward_model(dt=0.1),
+            obs_op=vdx.MaskedIdentity(),
+            prior_mean=jnp.zeros(2),
+            prior_cov_op=eye,
+            obs_cov_op=eye,
+            config=vdx.IncrementalConfig(n_outer=2, n_inner=10),
+        )
+        batch = vdx.Batch1D(input=jnp.ones((1, 3, 2)), mask=jnp.ones((1, 3, 2)))
+        assert jnp.all(jnp.isfinite(model(batch)))
