@@ -135,7 +135,7 @@ oi = vdx.OptimalInterpolation(
     snapshot_obs_cov,
 )
 # today (vardax)
-# P* = (B⁻¹ + Hᵀ R⁻¹ H)⁻¹
+# P* = B − B Hᵀ (H B Hᵀ + R)⁻¹ H B
 oi_posterior = oi.posterior(snapshot)  # cov (N, N) PSD op
 # today (gaussx)
 # diag(P*) = 1 / (1 + σ⁻²) where observed, 1 elsewhere
@@ -145,11 +145,7 @@ print(" ".join(f"{variance:.2f}" for variance in oi_variance))
 
 It prints `0.20 0.20 0.20 1.00 1.00 1.00`.
 
-`posterior(batch)` takes one window and returns the Laplace posterior
-with the model's own $B$ and $R$, which for OI is exact. The `cov`
-operator is lazy: each mat-vec is a CG solve against
-$B^{-1} + H^\top R^{-1} H$ (closed form for diagonal and other
-structured operators), never a dense matrix.
+`posterior(batch)` takes one window and returns the exact BLUE covariance in its observation-space form, $P^* = B - B H^\top (H B H^\top + R)^{-1} H B$. The `cov` operator is lazy: each mat-vec solves the innovation system the analysis solved, with the same solver, and never applies $B^{-1}$, so a smooth $B$ that CG cannot invert is no obstacle. Pass `adapter=vdx.LaplaceCovariance()` for the precision form $(B^{-1} + H^\top R^{-1} H)^{-1}$ instead.
 
 This is the cheapest and most accurate posterior, when it applies.
 

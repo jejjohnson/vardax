@@ -92,3 +92,32 @@ def test_posterior_uses_the_model_solver(x64):
     posterior = oi.posterior(batch)
     dense = jax.vmap(lambda e: posterior.cov.mv(e[None])[0])(jnp.eye(100))
     assert jnp.max(jnp.abs(dense - cov)) / jnp.max(jnp.abs(cov)) < 1e-8
+
+
+def test_default_posterior_on_a_smooth_matern_prior():
+    """The default posterior never applies B⁻¹, so CG copes (#143)."""
+    n = 20
+    cells = jnp.linspace(0.0, 190.0, n)
+    gap = jnp.sqrt(3.0) * jnp.abs(cells[:, None] - cells[None, :]) / 50.0
+    # Matérn-3/2, ℓ = 50 km, σ_b = 0.1: cond(B) ≈ 2.7e3
+    matern = 0.01 * (1 + gap) * jnp.exp(-gap)
+    observed = jnp.eye(n)[::4]
+    oi = OptimalInterpolation(
+        obs_op=CallableObs(fn=lambda z: z @ observed.T),
+        prior_mean=jnp.zeros((1, n)),
+        prior_cov_op=lx.FunctionLinearOperator(
+            lambda z: z @ matern,
+            jax.ShapeDtypeStruct((1, n), jnp.float32),
+            lx.positive_semidefinite_tag,
+        ),
+        obs_cov_op=lx.DiagonalLinearOperator(jnp.full((1, 5), 0.02**2)),
+    )
+    batch = Batch1D(input=jnp.full((1, 1, 5), 0.05), mask=jnp.ones((1, 1, 5)))
+    posterior = oi.posterior(batch)
+    dense = jax.vmap(lambda e: posterior.cov.mv(e[None])[0])(jnp.eye(n))
+    # P* = B − B Hᵀ (H B Hᵀ + R)⁻¹ H B
+    innovation = observed @ matern @ observed.T + 0.02**2 * jnp.eye(5)
+    gain = matern @ observed.T @ jnp.linalg.inv(innovation)
+    expected = matern - gain @ observed @ matern
+    assert jnp.all(jnp.isfinite(dense))
+    assert jnp.max(jnp.abs(dense - expected)) / jnp.max(jnp.abs(expected)) < 1e-4
