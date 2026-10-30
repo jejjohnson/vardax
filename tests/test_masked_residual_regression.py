@@ -16,6 +16,10 @@ recover the analytical BLUE answer (which itself is mask-aware).
 The same masking is required inside ``OptimalInterpolation``'s
 ``linearize()`` call — verified by exercising the OI path with a
 gap-mask and comparing against a hand-written BLUE.
+
+Every case runs with the gaps filled by zero and by ``NaN``, the usual
+fill of a gappy satellite field: ``0 · NaN`` is ``NaN``, which used to
+make the models silently return the background (#147).
 """
 
 from __future__ import annotations
@@ -32,9 +36,11 @@ from vardax import (
     IncrementalFourDVar,
     LinearObs,
     OptimalInterpolation,
+    ReducedBasisFourDVar,
     StrongFourDVar,
     ThreeDVar,
     WeakFourDVar,
+    linear_basis,
 )
 
 
@@ -51,8 +57,8 @@ class IdentityForward(eqx.Module):
         return state
 
 
-@pytest.fixture
-def masked_linear_gaussian():
+@pytest.fixture(params=[0.0, float("nan")], ids=["zero_filled", "nan_filled"])
+def masked_linear_gaussian(request):
     """Linear-Gaussian setup with a gap mask.
 
     obs_op is ``LinearObs(operator=I)`` (not mask-aware). Mask is
@@ -67,7 +73,8 @@ def masked_linear_gaussian():
     mask_batched = mask[None]  # (B=1, T=1, N=4)
 
     y_truth = jax.random.normal(rng, (B, 1, N))
-    input_batched = y_truth * mask_batched
+    # the gaps hold the fill value: zero or NaN
+    input_batched = jnp.where(mask_batched != 0, y_truth, request.param)
 
     prior_mean_with_time = jnp.zeros((1, N))
     prior_mean_state = jnp.zeros(N)
@@ -94,7 +101,7 @@ def masked_linear_gaussian():
         "B_op_state": B_op_state,
         "R_op_state": R_op_state,
         # The analytical answer: observed entries → y/2, gaps → 0.
-        "expected": (input_batched / 2.0)[:, 0, :],
+        "expected": (y_truth * mask_batched / 2.0)[:, 0, :],
     }
 
 
@@ -181,3 +188,17 @@ class TestMaskedResidualRegression:
         )
         x0_star, _ = weak(batch)
         assert jnp.allclose(x0_star, s["expected"], atol=1e-2)
+
+    def test_reduced_basis_4dvar_with_non_mask_aware_obs(self, masked_linear_gaussian):
+        s = masked_linear_gaussian
+        batch = Batch1D(input=s["input"], mask=s["mask"], target=None)
+        reduced = ReducedBasisFourDVar(
+            forward=IdentityForward(),
+            obs_op=_identity_linear_obs_state(s["N"]),
+            prior_mean=s["prior_mean_state"],
+            prior_cov_op=s["B_op_state"],
+            obs_cov_op=s["R_op_state"],
+            basis=linear_basis(jnp.eye(s["N"]), variance=jnp.ones(s["N"])),
+        )
+        out = reduced(batch)
+        assert jnp.allclose(out, s["expected"], atol=1e-2)

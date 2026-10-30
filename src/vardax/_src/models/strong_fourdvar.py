@@ -37,6 +37,7 @@ import optimistix as optx
 
 from vardax._src._types import Batch1D, PointObsBatch
 from vardax._src.minimisers import minimise
+from vardax._src.models._observations import fill_gaps
 from vardax._src.models._rollout import checkpoint_every, resolve_forward, rollout
 from vardax._src.obs_operators.point import (
     check_point_obs_cov,
@@ -316,7 +317,7 @@ class StrongFourDVar(eqx.Module):
 
             return self._solve(obs_cost)
 
-        return jax.vmap(_one)(batch.input, batch.mask)
+        return jax.vmap(_one)(fill_gaps(batch.input, batch.mask), batch.mask)
 
     def _solve(
         self,
