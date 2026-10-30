@@ -48,7 +48,42 @@ Pick the form whose matrix is smaller:
 
 For SSH altimetry with sparse along-track samples and a 2D grid, $m \ll n$ and the observation-space form wins. For a satellite imager with one observation per state cell, $m \approx n$ and either works.
 
-vardax always solves the observation-space system $(H B H^\top + R) v = y - H x_b$; the state-space form is not implemented.
+`OptimalInterpolation` solves the observation-space system $(H B H^\top + R) v = y - H x_b$ by default, and the state-space system $(B^{-1} + H^\top R^{-1} H) \delta x = H^\top R^{-1} (y - H x_b)$ with `form="state"`. The block below fuses $m = 2000$ pixels into $n = 3$ unknowns and prints `True`: both forms give the same analysis.
+
+```{code-block} python
+:caption: Solves one BLUE in the observation-space and the state-space form and checks they agree.
+import jax
+import jax.numpy as jnp
+import lineax as lx
+import vardax as vdx
+
+# Shapes: n = 3 unknowns; m = 2000 pixels
+
+jax.config.update("jax_enable_x64", True)
+key_design, key_obs = jax.random.split(jax.random.PRNGKey(0))
+# H, a dense design
+design = jax.random.normal(key_design, (2000, 3))  # (M, N)
+# y ~ 𝒩(0, I)
+pixels = jax.random.normal(key_obs, (1, 2000))  # (S, M)
+analyses = {}
+for form in ("observation", "state"):
+    # today (vardax)
+    oi = vdx.OptimalInterpolation(
+        obs_op=vdx.LinearObs(operator=lx.MatrixLinearOperator(design)),
+        prior_mean=jnp.zeros(3),
+        # B = I
+        prior_cov_op=lx.IdentityLinearOperator(jax.ShapeDtypeStruct((3,), jnp.float64)),
+        # R = 10⁻² I
+        obs_cov_op=lx.DiagonalLinearOperator(jnp.full(2000, 1e-2)),
+        solver=lx.Cholesky(),
+        form=form,
+    )
+    # x* = x_b + δx
+    analyses[form] = oi(vdx.Batch1D(input=pixels, mask=jnp.ones_like(pixels)))  # (S, M) → (S, N)
+print(bool(jnp.allclose(analyses["observation"], analyses["state"], rtol=1e-8)))
+```
+
+The observation-space solve factors a $2000 \times 2000$ matrix here, the state-space one a $3 \times 3$ matrix.
 
 ## Why the matrices are never materialised
 

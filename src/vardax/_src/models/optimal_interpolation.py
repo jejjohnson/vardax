@@ -29,11 +29,13 @@ from __future__ import annotations
 from typing import Any
 
 import equinox as eqx
+import gaussx
 import jax
 from jaxtyping import Array, Float
 import lineax as lx
 
 from vardax._src._types import Batch1D
+from vardax._src.errors import ConfigurationError
 from vardax._src.models._analysis_step import analyse_forecast
 from vardax._src.models._observations import fill_gaps
 from vardax._src.posterior.container import Posterior
@@ -72,6 +74,14 @@ class OptimalInterpolation(eqx.Module):
             instead of CG (the ``cg_*`` fields are then ignored), e.g.
             ``lineax.Cholesky()`` to factorise $HBH^\top + R$ exactly. It
             is also the default solver of the ``posterior`` adapter.
+        form: ``"observation"`` (default) solves the $D_y \times D_y$
+            innovation system $(H B H^\top + R) v = d$. ``"state"`` solves
+            the $D_x \times D_x$ information system
+            $(B^{-1} + H^\top R^{-1} H) \delta x = H^\top R^{-1} d$, the
+            one to use when $D_y \gg D_x$; $B^{-1}$ and $R^{-1}$ are closed
+            form for a diagonal operator and solved with ``solver``
+            otherwise, and the default posterior is then
+            $(B^{-1} + H^\top R^{-1} H)^{-1}$.
 
     Examples:
         With $B = R = I$, identity $H$ and everything observed, the
@@ -124,6 +134,14 @@ class OptimalInterpolation(eqx.Module):
     cg_rtol: float = eqx.field(static=True, default=1e-6)
     cg_max_steps: int = eqx.field(static=True, default=200)
     solver: lx.AbstractLinearSolver | None = eqx.field(static=True, default=None)
+    # "observation" or "state", checked in __check_init__
+    form: str = eqx.field(static=True, default="observation")
+
+    def __check_init__(self) -> None:
+        if self.form not in ("observation", "state"):
+            raise ConfigurationError(
+                f"form must be 'observation' or 'state'; got {self.form!r}."
+            )
 
     def __call__(self, batch: Batch1D) -> Float[Array, " batch *state"]:
         """BLUE analysis for each sample in the batch.
@@ -153,6 +171,10 @@ class OptimalInterpolation(eqx.Module):
         obs_cov_op: lx.AbstractLinearOperator,
     ) -> Float[Array, "*state"]:
         """BLUE analysis of one sample around the ``background``."""
+        if self.form == "state":
+            return self._analyse_state_space(
+                background, sample_obs, sample_mask, obs_op, obs_cov_op
+            )
         masked_obs, obs_jacobian, inner_op, solver = self._innovation_system(
             background, sample_mask, obs_op, obs_cov_op
         )
@@ -165,6 +187,47 @@ class OptimalInterpolation(eqx.Module):
         return background + self.prior_cov_op.mv(
             obs_jacobian.transpose().mv(dual_weights)
         )
+
+    def _analyse_state_space(
+        self,
+        background: Float[Array, "*state"],
+        sample_obs: Float[Array, "*obs"],
+        sample_mask: Float[Array, "*obs"],
+        obs_op: Any,
+        obs_cov_op: lx.AbstractLinearOperator,
+    ) -> Float[Array, "*state"]:
+        """BLUE analysis in the state-space (information) form."""
+        masked_obs, obs_jacobian, precision, solver = self._information_system(
+            background, sample_mask, obs_op, obs_cov_op
+        )
+        # d = m ⊙ y − m ⊙ H(x_b)
+        innovation = (sample_obs * sample_mask) - masked_obs(background)
+        # Hᵀ R⁻¹ d
+        right_hand_side = obs_jacobian.transpose().mv(
+            _inverse(obs_cov_op, solver).mv(innovation)
+        )
+        # δx = (B⁻¹ + Hᵀ R⁻¹ H)⁻¹ Hᵀ R⁻¹ d
+        increment = lx.linear_solve(precision, right_hand_side, solver=solver).value
+        # xₐ = x_b + δx
+        return background + increment
+
+    def _information_system(
+        self,
+        background: Float[Array, "*state"],
+        sample_mask: Float[Array, "*obs"],
+        obs_op: Any,
+        obs_cov_op: lx.AbstractLinearOperator,
+    ) -> tuple[Any, lx.AbstractLinearOperator, lx.AbstractLinearOperator, Any]:
+        """m ⊙ H(·), its tangent at ``background``, B⁻¹ + Hᵀ R⁻¹ H and its solver."""
+        masked_obs, obs_jacobian, _, solver = self._innovation_system(
+            background, sample_mask, obs_op, obs_cov_op
+        )
+        # B⁻¹ + Hᵀ R⁻¹ H; masked rows of H are zero, so gaps drop out
+        precision_raw = obs_jacobian.transpose() @ _inverse(
+            obs_cov_op, solver
+        ) @ obs_jacobian + _inverse(self.prior_cov_op, solver)
+        precision = lx.TaggedLinearOperator(precision_raw, lx.positive_semidefinite_tag)
+        return masked_obs, obs_jacobian, precision, solver
 
     def _innovation_system(
         self,
@@ -202,12 +265,7 @@ class OptimalInterpolation(eqx.Module):
         )
         inner_op = lx.TaggedLinearOperator(inner_raw, lx.positive_semidefinite_tag)
 
-        solver = self.solver or lx.CG(
-            atol=self.cg_atol,
-            rtol=self.cg_rtol,
-            max_steps=self.cg_max_steps,
-        )
-        return masked_obs, obs_jacobian, inner_op, solver
+        return masked_obs, obs_jacobian, inner_op, self._default_solver()
 
     def posterior(self, batch: Batch1D, adapter: Any = None) -> Any:
         r"""Analyse one window and return its [`Posterior`][vardax.Posterior].
@@ -232,9 +290,22 @@ class OptimalInterpolation(eqx.Module):
         """
         from vardax._src.posterior._precision import model_posterior
 
-        if adapter is None:
+        if adapter is None and self.form == "state":
+            from vardax._src.posterior.laplace import LaplaceCovariance
+
+            # the precision form is the system the analysis just solved
+            adapter = LaplaceCovariance(solver=self._default_solver())
+        elif adapter is None:
             adapter = _ObservationSpaceCovariance()
         return model_posterior(self, batch, adapter)
+
+    def _default_solver(self) -> lx.AbstractLinearSolver:
+        """``solver``, else CG at ``cg_atol``, ``cg_rtol`` and ``cg_max_steps``."""
+        return self.solver or lx.CG(
+            atol=self.cg_atol,
+            rtol=self.cg_rtol,
+            max_steps=self.cg_max_steps,
+        )
 
     def as_analysis_step(self) -> _OIAnalysisStep:
         """Adapt to ``pipekit_cycle.AnalysisStep`` (Decision D8).
@@ -244,6 +315,28 @@ class OptimalInterpolation(eqx.Module):
             supplied forecast, treating ``NaN`` observations as missing.
         """
         return _OIAnalysisStep(self)
+
+
+def _inverse(
+    operator: lx.AbstractLinearOperator, solver: lx.AbstractLinearSolver
+) -> lx.AbstractLinearOperator:
+    """A⁻¹ of a PSD operator, lazily: closed form when A is diagonal."""
+    structure = operator.in_structure()
+    if lx.is_diagonal(operator):
+        diagonal = lx.diagonal(operator)
+
+        def divide(vector: Array) -> Array:
+            # A⁻¹ v = v / diag(A)
+            return vector / diagonal.reshape(vector.shape)
+
+        return lx.FunctionLinearOperator(
+            divide, structure, lx.positive_semidefinite_tag
+        )
+    # wrapped so lineax can linearise it inside the composed precision
+    inverse = gaussx.inv(operator, solver=solver)
+    return lx.FunctionLinearOperator(
+        inverse.mv, structure, lx.positive_semidefinite_tag
+    )
 
 
 def _accepts_mask(obs_op: Any) -> bool:
