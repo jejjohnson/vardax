@@ -388,6 +388,11 @@ def gauss_newton_covariance(
 
     # --- 3. weak 4DVar: augmented control ---
     if hasattr(underlying, "_rollout_with_error"):
+        if getattr(underlying, "model_err_basis", None) is not None:
+            raise UnsupportedInputError(
+                "The posterior adapters do not support a WeakFourDVar with "
+                "model_err_basis yet; its control is (x0, ω), not (x0, η)."
+            )
         return _weak_covariance(
             analysis,
             underlying,

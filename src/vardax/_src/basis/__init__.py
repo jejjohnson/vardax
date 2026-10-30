@@ -12,7 +12,8 @@ Wendland atoms), :func:`fourier_basis` (Laplacian eigenfunctions /
 HSGP), :func:`wavelet_basis` (Haar / Daubechies), :func:`eof_basis`
 (data-driven), and the :func:`linear_basis` escape hatch for any
 precomputed matrix. `CompositeBasis` stacks several bases into one
-control vector with a block-diagonal prior.
+control vector with a block-diagonal prior. `ModelErrorBasis` is the
+separable space-time basis of a weak-constraint model error.
 
 Reference: MASSH `mapping/src/basis.py` (`set_basis`, `operg`,
 families `GAUSS*` / `BM` / `MIOST` / `WAVELET3D`).
@@ -21,10 +22,12 @@ families `GAUSS*` / `BM` / `MIOST` / `WAVELET3D`).
 from .composite import CompositeBasis, composite_basis
 from .constructors import eof_basis, fourier_basis, rbf_basis, wavelet_basis
 from .linear import LinearBasis, linear_basis
+from .model_error import ModelErrorBasis
 
 __all__ = [
     "CompositeBasis",
     "LinearBasis",
+    "ModelErrorBasis",
     "composite_basis",
     "eof_basis",
     "fourier_basis",
