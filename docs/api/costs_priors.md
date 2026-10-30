@@ -90,7 +90,7 @@ families; `CompositeBasis` concatenates several.
     options:
       show_root_heading: false
       show_root_toc_entry: false
-      members: [LinearBasis, CompositeBasis, linear_basis, composite_basis, eof_basis, fourier_basis, rbf_basis, wavelet_basis]
+      members: [LinearBasis, CompositeBasis, ModelErrorBasis, linear_basis, composite_basis, eof_basis, fourier_basis, rbf_basis, wavelet_basis]
 
 ## State parameterizations
 

@@ -41,6 +41,7 @@ from vardax._src.amortized import (
 from vardax._src.basis import (
     CompositeBasis,
     LinearBasis,
+    ModelErrorBasis,
     composite_basis,
     eof_basis,
     fourier_basis,
@@ -218,6 +219,7 @@ __all__ = [
     # Reduced bases (issue #49)
     "CompositeBasis",
     "LinearBasis",
+    "ModelErrorBasis",
     "composite_basis",
     "eof_basis",
     "fourier_basis",

@@ -17,7 +17,7 @@ This gives a ladder of eight methods, which we write in the same language as the
 | Incremental 4DVar | as strong-constraint, solved by Gauss-Newton | `IncrementalFourDVar` (chapter [8](08_incremental_4dvar.md)) |
 | Reduced incremental 4DVar | as reduced strong-constraint, solved by Gauss-Newton | `IncrementalFourDVar(prior_sqrt_op=...)` with a rectangular square root |
 | Weak-constraint 4DVar | the initial state and every model error, $N(T + 1)$ values | `WeakFourDVar` (chapter [7](07_weak_4dvar.md)) |
-| Reduced weak-constraint 4DVar | the initial state and a few model-error coefficients, $N + CP$ values | partly: `parameterization=` reduces $x_0$ only; the model-error basis is proposed, [#156](https://github.com/jejjohnson/vardax/issues/156) |
+| Reduced weak-constraint 4DVar | the initial state and a few model-error coefficients, $N + CP$ values | `WeakFourDVar(model_err_basis=ModelErrorBasis(...))`, composing with `parameterization=` |
 
 ## The reduced control
 
@@ -372,7 +372,7 @@ $$J(x_0, \omega) = \frac{1}{2} \|x_0 - x_b\|^2_{B^{-1}} + \frac{1}{2} \|\omega\|
 
 so the control has $N + CP$ numbers instead of $N(T + 1)$. A constant bias is the smallest case: $C = 1$ and $P = 1$, one coefficient. The initial state can be reduced as well, with [](#eq-reduced-control) for $x_0$.
 
-Today vardax reduces only the initial state: `WeakFourDVar(parameterization=LinearParameterization(...))` keeps the model errors in full. Below we run the window with a biased model, $F = 7$ against the $F = 8$ truth, and we measure the error at the end of the window, where the bias has built up.
+`WeakFourDVar(parameterization=LinearParameterization(...))` reduces the initial state and `model_err_basis=` the model error. Below we first run the window with a biased model, $F = 7$ against the $F = 8$ truth, and we measure the error at the end of the window, where the bias has built up.
 
 ```{code-block} python
 :caption: Compares strong-constraint 4DVar [](#eq-strong4dvar-cost) with a biased model against weak-constraint 4DVar [](#eq-weak4dvar-cost) with a full and a reduced [](#eq-reduced-control) initial state.
@@ -453,10 +453,10 @@ for label, control in (("full x₀", None), ("P = 16 x₀", reduced_initial)):
     print(f"weak 4D-Var, {label}: end-of-window RMSE {end_rmse(weak_end):.2f}")
 ```
 
-It prints `strong 4D-Var, biased model: end-of-window RMSE 0.55`, `strong 4D-Var, exact model: end-of-window RMSE 0.42`, `weak 4D-Var, full x₀: end-of-window RMSE 0.53` and `weak 4D-Var, P = 16 x₀: end-of-window RMSE 0.54`. The weak constraint barely helps here, and changing $\sigma_q$ to 0.05 or 0.32 gives 0.54 and 0.58: with 400 model-error unknowns against 220 observations, an error at every point and time cannot separate the bias from noise. A reduced model error with one constant mode is exactly that separation, and on a longer Lorenz-96 window the esmax page reports it recovering the bias as 1.00 ± 0.04 (truth 1.0). vardax does not ship the model-error basis yet; the proposal is [#156](https://github.com/jejjohnson/vardax/issues/156).
+It prints `strong 4D-Var, biased model: end-of-window RMSE 0.55`, `strong 4D-Var, exact model: end-of-window RMSE 0.42`, `weak 4D-Var, full x₀: end-of-window RMSE 0.53` and `weak 4D-Var, P = 16 x₀: end-of-window RMSE 0.54`. The weak constraint barely helps here, and changing $\sigma_q$ to 0.05 or 0.32 gives 0.54 and 0.58: with 400 model-error unknowns against 220 observations, an error at every point and time cannot separate the bias from noise. A reduced model error with one constant mode is exactly that separation, and on a longer Lorenz-96 window the esmax page reports it recovering the bias as 1.00 ± 0.04 (truth 1.0). In vardax that is `WeakFourDVar(model_err_basis=...)`, below.
 
 ```{code-block} python
-:caption: The proposed reduced weak-constraint 4DVar of [](#eq-reduced-weak4dvar-cost), with one constant mode in time and space for the bias in [](#eq-reduced-model-error).
+:caption: The reduced weak-constraint 4DVar of [](#eq-reduced-weak4dvar-cost), with one constant mode in time and space for the bias in [](#eq-reduced-model-error).
 :label: code-reduced-weak-model-error
 # Shapes: S = 1 window; T = 11 times; N = 40 sites; C = 1 temporal mode;
 #         P = 1 spatial mode
@@ -465,7 +465,7 @@ It prints `strong 4D-Var, biased model: end-of-window RMSE 0.55`, `strong 4D-Var
 temporal_basis = jnp.ones((10, 1))  # (T − 1, C)
 # φ(x) = 1, one constant spatial mode
 spatial_basis = jnp.ones((40, 1))  # (N, P)
-# proposed (#156)
+# today (vardax)
 # η(xₙ, tₖ) = χ(tₖ) W φ(xₙ), W ~ 𝒩(0, Λ_t ⊗ Λ_s)
 error_basis = vdx.ModelErrorBasis(
     temporal=temporal_basis,
@@ -473,7 +473,7 @@ error_basis = vdx.ModelErrorBasis(
     temporal_variance=jnp.ones(1),
     spatial_variance=jnp.ones(1),
 )
-# proposed (#156)
+# today (vardax)
 # J(x₀, ω) over N + C P = 41 numbers
 reduced_weak = vdx.WeakFourDVar(
     forward=biased_model,
@@ -482,11 +482,20 @@ reduced_weak = vdx.WeakFourDVar(
     prior_cov_op=prior_cov,
     obs_cov_op=obs_cov,
     model_err_basis=error_basis,
+    minimiser=first_order,
+    cov_solver=lx.Cholesky(),
 )
-# proposed (#156)
+# today (vardax)
 # (x₀*, W*): W* is the estimated bias per step
 initial_states, error_coefficients = reduced_weak(window)  # → (S, N), (S, C, P)
+# η = χ W Φᵀ, the bias added after every step
+reduced_errors = temporal_basis @ error_coefficients[0] @ spatial_basis.T  # (T − 1, N)
+reduced_end = window_end(initial_states[0], reduced_errors)  # (N,)
+print(f"weak 4D-Var, one bias mode: end-of-window RMSE {end_rmse(reduced_end):.2f}")
+print(f"estimated bias per step {float(error_coefficients[0, 0, 0]):.3f}")
 ```
+
+It prints `weak 4D-Var, one bias mode: end-of-window RMSE 0.43` and `estimated bias per step 0.047`. One coefficient brings the biased model to within 0.01 of the exact model's 0.42, and the bias it finds is the forcing gap times the step, $(8 - 7) \times 0.05 = 0.05$, to first order.
 
 ## Uncertainty
 

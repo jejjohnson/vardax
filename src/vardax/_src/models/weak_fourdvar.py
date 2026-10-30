@@ -33,6 +33,8 @@ import lineax as lx
 import optimistix as optx
 
 from vardax._src._types import Batch1D, PointObsBatch
+from vardax._src.basis.model_error import ModelErrorBasis
+from vardax._src.errors import ConfigurationError
 from vardax._src.minimisers import minimise
 from vardax._src.models._observations import fill_gaps
 from vardax._src.models._rollout import checkpoint_every, resolve_forward, rollout
@@ -78,9 +80,8 @@ class WeakFourDVar(eqx.Module):
         prior_cov_op: $B$.
         obs_cov_op: $R$.
         model_err_cov_op: $Q$ — covariance of the per-step model
-            error $\eta_t$. Defaults to identity scaled by a
-            small variance if not supplied (effectively
-            strong-constraint with a tiny relaxation).
+            error $\eta_t$, which is then estimated at every step and
+            cell. Give exactly one of this and ``model_err_basis``.
         minimiser: As in [`StrongFourDVar`][vardax.StrongFourDVar].
         minimiser_adjoint: As in [`StrongFourDVar`][vardax.StrongFourDVar].
         max_steps: As in [`StrongFourDVar`][vardax.StrongFourDVar].
@@ -103,6 +104,15 @@ class WeakFourDVar(eqx.Module):
         checkpoint: As in [`StrongFourDVar`][vardax.StrongFourDVar]:
             ``False``, ``True`` or a block length ``k`` for
             ``jax.checkpoint`` over the rollout.
+        model_err_basis: A [`ModelErrorBasis`][vardax.ModelErrorBasis]
+            $(\chi, \Phi, \Lambda_t, \Lambda_s)$ in place of
+            ``model_err_cov_op`` (reduced weak-constraint 4D-Var). The
+            model error is $\eta = \chi W \Phi^\top$ with
+            $W = \Lambda_t^{1/2} \omega \Lambda_s^{1/2}$, the control is
+            $(x_0, \omega)$ with $C P$ model-error unknowns, the
+            model-error term is $\tfrac12 \|\omega\|^2$, and the call
+            returns $(x_0^*, W^*)$. It composes with
+            ``parameterization``.
 
     Examples:
         Trivial dynamics and a single timestep: no model-error steps
@@ -169,7 +179,7 @@ class WeakFourDVar(eqx.Module):
     prior_mean: Float[Array, " N"]
     prior_cov_op: lx.AbstractLinearOperator
     obs_cov_op: lx.AbstractLinearOperator | None
-    model_err_cov_op: lx.AbstractLinearOperator
+    model_err_cov_op: lx.AbstractLinearOperator | None
     minimiser: optx.AbstractMinimiser | Minimiser = eqx.field(static=True)
     minimiser_adjoint: optx.AbstractAdjoint = eqx.field(static=True)
     cov_solver: lx.AbstractLinearSolver = eqx.field(static=True)
@@ -177,6 +187,7 @@ class WeakFourDVar(eqx.Module):
     parameterization: StateParameterization | None = None
     forward_adjoint: Any = eqx.field(static=True, default=None)
     checkpoint: bool | int = eqx.field(static=True, default=False)
+    model_err_basis: ModelErrorBasis | None = None
 
     def __init__(
         self,
@@ -185,7 +196,7 @@ class WeakFourDVar(eqx.Module):
         prior_mean: Float[Array, " N"],
         prior_cov_op: lx.AbstractLinearOperator,
         obs_cov_op: lx.AbstractLinearOperator | None,
-        model_err_cov_op: lx.AbstractLinearOperator,
+        model_err_cov_op: lx.AbstractLinearOperator | None = None,
         minimiser: optx.AbstractMinimiser | Minimiser | None = None,
         minimiser_adjoint: optx.AbstractAdjoint | None = None,
         max_steps: int = 200,
@@ -193,16 +204,25 @@ class WeakFourDVar(eqx.Module):
         forward_adjoint: Any = None,
         checkpoint: bool | int = False,
         cov_solver: lx.AbstractLinearSolver | None = None,
+        model_err_basis: ModelErrorBasis | None = None,
     ) -> None:
         # fail at construction, not on the first traced call
         checkpoint_every(checkpoint)
+        if (model_err_cov_op is None) == (model_err_basis is None):
+            raise ConfigurationError(
+                "WeakFourDVar takes exactly one of model_err_cov_op (a full Q "
+                "over every step) and model_err_basis (a reduced model error)."
+            )
         resolve_forward(forward, forward_adjoint)
         self.forward = forward
         self.obs_op = obs_op
         self.prior_mean = prior_mean
         self.prior_cov_op = as_covariance(prior_cov_op)
         self.obs_cov_op = None if obs_cov_op is None else as_covariance(obs_cov_op)
-        self.model_err_cov_op = as_covariance(model_err_cov_op)
+        self.model_err_cov_op = (
+            None if model_err_cov_op is None else as_covariance(model_err_cov_op)
+        )
+        self.model_err_basis = model_err_basis
         self.minimiser = minimiser or optx.BFGS(rtol=1e-6, atol=1e-6)
         self.minimiser_adjoint = minimiser_adjoint or optx.ImplicitAdjoint()
         self.max_steps = max_steps
@@ -233,12 +253,13 @@ class WeakFourDVar(eqx.Module):
     def __call__(
         self,
         batch: Batch1D | PointObsBatch,
-    ) -> tuple[Float[Array, "*batch N"], Float[Array, "*batch T N"]]:
+    ) -> tuple[Float[Array, "*batch N"], Float[Array, ...]]:
         r"""Weak-4DVar analysis.
 
         Returns ``(x_0_star, eta_star)`` — the analysis initial state
         and the per-step model-error trajectory (one row per
-        timestep, total ``T``).
+        timestep, total ``T``). With ``model_err_basis`` the second
+        element is the coefficients $W^*$, shape ``(*batch, C, P)``.
 
         A [`PointObsBatch`][vardax.PointObsBatch] needs
         ``obs_op=GridPointObs(...)``: observation $i$ is compared with the
@@ -325,40 +346,62 @@ class WeakFourDVar(eqx.Module):
         traj_obs_cost: Callable[[Array], Array],
         n_steps: int,
         state_dim: int,
-    ) -> tuple[Float[Array, " N"], Float[Array, "T N"]]:
-        """Minimise over $(x_0, \\eta)$ (or $(\\theta, \\eta)$) for one sample."""
+    ) -> tuple[Float[Array, " N"], Array]:
+        """Minimise over (x₀, η), or (θ, η), with ω in place of η for a basis."""
+        basis = self.model_err_basis
+        model_err_cov = self.model_err_cov_op
+        if model_err_cov is not None:
+            init_model_errors = jnp.zeros((n_steps, state_dim))
+
+            def to_errors(error_control: Array) -> Float[Array, "T N"]:
+                return error_control
+
+            def model_error_cost(error_control: Array) -> Float[Array, ""]:
+                def _model_error_cost(step_error):
+                    # Q⁻¹η
+                    weighted_error = lx.linear_solve(
+                        model_err_cov,
+                        step_error,
+                        solver=self.cov_solver,
+                    ).value
+                    # J_q,t = ½ ηᵀ Q⁻¹ η
+                    return 0.5 * jnp.sum(step_error * weighted_error)
+
+                # A one-state window has no model-error steps (vmap over an
+                # empty axis would trip lineax's CG on a zero-size operand).
+                if error_control.shape[0] == 0:
+                    return jnp.zeros((), dtype=error_control.dtype)
+                return jnp.sum(jax.vmap(_model_error_cost)(error_control))
+
+            def to_output(error_control: Array) -> Array:
+                return error_control
+
+        elif basis is not None:
+            basis.check_steps(n_steps)
+            # ω, the whitened coefficients
+            init_model_errors = jnp.zeros(basis.coefficient_shape)
+            to_errors = basis.errors
+
+            def model_error_cost(error_control: Array) -> Float[Array, ""]:
+                # ½ ‖ω‖²
+                return 0.5 * jnp.sum(error_control**2)
+
+            # W = Λ_t^{1/2} ω Λ_s^{1/2}
+            to_output = basis.coefficients
+        else:
+            raise ConfigurationError(
+                "WeakFourDVar needs model_err_cov_op or model_err_basis."
+            )
 
         def model_and_obs_cost(
             initial_state: Float[Array, " N"],
-            model_errors: Float[Array, "T N"],
+            error_control: Array,
         ) -> Float[Array, ""]:
-            # Model-error term
-            def _model_error_cost(step_error):
-                # Q⁻¹η
-                weighted_error = lx.linear_solve(
-                    self.model_err_cov_op,
-                    step_error,
-                    solver=self.cov_solver,
-                ).value
-                # J_q,t = ½ ηᵀ Q⁻¹ η
-                return 0.5 * jnp.sum(step_error * weighted_error)
-
-            # A one-state window has no model-error steps (vmap over an
-            # empty axis would trip lineax's CG on a zero-size operand).
-            model_error_cost = (
-                jnp.sum(jax.vmap(_model_error_cost)(model_errors))
-                if model_errors.shape[0] > 0
-                else jnp.zeros((), dtype=initial_state.dtype)
-            )
-
-            # Observation term
+            # Observation term over xₜ = M(xₜ₋₁) + ηₜ
             obs_cost = traj_obs_cost(
-                self._rollout_with_error(initial_state, model_errors)
+                self._rollout_with_error(initial_state, to_errors(error_control))
             )
-            return obs_cost + model_error_cost
-
-        # Initial guess: x_0 at the background, etas at zero.
-        init_model_errors = jnp.zeros((n_steps, state_dim))
+            return obs_cost + model_error_cost(error_control)
 
         param = self.parameterization
         if param is not None:
@@ -367,25 +410,21 @@ class WeakFourDVar(eqx.Module):
                 return as_shape(param.decode(theta), self.prior_mean.shape)
 
             def param_cost(control: Any, _args: Any) -> Float[Array, ""]:
-                theta, model_errors = control
+                theta, error_control = control
                 return param.penalty(theta) + model_and_obs_cost(
-                    decode(theta), model_errors
+                    decode(theta), error_control
                 )
 
-            theta_star, model_errors_star = minimise(
+            theta_star, error_star = minimise(
                 self.minimiser,
                 param_cost,
                 (param.init_control(), init_model_errors),
                 adjoint=self.minimiser_adjoint,
                 max_steps=self.max_steps,
             )
-            return decode(theta_star), model_errors_star
+            return decode(theta_star), to_output(error_star)
 
-        def cost(control: Float[Array, "T_plus_1 N"], _args: Any) -> Float[Array, ""]:
-            initial_state = control[0]
-            model_errors = control[1:]
-
-            # Background term
+        def background_cost(initial_state: Float[Array, " N"]) -> Float[Array, ""]:
             # δx = x₀ − x_b
             increment = initial_state - self.prior_mean
             # B⁻¹δx
@@ -395,8 +434,31 @@ class WeakFourDVar(eqx.Module):
                 solver=self.cov_solver,
             ).value
             # J_b = ½ δxᵀ B⁻¹ δx
-            background_cost = 0.5 * jnp.sum(increment * weighted_increment)
-            return background_cost + model_and_obs_cost(initial_state, model_errors)
+            return 0.5 * jnp.sum(increment * weighted_increment)
+
+        if basis is not None:
+            # control (x₀, ω)
+            def reduced_cost(control: Any, _args: Any) -> Float[Array, ""]:
+                initial_state, error_control = control
+                return background_cost(initial_state) + model_and_obs_cost(
+                    initial_state, error_control
+                )
+
+            initial_state_star, error_star = minimise(
+                self.minimiser,
+                reduced_cost,
+                (self.prior_mean, init_model_errors),
+                adjoint=self.minimiser_adjoint,
+                max_steps=self.max_steps,
+            )
+            return initial_state_star, to_output(error_star)
+
+        def cost(control: Float[Array, "T_plus_1 N"], _args: Any) -> Float[Array, ""]:
+            initial_state = control[0]
+            model_errors = control[1:]
+            return background_cost(initial_state) + model_and_obs_cost(
+                initial_state, model_errors
+            )
 
         # control [x_b; η₁, …, η_T]; jnp, not einx: einx cannot size T = 0
         initial_state = jnp.expand_dims(self.prior_mean, 0)
