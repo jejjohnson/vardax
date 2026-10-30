@@ -267,7 +267,7 @@ print({name: obs.shape for name, obs in predicted.items()}, stacked.shape)
 
 It prints `{'TROPOMI': (6,), 'EMIT': (6,), 'GHGSat': (3,)} (15,)`.
 
-`MultiInstrumentFusion.__call__` returns `dict[str, Array]` (per-instrument predicted observations); no vardax model consumes the dict yet. For strict `pipekit_cycle.ObservationOperator` contexts, the `.to_observation_operator()` adapter flattens to a single concatenated output, and its `linearize` is the Jacobian of that map, the per-instrument $H_i'$ stacked row-wise.
+`MultiInstrumentFusion.__call__` returns `dict[str, Array]` (per-instrument predicted observations), and `MultiInstrumentFusion.cost` sums the weighted per-instrument terms. For strict `pipekit_cycle.ObservationOperator` contexts, the `.to_observation_operator()` adapter flattens to a single concatenated output, and its `linearize` is the Jacobian of that map, the per-instrument $H_i'$ stacked row-wise. Pass `fusion.obs_cov_op()` as the model's $R$ with that adapter: its blocks are $R_i / \alpha_i$, so the model minimises the same weighted cost.
 
 ### Any differentiable model: parameter estimation
 
