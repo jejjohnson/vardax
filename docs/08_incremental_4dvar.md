@@ -261,6 +261,9 @@ It prints `largest gap to StrongFourDVar 2.0e-03`: three outer loops of at most 
 - `cg_atol`, `cg_rtol`: inner CG convergence tolerances.
 - `cvt`: solve over $\chi$ of [](#eq-cvt) (default `True`).
 - `covariance_tol`: tolerance of the CG solves that apply $R^{-1}$ (and $B^{-1}$ when `cvt=False`).
+- `jac`: `"fwd"` (default) applies $H'_t M'_t$ by `jax.linearize`, matrix-free. `"bwd"` forms the window's Jacobian with `jax.jacrev`, one VJP per observation, and runs CG on that matrix. Pass it when the forward or observation map defines only a reverse-mode rule, such as a `jax.custom_vjp` or a diffrax solve under `RecursiveCheckpointAdjoint`; it suits windows of up to a few thousand observations, and the posterior uses the same mode.
+
+A static control, such as a source field rather than an initial state, is an identity-step forward (`step` returns its input) with a one-time window: the outer loop is then Gauss-Newton 3D-Var through any `obs_op`.
 
 ## Algorithm
 

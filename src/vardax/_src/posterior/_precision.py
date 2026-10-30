@@ -34,7 +34,7 @@ import lineax as lx
 
 from vardax._src._types import Batch1D, PointObsBatch
 from vardax._src.errors import MissingInputError, ShapeError, UnsupportedInputError
-from vardax._src.models._rollout import accepts_mask, observed_trajectory
+from vardax._src.models._rollout import accepts_mask, linearise, observed_trajectory
 from vardax._src.utils.shapes import as_shape
 
 
@@ -217,6 +217,12 @@ def _whitened_control(model: Any) -> bool:
     from vardax._src.models.incremental_fourdvar import IncrementalFourDVar
 
     return isinstance(model, IncrementalFourDVar) and model.config.cvt
+
+
+def _jac_mode(model: Any) -> str:
+    """``config.jac`` of an ``IncrementalFourDVar``, else ``"fwd"``."""
+    config = getattr(model, "config", None)
+    return getattr(config, "jac", "fwd")
 
 
 def _marginalises_masked_obs(model: Any) -> bool:
@@ -405,11 +411,17 @@ def gauss_newton_covariance(
             coefficient_prior,
             apply_obs_precision,
             solver,
+            _jac_mode(underlying),
         )
         covariance = _state_covariance(basis_op, coefficient_cov)
         return analysis, covariance, "strong_4dvar", (basis_op, coefficient_cov)
     covariance = _strong_covariance(
-        analysis, observed, prior_precision, apply_obs_precision, solver
+        analysis,
+        observed,
+        prior_precision,
+        apply_obs_precision,
+        solver,
+        _jac_mode(underlying),
     )
     return analysis, covariance, "strong_4dvar", None
 
@@ -419,10 +431,10 @@ def _gauss_newton_precision(
     point: Any,
     prior_mv: Callable[[Any], Any],
     apply_obs_precision: Callable[[Array], Array],
+    jac: str = "fwd",
 ) -> lx.AbstractLinearOperator:
-    """v ↦ prior_mv(v) + G'ᵀ R⁻¹ G' v at ``point``, matrix-free."""
-    _, observed_tangent = jax.linearize(observed, point)
-    _, observed_adjoint = jax.vjp(observed, point)
+    """v ↦ prior_mv(v) + G'ᵀ R⁻¹ G' v at ``point``, matrix-free for ``jac="fwd"``."""
+    observed_tangent, observed_adjoint = linearise(observed, point, jac)
 
     def precision_mv(direction: Any) -> Any:
         # G' v
@@ -448,10 +460,11 @@ def _strong_covariance(
     prior_precision: lx.AbstractLinearOperator,
     apply_obs_precision: Callable[[Array], Array],
     solver: lx.AbstractLinearSolver,
+    jac: str = "fwd",
 ) -> lx.AbstractLinearOperator:
     """(B⁻¹ + G'ᵀ R⁻¹ G')⁻¹ at x₀*, lazily."""
     precision = _gauss_newton_precision(
-        observed, initial_state, prior_precision.mv, apply_obs_precision
+        observed, initial_state, prior_precision.mv, apply_obs_precision, jac
     )
     return gaussx.inv(precision, solver=solver)
 

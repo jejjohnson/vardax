@@ -16,6 +16,7 @@ from __future__ import annotations
 import pathlib
 import re
 
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 import lineax as lx
@@ -282,3 +283,130 @@ def test_state_space_posterior_is_unchanged(x64):
     explicit = vdx.LaplaceCovariance()(analysis, model, batch).cov
     probe = jnp.eye(analysis.shape[0])[:3]
     assert jnp.array_equal(jax.vmap(default.mv)(probe), jax.vmap(explicit.mv)(probe))
+
+
+# ──────────────────────────────────────────────────────────────────────
+# jac="bwd": a reverse-mode-only Gauss–Newton (#162)
+# ──────────────────────────────────────────────────────────────────────
+
+N_REVERSE_STATE, N_REVERSE_OBS = 3, 5
+FOOTPRINT = np.random.default_rng(0).normal(size=(N_REVERSE_OBS, N_REVERSE_STATE))
+
+
+@jax.custom_vjp
+def _reverse_only(x):
+    """h(x) = F exp(x), with only a reverse-mode rule."""
+    return jnp.asarray(FOOTPRINT) @ jnp.exp(x)
+
+
+_reverse_only.defvjp(
+    lambda x: (_reverse_only(x), x),
+    lambda x, cotangent: ((jnp.asarray(FOOTPRINT).T @ cotangent) * jnp.exp(x),),
+)
+
+
+def _both_modes(x):
+    return jnp.asarray(FOOTPRINT) @ jnp.exp(x)
+
+
+def _static_model(obs_fn, mode, **obs_kwargs):
+    def eye(n):
+        return lx.IdentityLinearOperator(jax.ShapeDtypeStruct((n,), jnp.float64))
+
+    return vdx.IncrementalFourDVar(
+        forward=_Static(),
+        obs_op=vdx.CallableObs(fn=obs_fn, **obs_kwargs),
+        prior_mean=jnp.zeros(N_REVERSE_STATE),
+        prior_cov_op=eye(N_REVERSE_STATE),
+        obs_cov_op=eye(N_REVERSE_OBS),
+        config=vdx.IncrementalConfig(
+            n_outer=20,
+            n_inner=50,
+            cg_atol=1e-14,
+            cg_rtol=1e-14,
+            covariance_tol=1e-14,
+            jac=mode,
+        ),
+    )
+
+
+def _reverse_batch(scale=1.0):
+    obs = scale * (_both_modes(jnp.full(N_REVERSE_STATE, 0.2)) + 0.1)
+    return vdx.Batch1D(input=obs[None, None], mask=jnp.ones((1, 1, N_REVERSE_OBS)))
+
+
+@pytest.mark.slow
+def test_bwd_runs_a_custom_vjp_map_to_the_minimum(x64):
+    import optimistix as optx
+
+    model = _static_model(_reverse_only, "bwd", jac="bwd", materialise=True)
+    batch = _reverse_batch()
+    analysis = model(batch)[0]
+    obs = batch.input[0, 0]
+
+    def cost(state, _args):
+        # ½ ‖x‖² + ½ ‖y − F exp(x)‖²
+        return 0.5 * state @ state + 0.5 * jnp.sum((obs - _both_modes(state)) ** 2)
+
+    solver = optx.BFGS(rtol=1e-13, atol=1e-13)
+    minimum = optx.minimise(cost, solver, jnp.zeros(N_REVERSE_STATE), max_steps=2000)
+    assert _relative_error(analysis, minimum.value) < 1e-8
+
+
+@pytest.mark.slow
+def test_bwd_equals_fwd_on_a_map_with_both_modes(x64):
+    batch = _reverse_batch()
+    forward_mode = _static_model(_both_modes, "fwd")
+    reverse_mode = _static_model(_both_modes, "bwd")
+    np.testing.assert_allclose(
+        reverse_mode(batch), forward_mode(batch), rtol=1e-10, atol=1e-12
+    )
+    eye = jnp.eye(N_REVERSE_STATE)
+    cov_fwd = jax.vmap(forward_mode.posterior(batch).cov.mv)(eye)
+    cov_bwd = jax.vmap(reverse_mode.posterior(batch).cov.mv)(eye)
+    np.testing.assert_allclose(cov_bwd, cov_fwd, rtol=1e-10, atol=1e-12)
+
+
+@pytest.mark.slow
+def test_bwd_runs_a_recursive_checkpoint_diffrax_forward(x64):
+    import diffrax as dfx
+
+    def decay(t, y, args):
+        return -y
+
+    forward = vdx.DynTrajectory(model=decay).as_forward_model(
+        dt=0.1, adjoint=dfx.RecursiveCheckpointAdjoint()
+    )
+
+    def model(jac):
+        eye = lx.IdentityLinearOperator(jax.ShapeDtypeStruct((2,), jnp.float64))
+        return vdx.IncrementalFourDVar(
+            forward=forward,
+            obs_op=vdx.MaskedIdentity(),
+            prior_mean=jnp.zeros(2),
+            prior_cov_op=eye,
+            obs_cov_op=eye,
+            config=vdx.IncrementalConfig(n_outer=2, n_inner=10, jac=jac),
+        )
+
+    batch = vdx.Batch1D(input=jnp.ones((1, 3, 2)), mask=jnp.ones((1, 3, 2)))
+    with pytest.raises(TypeError, match="custom_vjp"):
+        model("fwd")(batch)
+    assert jnp.all(jnp.isfinite(model("bwd")(batch)))
+
+
+@pytest.mark.slow
+def test_bwd_jit_and_vmap_match_a_loop(x64):
+    model = _static_model(_reverse_only, "bwd", jac="bwd", materialise=True)
+    windows = [_reverse_batch(scale) for scale in (1.0, 0.5, 2.0)]
+    stacked = jax.tree.map(lambda *leaves: jnp.concatenate(leaves), *windows)
+    batched = eqx.filter_jit(model)(stacked)
+    for i, window in enumerate(windows):
+        np.testing.assert_allclose(batched[i], model(window)[0], rtol=1e-10)
+
+
+def test_jac_is_validated_and_serialised():
+    config = vdx.IncrementalConfig(jac="bwd")
+    assert vdx.IncrementalConfig.from_config(config.get_config()).jac == "bwd"
+    with pytest.raises(vdx.ConfigurationError, match="jac"):
+        vdx.IncrementalConfig(jac="central")

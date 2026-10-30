@@ -40,9 +40,11 @@ from jaxtyping import Array, Float
 import lineax as lx
 
 from vardax._src._types import Batch1D, PointObsBatch
+from vardax._src.errors import ConfigurationError
 from vardax._src.models._observations import fill_gaps
 from vardax._src.models._rollout import (
     checkpoint_every,
+    linearise,
     observed_trajectory,
     resolve_forward,
     rollout,
@@ -81,6 +83,15 @@ class IncrementalConfig(eqx.Module):
         covariance_tol: Absolute and relative tolerance of the CG solves
             that apply $R^{-1}$ (and $B^{-1}$ when ``cvt=False``). Outer
             accuracy cannot beat it.
+        jac: How each outer iteration linearises the window's residual.
+            ``"fwd"`` (default) applies the tangent-linear model by
+            ``jax.linearize``, matrix-free. ``"bwd"`` forms the residual
+            Jacobian with ``jax.jacrev``, one VJP per observation, and runs
+            the inner CG on that matrix; pass it when the forward or
+            observation map defines only a reverse-mode rule (a
+            ``jax.custom_vjp``, e.g. a diffrax solve under
+            ``RecursiveCheckpointAdjoint``). It suits windows of up to a
+            few thousand observations. The posterior uses the same mode.
 
     Examples:
         The defaults are three outer and thirty inner iterations with the
@@ -103,6 +114,12 @@ class IncrementalConfig(eqx.Module):
     cg_rtol: float = eqx.field(static=True, default=1e-6)
     cvt: bool = eqx.field(static=True, default=True)
     covariance_tol: float = eqx.field(static=True, default=1e-6)
+    # "fwd" or "bwd", checked in __check_init__
+    jac: str = eqx.field(static=True, default="fwd")
+
+    def __check_init__(self) -> None:
+        if self.jac not in ("fwd", "bwd"):
+            raise ConfigurationError(f"jac must be 'fwd' or 'bwd'; got {self.jac!r}.")
 
     def get_config(self) -> dict[str, Any]:
         return {
@@ -112,6 +129,7 @@ class IncrementalConfig(eqx.Module):
             "cg_rtol": self.cg_rtol,
             "cvt": self.cvt,
             "covariance_tol": self.covariance_tol,
+            "jac": self.jac,
         }
 
     @classmethod
@@ -131,7 +149,9 @@ class IncrementalFourDVar(eqx.Module):
            control-variable transform).
         2. For each of ``n_outer`` iterations, linearise the residual
            $r$ at the current iterate with ``jax.linearize`` and
-           ``jax.vjp``.
+           ``jax.vjp``, or form its Jacobian with ``jax.jacrev`` when
+           ``config.jac="bwd"`` (a forward or ``obs_op`` with only a
+           reverse-mode rule).
         3. Solve the Gauss-Newton system
            $(P + r'^\top R^{-1} r') \, \delta = -\nabla J$ with CG for at
            most ``n_inner`` steps, where $P = B^{-1}$ in state space and
@@ -431,8 +451,9 @@ class IncrementalFourDVar(eqx.Module):
         )
         for _ in range(config.n_outer):
             # --- linearise at c⁽ᵏ⁾ ---
-            _, residual_tangent = jax.linearize(control_residual, control)
-            _, residual_adjoint = jax.vjp(control_residual, control)
+            residual_tangent, residual_adjoint = linearise(
+                control_residual, control, config.jac
+            )
 
             def hessian_mv(
                 direction: Float[Array, " N"],
