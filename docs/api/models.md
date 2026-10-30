@@ -33,6 +33,16 @@ window. `IncrementalConfig` collects the outer/inner-loop knobs of
       show_root_toc_entry: false
       members: [OptimalInterpolation, ThreeDVar, StrongFourDVar, WeakFourDVar, IncrementalFourDVar, IncrementalConfig, ReducedBasisFourDVar]
 
+## Optimal estimation
+
+`optimal_estimation` is the Rodgers (2000) retrieval of a small state from many measurements: the MAP by Levenberg–Marquardt on the whitened residual, with the retrieval covariance, averaging kernel, degrees of freedom for signal and information content in an `OEResult`. `OEResult.as_observation_operator()` is the retrieval's view of the state, $x_a + A (x - x_a)$, for assimilating it downstream with `OEResult.retrieval_noise_cov` as its $R$.
+
+::: vardax
+    options:
+      show_root_heading: false
+      show_root_toc_entry: false
+      members: [optimal_estimation, OEResult]
+
 ## Kalman smoother
 
 `KalmanSmoother` is the exact linear-Gaussian filter and Rauch–Tung–Striebel smoother of a control that evolves as a Gauss–Markov process between irregular observation times. It runs gaussx's `kalman_filter` and `rts_smoother`, and `from_sde` discretises a gaussx SDE kernel over the actual gaps.
