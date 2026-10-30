@@ -94,7 +94,17 @@ class ModelErrorBasis(eqx.Module):
         Returns:
             The model errors $\\eta_k$ of the window.
         """
-        coefficients = self.coefficients(whitened)
+        return self.pattern(self.coefficients(whitened))
+
+    def pattern(self, coefficients: Float[Array, "C P"]) -> Float[Array, "T N"]:
+        """$\\eta = \\chi W \\Phi^\\top$ from the coefficients $W$ themselves.
+
+        Args:
+            coefficients: The coefficients $W$, as ``WeakFourDVar`` returns.
+
+        Returns:
+            The model errors $\\eta_k$ of the window.
+        """
         # η_kn = Σ_c Σ_j χ_kc W_cj φ_nj
         return einx.dot(
             "t c, c p, n p -> t n", self.temporal, coefficients, self.spatial
