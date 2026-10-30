@@ -19,7 +19,9 @@ Implementation notes:
 - ``B_op`` and ``R_op`` are supplied as ``lineax.AbstractLinearOperator``
   (typically ``gaussx`` structured operators for Matérn priors and
   diagonal $R$).
-- The class refuses non-linear observation operators on construction.
+- ``obs_op`` is not checked for linearity. A nonlinear $H$ is linearised
+  once at $x_b$ and the class returns that single update (one outer loop
+  of incremental 3D-Var), not the MAP; use ``ThreeDVar`` for the MAP.
 """
 
 from __future__ import annotations
@@ -54,10 +56,10 @@ class OptimalInterpolation(eqx.Module):
         4. Return $x_b + B H^\top v$.
 
     Attributes:
-        obs_op: Observation operator. Must be linear (its
-            ``linearize(x)`` must return an operator independent of
-            ``x``). Use [`ThreeDVar`][vardax.ThreeDVar] for non-linear
-            ``H``.
+        obs_op: Observation operator, expected to be linear. It is not
+            checked: a nonlinear ``H`` is linearised once at $x_b$ and
+            the result is that single linearised update, not the MAP.
+            Use [`ThreeDVar`][vardax.ThreeDVar] for non-linear ``H``.
         prior_mean: Background $x_b$.
         prior_cov_op: Background-error covariance $B$ as a
             ``lineax.AbstractLinearOperator``.
