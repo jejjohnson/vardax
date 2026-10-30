@@ -194,6 +194,9 @@ def _masked_tangent(
         )
     mask = window_mask(batch)
     obs_structure = tangent.out_structure()
+    if mask.shape == (1, *obs_structure.shape):
+        # an (S, N) batch of (N,) states: drop the sample axis, as __call__ does
+        mask = mask[0]
     if mask.shape != obs_structure.shape:
         raise ShapeError(
             f"The batch mask has shape {mask.shape} but the observation "
