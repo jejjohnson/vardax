@@ -48,8 +48,11 @@ import lineax as lx
 from ._precision import gauss_newton_covariance
 from .container import Posterior
 
-#: Default solver for the lazy inverses (max_steps bounds the Krylov space).
-DEFAULT_SOLVER = lx.CG(atol=1e-6, rtol=1e-6, max_steps=200)
+#: Step cap of the default CG solves (it bounds the Krylov space).
+DEFAULT_MAX_STEPS = 200
+
+#: Default solver for the lazy inverses.
+DEFAULT_SOLVER = lx.CG(atol=1e-6, rtol=1e-6, max_steps=DEFAULT_MAX_STEPS)
 
 
 class LaplaceCovariance(eqx.Module):

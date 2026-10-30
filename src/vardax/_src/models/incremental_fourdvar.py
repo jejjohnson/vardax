@@ -300,18 +300,18 @@ class IncrementalFourDVar(eqx.Module):
         obs_cov = require_obs_cov(self.obs_cov_op)
 
         def apply_obs_precision(
-            residuals: Float[Array, "T_plus_1 N"],
-        ) -> Float[Array, "T_plus_1 N"]:
+            residuals: Float[Array, "T_plus_1 M"],
+        ) -> Float[Array, "T_plus_1 M"]:
             # R⁻¹ rₜ at each time
-            def solve_one(step_residual: Float[Array, " N"]) -> Float[Array, " N"]:
+            def solve_one(step_residual: Float[Array, " M"]) -> Float[Array, " M"]:
                 solver = lx.CG(atol=tol, rtol=tol)
                 return lx.linear_solve(obs_cov, step_residual, solver=solver).value
 
             return jax.vmap(solve_one)(residuals)
 
         def analyse_one(
-            window_obs: Float[Array, "T_plus_1 N"],
-            window_mask: Float[Array, "T_plus_1 N"],
+            window_obs: Float[Array, "T_plus_1 M"],
+            window_mask: Float[Array, "T_plus_1 M"],
         ) -> Float[Array, " N"]:
             # G(x₀) = [mₜ ⊙ Hₜ(Mₜ(x₀))]ₜ, shared with the posterior adapters
             observed = observed_trajectory(self, window_mask)
@@ -319,7 +319,7 @@ class IncrementalFourDVar(eqx.Module):
 
             def residual(
                 initial_state: Float[Array, " N"],
-            ) -> Float[Array, "T_plus_1 N"]:
+            ) -> Float[Array, "T_plus_1 M"]:
                 # rₜ = mₜ ⊙ (yₜ - Hₜ(Mₜ(x₀)))
                 return masked_observations - observed(initial_state)
 
@@ -465,11 +465,15 @@ class IncrementalFourDVar(eqx.Module):
         return gaussx.sqrt(self.prior_cov_op)
 
     def posterior(self, batch: Batch1D, adapter: Any = None) -> Any:
-        """Analyse one window and return its [`Posterior`][vardax.Posterior].
+        r"""Analyse one window and return its [`Posterior`][vardax.Posterior].
 
         Runs the analysis, then ``adapter(analysis, self, batch)``; the
         default adapter is [`LaplaceCovariance`][vardax.LaplaceCovariance]
-        with this model's $B$ and $R$.
+        with this model's $B$ and $R$. With ``config.cvt`` the covariance
+        is built over the whitened control, as the inner loop is,
+        $P^* = S (I + (G' S)^\top R^{-1} G' S)^{-1} S^\top$ with
+        $S S^\top = B$, so $B^{-1}$ is never applied; its CG solves use
+        the inner tolerances ``cg_atol`` and ``cg_rtol``.
 
         Args:
             batch: A ``Batch1D`` holding one window.
@@ -484,7 +488,17 @@ class IncrementalFourDVar(eqx.Module):
             UnsupportedInputError: For a point batch.
         """
         from vardax._src.posterior._precision import model_posterior
+        from vardax._src.posterior.laplace import DEFAULT_MAX_STEPS, LaplaceCovariance
 
+        if adapter is None and self.config.cvt:
+            # the control-space precision is the inner Hessian: solve it to
+            # the inner tolerances, with at least the default step budget
+            solver = lx.CG(
+                atol=self.config.cg_atol,
+                rtol=self.config.cg_rtol,
+                max_steps=max(self.config.n_inner, DEFAULT_MAX_STEPS),
+            )
+            adapter = LaplaceCovariance(solver=solver)
         return model_posterior(self, batch, adapter)
 
     def as_analysis_step(self) -> _IncrementalFourDVarAnalysisStep:

@@ -223,3 +223,62 @@ def test_docs_08_linear_gaussian_example_runs():
     closed_form = namespace["closed_form"]
     gauss_newton = namespace["gauss_newton"]
     assert jnp.allclose(closed_form[:, 0], gauss_newton, atol=1e-3)
+
+
+class _Static:
+    """xₜ₊₁ = xₜ: a one-time window makes the outer loop Gauss–Newton 3DVar."""
+
+    dt = 1.0
+
+    def step(self, x, dt):
+        return x
+
+
+def _matern_window(cvt, length_scale=10.0):
+    """Matérn-3/2 B on 60 cells, every third cell observed.
+
+    The default length scale of 10 cells gives cond(B) ≈ 4.8e4.
+    """
+    n_cells, n_obs = 60, 20
+    cells = jnp.arange(n_cells, dtype=float)
+    gap = jnp.abs(cells[:, None] - cells[None, :]) / length_scale
+    root_three_gap = jnp.sqrt(3.0) * gap
+    matern = (1 + root_three_gap) * jnp.exp(-root_three_gap) + 1e-8 * jnp.eye(n_cells)
+    observed = jnp.eye(n_cells)[::3]
+    model = vdx.IncrementalFourDVar(
+        forward=_Static(),
+        obs_op=vdx.CallableObs(fn=lambda x: observed @ x),
+        prior_mean=jnp.zeros(n_cells),
+        prior_cov_op=lx.MatrixLinearOperator(matern, lx.positive_semidefinite_tag),
+        obs_cov_op=lx.MatrixLinearOperator(
+            0.01 * jnp.eye(n_obs), lx.positive_semidefinite_tag
+        ),
+        config=vdx.IncrementalConfig(
+            n_outer=1, n_inner=200, cg_atol=1e-12, cg_rtol=1e-12, cvt=cvt
+        ),
+    )
+    obs = jnp.sin(cells[::3] / 8.0)
+    batch = vdx.Batch1D(input=obs[None, None], mask=jnp.ones((1, 1, n_obs)))
+    # Σ_x|y = Σ_x − G H Σ_x, with G the Kalman gain
+    innovation = observed @ matern @ observed.T + 0.01 * jnp.eye(n_obs)
+    gain = matern @ observed.T @ jnp.linalg.inv(innovation)
+    return model, batch, matern - gain @ observed @ matern
+
+
+def test_cvt_posterior_on_a_smooth_prior(x64):
+    """The posterior is built over the whitened control, never B⁻¹ (#161)."""
+    model, batch, exact = _matern_window(cvt=True)
+    posterior = model.posterior(batch)
+    dense = jax.vmap(posterior.cov.mv)(jnp.eye(exact.shape[0]))
+    assert _relative_error(dense, exact) < 1e-8
+
+
+def test_state_space_posterior_is_unchanged(x64):
+    """``cvt=False`` keeps the default Laplace adapter in state space."""
+    # a rough B, which state-space CG can invert
+    model, batch, _ = _matern_window(cvt=False, length_scale=0.5)
+    analysis = model(batch)[0]
+    default = model.posterior(batch).cov
+    explicit = vdx.LaplaceCovariance()(analysis, model, batch).cov
+    probe = jnp.eye(analysis.shape[0])[:3]
+    assert jnp.array_equal(jax.vmap(default.mv)(probe), jax.vmap(explicit.mv)(probe))

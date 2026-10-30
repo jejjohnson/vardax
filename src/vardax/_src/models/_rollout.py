@@ -221,8 +221,8 @@ def accepts_mask(obs_op: Any) -> bool:
 
 
 def observed_trajectory(
-    model: Any, mask: Float[Array, "T_plus_1 N"]
-) -> Callable[[Float[Array, " N"]], Float[Array, "T_plus_1 N"]]:
+    model: Any, mask: Float[Array, "T_plus_1 M"]
+) -> Callable[[Float[Array, " N"]], Float[Array, "T_plus_1 M"]]:
     """The window's observation map of a strong-constraint 4DVar model.
 
     G(x₀) = [mₜ ⊙ Hₜ(Mₜ(x₀))]ₜ₌₀…T, the masked predicted observations,
@@ -239,7 +239,7 @@ def observed_trajectory(
     n_steps = mask.shape[0] - 1
     obs_op = model.obs_op
 
-    def observe(state: Float[Array, " N"], step_mask: Float[Array, " N"]):
+    def observe(state: Float[Array, " N"], step_mask: Float[Array, " M"]):
         # mₜ ⊙ Hₜ(xₜ)
         if accepts_mask(obs_op):
             predicted = obs_op(state, mask=step_mask)
@@ -247,7 +247,7 @@ def observed_trajectory(
             predicted = obs_op(state)
         return step_mask * predicted
 
-    def observed(initial_state: Float[Array, " N"]) -> Float[Array, "T_plus_1 N"]:
+    def observed(initial_state: Float[Array, " N"]) -> Float[Array, "T_plus_1 M"]:
         trajectory = model._rollout(initial_state, n_steps)
         return jax.vmap(observe)(trajectory, mask)
 
