@@ -24,6 +24,7 @@ from __future__ import annotations
 from collections.abc import Callable
 
 import equinox as eqx
+import gaussx
 import jax
 import jax.numpy as jnp
 from jaxtyping import Array, Bool, Float, Int
@@ -109,7 +110,8 @@ def optimal_estimation(
     Algorithm:
         1. Whiten both terms of $J$ with Cholesky factors,
            $S_\varepsilon = L_\varepsilon L_\varepsilon^\top$ and
-           $S_a = L_a L_a^\top$ (closed form for diagonal operators).
+           $S_a = L_a L_a^\top$ by ``gaussx.cholesky``, which keeps diagonal,
+           Kronecker and block-diagonal structure.
         2. Minimise $\|[L_\varepsilon^{-1}(y - F(x));\ L_a^{-1}(x - x_a)]\|^2$
            from $x_a$ by Levenberg–Marquardt with ``ImplicitAdjoint``, so
            $\hat x$ is differentiable in $y$ and in the parameters
@@ -191,14 +193,14 @@ def optimal_estimation(
     precision_factor = jnp.linalg.cholesky(precision)
     identity = jnp.eye(n_state, dtype=x_hat.dtype)
     covariance = jax.scipy.linalg.cho_solve((precision_factor, True), identity)
-    covariance = 0.5 * (covariance + covariance.T)
+    covariance = gaussx.symmetrize(covariance)
     # A = Ŝ Kᵀ S_ε⁻¹ K
     averaging_kernel = covariance @ data_precision
     # S_m = G S_ε Gᵀ = Ŝ Kᵀ S_ε⁻¹ K Ŝ = A Ŝ, with G = Ŝ Kᵀ S_ε⁻¹
     retrieval_noise = averaging_kernel @ covariance
-    retrieval_noise = 0.5 * (retrieval_noise + retrieval_noise.T)
+    retrieval_noise = gaussx.symmetrize(retrieval_noise)
     # H = ½ ln det(S_a Ŝ⁻¹) = ½ (ln det S_a + ln det Ŝ⁻¹)
-    logdet_precision = 2.0 * jnp.sum(jnp.log(jnp.diag(precision_factor)))
+    logdet_precision = gaussx.cholesky_logdet(precision_factor)
     information = 0.5 * (logdet_a + logdet_precision)
 
     data_residual, prior_residual = residual(x_hat, y)
@@ -229,20 +231,16 @@ def optimal_estimation(
 def _whitener(
     covariance: lx.AbstractLinearOperator,
 ) -> tuple[Callable[[Array], Array], Float[Array, ""]]:
-    """v ↦ L⁻¹ v with L Lᵀ = S, and ln det S; closed form for a diagonal S."""
-    if lx.is_diagonal(covariance):
-        diagonal = lx.diagonal(covariance)
-        root = jnp.sqrt(diagonal)
+    """v ↦ L⁻¹ v with L Lᵀ = S, and ln det S, keeping S's structure.
 
-        def whiten_diagonal(vector: Array) -> Array:
-            # L⁻¹ v = v / √diag(S)
-            return vector / root
-
-        return whiten_diagonal, jnp.sum(jnp.log(diagonal))
-    factor = jnp.linalg.cholesky(covariance.as_matrix())
+    ``gaussx.cholesky`` keeps a diagonal, Kronecker or block-diagonal S
+    structured instead of materialising it.
+    """
+    # L Lᵀ = S, lower-triangular
+    factor = gaussx.cholesky(covariance)
 
     def whiten(vector: Array) -> Array:
-        # L⁻¹ v by forward substitution
-        return jax.scipy.linalg.solve_triangular(factor, vector, lower=True)
+        # L⁻¹ v
+        return gaussx.solve(factor, vector)
 
-    return whiten, 2.0 * jnp.sum(jnp.log(jnp.diag(factor)))
+    return whiten, gaussx.logdet(covariance)

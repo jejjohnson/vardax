@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import equinox as eqx
+import gaussx
 import jax
 import jax.numpy as jnp
 import lineax as lx
@@ -142,4 +143,37 @@ def test_retrieval_noise_is_the_assimilation_r(x64):
     np.testing.assert_allclose(result.S_hat.as_matrix(), [[0.5]], rtol=1e-10)
     np.testing.assert_allclose(
         result.retrieval_noise_cov.as_matrix(), [[0.25]], rtol=1e-10
+    )
+
+
+def test_kronecker_prior_matches_the_dense_prior(x64):
+    """A ``gaussx.Kronecker`` S_a gives the dense result without densifying it."""
+    rng = np.random.default_rng(4)
+    left_root, right_root = rng.normal(size=(2, 2)), rng.normal(size=(3, 3))
+    left = left_root @ left_root.T + np.eye(2)
+    right = right_root @ right_root.T + np.eye(3)
+    n_state = 6
+    K = jnp.asarray(rng.normal(size=(8, n_state)))
+    noise = lx.DiagonalLinearOperator(jnp.full(8, 0.2))
+    x_a = jnp.asarray(rng.normal(size=n_state))
+    y = jnp.asarray(rng.normal(size=8))
+    kronecker = gaussx.Kronecker(_psd(jnp.asarray(left)), _psd(jnp.asarray(right)))
+    dense = _psd(jnp.asarray(np.kron(left, right)))
+    structured = vdx.optimal_estimation(
+        lambda x: K @ x, y, x_a, kronecker, noise, rtol=1e-14, atol=1e-14
+    )
+    reference = vdx.optimal_estimation(
+        lambda x: K @ x, y, x_a, dense, noise, rtol=1e-14, atol=1e-14
+    )
+    # x̂ is where Levenberg–Marquardt stops, ~1e-9 from the closed form on
+    # this problem for either prior; Ŝ and H depend only on K for a linear
+    # forward, so they match to rounding
+    S_hat = jnp.linalg.inv(K.T @ K / 0.2 + jnp.linalg.inv(jnp.kron(left, right)))
+    x_hat = x_a + S_hat @ K.T @ (y - K @ x_a) / 0.2
+    np.testing.assert_allclose(structured.x_hat, x_hat, rtol=1e-7)
+    np.testing.assert_allclose(
+        structured.S_hat.as_matrix(), reference.S_hat.as_matrix(), rtol=1e-10
+    )
+    np.testing.assert_allclose(
+        structured.information, reference.information, rtol=1e-10
     )
