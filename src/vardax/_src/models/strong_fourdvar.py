@@ -53,7 +53,7 @@ from vardax._src.obs_operators.point import (
     window_steps,
 )
 from vardax._src.protocols import Minimiser, StateParameterization
-from vardax._src.utils.covariance import as_covariance
+from vardax._src.utils.covariance import as_covariance, masked_obs_cov
 from vardax._src.utils.shapes import as_shape
 
 
@@ -307,13 +307,14 @@ class StrongFourDVar(eqx.Module):
                     )
                     # r = m ⊙ (y − H(x))
                     residual = step_mask * (observation - predicted_obs)
-                    # R⁻¹r
+                    # R̃⁻¹r with R̃ = M R M + (I − M), so masked entries
+                    # drop out of the likelihood
                     weighted_residual = lx.linear_solve(
-                        obs_cov_op,
+                        masked_obs_cov(obs_cov_op, step_mask),
                         residual,
                         solver=self.cov_solver,
                     ).value
-                    # J_o,t = ½ rᵀ R⁻¹ r
+                    # J_o,t = ½ rᵀ R̃⁻¹ r
                     return 0.5 * jnp.sum(residual * weighted_residual)
 
                 per_step_costs = jax.vmap(_per_step)(

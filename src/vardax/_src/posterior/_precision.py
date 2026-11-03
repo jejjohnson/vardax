@@ -35,6 +35,7 @@ import lineax as lx
 from vardax._src._types import Batch1D, PointObsBatch
 from vardax._src.errors import MissingInputError, ShapeError, UnsupportedInputError
 from vardax._src.models._rollout import accepts_mask, linearise, observed_trajectory
+from vardax._src.utils.covariance import masked_obs_cov
 from vardax._src.utils.shapes import as_shape
 
 
@@ -164,10 +165,10 @@ def _linear_control(model: Any) -> Any:
     )
 
 
-def _masked_tangent(
-    tangent: lx.AbstractLinearOperator, batch: Any
-) -> lx.AbstractLinearOperator:
-    """M H' for a single-time ``Batch1D``; H' unchanged without one.
+def _single_time_mask(
+    batch: Any, obs_structure: jax.ShapeDtypeStruct
+) -> Float[Array, "*obs"] | None:
+    """The mask m of a single-time ``Batch1D``, or ``None`` without one.
 
     A batch of several fully observed windows is accepted (its mask is all
     ones); several windows with missing entries raise, since the mask of
@@ -181,19 +182,18 @@ def _masked_tangent(
     product).
     """
     if not isinstance(batch, Batch1D):
-        return tangent
+        return None
     if batch.mask.ndim == 3 and batch.mask.shape[0] != 1:
         # several windows: only a fully observed batch says nothing about
         # this sample's mask (the single-time adapters always accepted it)
         if isinstance(batch.mask, jax.core.Tracer) or bool(jnp.all(batch.mask == 1)):
-            return tangent
+            return None
         raise ShapeError(
             f"The batch holds {batch.mask.shape[0]} windows with missing "
             "observations but the analysis is one state; pass that sample's "
             "batch, e.g. jax.tree.map(lambda a: a[i:i + 1], batch)."
         )
     mask = window_mask(batch)
-    obs_structure = tangent.out_structure()
     if mask.shape == (1, *obs_structure.shape):
         # an (S, N) batch of (N,) states: drop the sample axis, as __call__ does
         mask = mask[0]
@@ -202,6 +202,20 @@ def _masked_tangent(
             f"The batch mask has shape {mask.shape} but the observation "
             f"operator returns {obs_structure.shape}."
         )
+    return mask
+
+
+def _masked_tangent(
+    tangent: lx.AbstractLinearOperator, mask: Float[Array, "*obs"] | None
+) -> lx.AbstractLinearOperator:
+    """M H' for a mask m; H' unchanged without one.
+
+    The mask is composed as its own operator, so ``tangent`` keeps its own
+    transpose (a materialised Jacobian stays a dense product).
+    """
+    if mask is None:
+        return tangent
+    obs_structure = tangent.out_structure()
     mask_op = lx.FunctionLinearOperator(
         lambda observed: mask * observed, obs_structure, lx.symmetric_tag
     )
@@ -223,19 +237,6 @@ def _jac_mode(model: Any) -> str:
     """``config.jac`` of an ``IncrementalFourDVar``, else ``"fwd"``."""
     config = getattr(model, "config", None)
     return getattr(config, "jac", "fwd")
-
-
-def _marginalises_masked_obs(model: Any) -> bool:
-    """Whether ``model``'s cost weights masked residuals by (R_oo)⁻¹.
-
-    ``ReducedBasisFourDVar`` solves each time against
-    Mₜ R Mₜ + (I − Mₜ), so a missing observation drops out of the
-    likelihood exactly even when R is correlated; the other rollout
-    models apply R⁻¹ to the zeroed residual.
-    """
-    from vardax._src.models.reduced_basis_fourdvar import ReducedBasisFourDVar
-
-    return isinstance(model, ReducedBasisFourDVar)
 
 
 def _basis_operator(
@@ -345,7 +346,12 @@ def gauss_newton_covariance(
     if not rollout:
         # H' at the analysis; the cost observes M ⊙ H(x), so the tangent is
         # M H' (missing entries carry no information)
-        tangent = _masked_tangent(underlying.obs_op.linearize(analysis), batch)
+        raw_tangent = underlying.obs_op.linearize(analysis)
+        mask = _single_time_mask(batch, raw_tangent.out_structure())
+        tangent = _masked_tangent(raw_tangent, mask)
+        if mask is not None:
+            # R̃ = M R M + (I − M), as the cost: masked entries drop out
+            obs_precision = inverse_operator(masked_obs_cov(obs_cov_op, mask), solver)
         if basis_op is None:
             # P*⁻¹ = H'ᵀ R⁻¹ H' + B⁻¹
             precision = tangent.transpose() @ obs_precision @ tangent + prior_precision
@@ -361,30 +367,15 @@ def gauss_newton_covariance(
 
     mask = window_mask(batch)
 
-    if _marginalises_masked_obs(underlying):
-        # The cost solves each time against R̃ₜ = Mₜ R Mₜ + (I - Mₜ), whose
-        # inverse on the observed block is (R_oo)⁻¹: weight with the same.
-        def apply_obs_precision(
-            observed_vector: Float[Array, "T_plus_1 N"],
-        ) -> Float[Array, "T_plus_1 N"]:
-            def solve(step_vector: Array, step_mask: Array) -> Array:
-                mask_op = lx.DiagonalLinearOperator(step_mask)
-                marginal = lx.TaggedLinearOperator(
-                    mask_op @ obs_cov_op @ mask_op
-                    + lx.DiagonalLinearOperator(1.0 - step_mask),
-                    lx.positive_semidefinite_tag,
-                )
-                return lx.linear_solve(marginal, step_vector, solver=solver).value
+    def apply_obs_precision(
+        observed_vector: Float[Array, "T_plus_1 N"],
+    ) -> Float[Array, "T_plus_1 N"]:
+        # R̃ₜ⁻¹ at each time, R̃ₜ = Mₜ R Mₜ + (I − Mₜ), as every model's cost
+        def solve(step_vector: Array, step_mask: Array) -> Array:
+            masked = masked_obs_cov(obs_cov_op, step_mask)
+            return inverse_operator(masked, solver).mv(step_vector)
 
-            return jax.vmap(solve)(observed_vector, mask)
-
-    else:
-
-        def apply_obs_precision(
-            observed_vector: Float[Array, "T_plus_1 N"],
-        ) -> Float[Array, "T_plus_1 N"]:
-            # R⁻¹ at each time
-            return jax.vmap(obs_precision.mv)(observed_vector)
+        return jax.vmap(solve)(observed_vector, mask)
 
     # --- 3. weak 4DVar: augmented control ---
     if hasattr(underlying, "_rollout_with_error"):

@@ -254,13 +254,11 @@ def test_reduced_basis_state_control_marginalises_too(x64):
     assert jnp.allclose(cov, jnp.diag(jnp.asarray([0.5, 1.0])), atol=1e-12)
 
 
-def test_strong_fourdvar_keeps_full_r_inverse(x64):
-    """StrongFourDVar's cost applies R⁻¹ to the zeroed residual; unchanged."""
-    model, batch, R = _two_site(vdx.StrongFourDVar)
+def test_strong_fourdvar_marginalises_too(x64):
+    """StrongFourDVar's cost also solves against R̃ (#189): P = diag(½, 1)."""
+    model, batch, _ = _two_site(vdx.StrongFourDVar)
     cov = _dense(vdx.LaplaceCovariance()(jnp.zeros(2), model, batch).cov, 2)
-    H = jnp.diag(jnp.asarray([1.0, 0.0]))
-    expected = jnp.linalg.inv(jnp.eye(2) + H.T @ jnp.linalg.inv(R) @ H)
-    assert jnp.allclose(cov, expected, atol=1e-12)
+    assert jnp.allclose(cov, jnp.diag(jnp.asarray([0.5, 1.0])), atol=1e-12)
 
 
 # ──────────────────────────────────────────────────────────────────────

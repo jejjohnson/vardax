@@ -39,7 +39,7 @@ from jaxtyping import Array, Float
 import lineax as lx
 
 from vardax._src.models._observations import fill_gaps
-from vardax._src.utils.covariance import as_covariance
+from vardax._src.utils.covariance import as_covariance, masked_obs_cov
 
 
 class InstrumentSpec(eqx.Module):
@@ -223,9 +223,11 @@ class MultiInstrumentFusion(eqx.Module):
         r"""Fused observation cost of the state ``x``.
 
         $$J_\text{obs}(x) = \sum_i \alpha_i \tfrac12
-        \|m_i \odot (y_i - H_i(x))\|^2_{R_i^{-1}}$$
+        \|m_i \odot (y_i - H_i(x))\|^2_{\tilde R_i^{-1}}$$
 
-        Masked-out cells may hold ``NaN``; they are ignored.
+        with $\tilde R_i = M_i R_i M_i + (I - M_i)$, $M_i = \mathrm{diag}(m_i)$, so
+        masked-out cells drop out of the likelihood even when $R_i$ is
+        correlated. They may hold ``NaN``; they are ignored.
 
         Args:
             x: State shared by all instruments.
@@ -244,11 +246,10 @@ class MultiInstrumentFusion(eqx.Module):
             observed = fill_gaps(observations[inst_id], spec.mask)
             # rᵢ = mᵢ ⊙ (yᵢ − Hᵢ(x))
             residual = spec.mask * (observed - spec.obs_op(x))
-            # Rᵢ⁻¹ rᵢ
-            weighted = lx.linear_solve(
-                as_covariance(spec.obs_cov_op), residual, solver=solver
-            ).value
-            # αᵢ ½ rᵢᵀ Rᵢ⁻¹ rᵢ
+            # R̃ᵢ⁻¹ rᵢ with R̃ᵢ = Mᵢ Rᵢ Mᵢ + (I − Mᵢ), so masked cells drop out
+            masked_cov = masked_obs_cov(as_covariance(spec.obs_cov_op), spec.mask)
+            weighted = lx.linear_solve(masked_cov, residual, solver=solver).value
+            # αᵢ ½ rᵢᵀ R̃ᵢ⁻¹ rᵢ
             total = total + self.weight(inst_id) * 0.5 * jnp.sum(residual * weighted)
         return total
 

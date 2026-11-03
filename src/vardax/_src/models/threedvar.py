@@ -46,7 +46,7 @@ from vardax._src.obs_operators.point import (
 )
 from vardax._src.parameterization import NeuralFieldParameterization
 from vardax._src.protocols import Minimiser, StateParameterization
-from vardax._src.utils.covariance import as_covariance
+from vardax._src.utils.covariance import as_covariance, masked_obs_cov
 from vardax._src.utils.shapes import as_shape
 
 
@@ -281,6 +281,8 @@ class ThreeDVar(eqx.Module):
         with_result: bool = False,
     ) -> Any:
         """Minimise the 3D-Var cost of one sample around the ``background``."""
+        # R̃ = M R M + (I − M): masked entries drop out of the likelihood
+        masked_cov = masked_obs_cov(obs_cov_op, sample_mask)
 
         def obs_cost(state: Float[Array, "*state"]) -> Float[Array, ""]:
             # Observation term — apply R^{-1} via lineax solve.
@@ -295,13 +297,13 @@ class ThreeDVar(eqx.Module):
             )
             # r = m ⊙ (y − H(x))
             residual = sample_mask * (sample_obs - predicted_obs)
-            # R⁻¹r
+            # R̃⁻¹r
             weighted_residual = lx.linear_solve(
-                obs_cov_op,
+                masked_cov,
                 residual,
                 solver=self.cov_solver,
             ).value
-            # J_o = ½ rᵀ R⁻¹ r
+            # J_o = ½ rᵀ R̃⁻¹ r
             return 0.5 * jnp.sum(residual * weighted_residual)
 
         return self._solve(background, obs_cost, with_result=with_result)
