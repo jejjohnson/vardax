@@ -11,7 +11,7 @@ Reference: MASSH `Obsop_interp_l3_jax._sparse_op` /
 Satisfies ``pipekit_cycle.ObservationOperator``: implements
 ``__call__(state, mask=None) -> obs`` and ``linearize(x) ->
 lineax.AbstractLinearOperator``. The optional ``mask`` kwarg matches
-``MaskedIdentity`` so vardax's ``_accepts_mask`` dispatch (in
+``MaskedIdentity`` so vardax's ``accepts_mask`` dispatch (in
 ``ThreeDVar`` / ``StrongFourDVar`` / ``IncrementalFourDVar``) picks it
 up automatically.
 """

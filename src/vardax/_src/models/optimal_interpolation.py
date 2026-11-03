@@ -38,6 +38,7 @@ from vardax._src._types import Batch1D
 from vardax._src.errors import ConfigurationError
 from vardax._src.models._analysis_step import analyse_forecast
 from vardax._src.models._observations import fill_gaps
+from vardax._src.models._rollout import accepts_mask
 from vardax._src.posterior.container import Posterior
 from vardax._src.utils.covariance import as_covariance
 
@@ -247,7 +248,7 @@ class OptimalInterpolation(eqx.Module):
         def masked_obs(state: Float[Array, "*state"]) -> Float[Array, "*obs"]:
             raw = (
                 obs_op(state, mask=sample_mask)
-                if _accepts_mask(obs_op)
+                if accepts_mask(obs_op)
                 else obs_op(state)
             )
             return sample_mask * raw
@@ -337,20 +338,6 @@ def _inverse(
     return lx.FunctionLinearOperator(
         inverse.mv, structure, lx.positive_semidefinite_tag
     )
-
-
-def _accepts_mask(obs_op: Any) -> bool:
-    """Whether ``obs_op.__call__`` takes a ``mask`` kwarg.
-
-    ``MaskedIdentity`` does; ``LinearObs`` doesn't. The dispatch keeps
-    the same OI implementation usable across operator types.
-    """
-    import inspect
-
-    try:
-        return "mask" in inspect.signature(obs_op.__call__).parameters
-    except (TypeError, ValueError):
-        return False
 
 
 class _ObservationSpaceCovariance(eqx.Module):

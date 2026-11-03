@@ -38,7 +38,12 @@ from vardax._src.errors import ConfigurationError
 from vardax._src.minimisers import minimise
 from vardax._src.models._analysis_step import analyse_window
 from vardax._src.models._observations import fill_gaps
-from vardax._src.models._rollout import checkpoint_every, resolve_forward, rollout
+from vardax._src.models._rollout import (
+    accepts_mask,
+    checkpoint_every,
+    resolve_forward,
+    rollout,
+)
 from vardax._src.obs_operators.point import (
     check_point_obs_cov,
     grid_point_obs_cost,
@@ -315,7 +320,7 @@ class WeakFourDVar(eqx.Module):
                 def _per_step(state, observation, step_mask):
                     predicted_obs = (
                         self.obs_op(state, mask=step_mask)
-                        if _accepts_mask(self.obs_op)
+                        if accepts_mask(self.obs_op)
                         else self.obs_op(state)
                     )
                     # r = m ⊙ (y − H(x))
@@ -508,15 +513,6 @@ class WeakFourDVar(eqx.Module):
             missing and returns the analysed initial state only.
         """
         return _WeakFourDVarAnalysisStep(self)
-
-
-def _accepts_mask(obs_op: Any) -> bool:
-    import inspect
-
-    try:
-        return "mask" in inspect.signature(obs_op.__call__).parameters
-    except (TypeError, ValueError):
-        return False
 
 
 def _weak_rollout_end(
