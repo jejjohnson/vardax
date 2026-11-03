@@ -88,7 +88,6 @@ from vardax._src.model import (
 from vardax._src.models import (
     IncrementalConfig,
     IncrementalFourDVar,
-    KalmanSmoother,
     OptimalInterpolation,
     ReducedBasisFourDVar,
     SpaceTimeFieldResult,
@@ -300,7 +299,6 @@ __all__ = [
     # Classical DA methods (Decision D14)
     "IncrementalConfig",
     "IncrementalFourDVar",
-    "KalmanSmoother",
     "OptimalInterpolation",
     "OEResult",
     "optimal_estimation",
@@ -370,8 +368,31 @@ _DEPRECATED_ALIASES = {
 }
 
 
+# Names that moved to another library of the stack. vardax does not
+# import that library, so the old name raises instead of re-exporting.
+_MOVED = {
+    "KalmanSmoother": (
+        "filterax.KalmanSmoother",
+        (
+            "Kalman filtering and smoothing live in filterax; vardax keeps "
+            "the variational and adjoint-based methods"
+        ),
+    ),
+}
+
+
 def __getattr__(name: str):
-    """Resolve a deprecated public name to its replacement, with a warning."""
+    """Resolve a deprecated public name to its replacement, with a warning.
+
+    Raises:
+        ImportError: If ``name`` moved to another library.
+    """
+    if name in _MOVED:
+        new_home, reason = _MOVED[name]
+        raise ImportError(
+            f"vardax.{name} was removed after vardax 0.2.1; use {new_home} "
+            f"instead ({reason})."
+        )
     if name not in _DEPRECATED_ALIASES:
         raise AttributeError(f"module 'vardax' has no attribute {name!r}")
     import warnings
