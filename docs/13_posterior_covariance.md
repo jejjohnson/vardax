@@ -42,7 +42,7 @@ class Posterior(eqx.Module):
 
 The covariance is an `AbstractLinearOperator` and is never materialised. The mat-vec $P^* v$ and the diagonal $\mathrm{diag}(P^*)$ are computed on demand without building the dense $P^*$.
 
-`posterior.sample(key, n_samples)` draws $x^{(e)} = x^* + (P^*)^{1/2} \xi^{(e)}$ with $\xi^{(e)} \sim \mathcal{N}(0, I)$. The square root comes from `gaussx.sqrt`, which is closed form for structured operators and a dense eigendecomposition otherwise. When the posterior came from a linear control (a `LinearParameterization`, `ReducedBasisFourDVar(basis=...)` or `IncrementalFourDVar`'s whitened control), it draws in coefficient space instead, $x^{(e)} = x^* + \Phi P_\theta^{1/2} \xi^{(e)}$, which only factors the small $P_\theta$. A posterior that already holds `samples` returns a random subset of them.
+`posterior.sample(key, n_samples)` draws $x^{(e)} = x^* + (P^*)^{1/2} \xi^{(e)}$ with $\xi^{(e)} \sim \mathcal{N}(0, I)$. The draws come from `gaussx.sample_mvn`, which picks the square root by the structure of $P^*$ (an FFT circulant embedding for `Toeplitz`, a block-banded Cholesky for `BlockTriDiag`, closed forms for other structured operators) and falls back to the symmetric square root, so a singular $P^*$ still has finite gradients. When the posterior came from a linear control (a `LinearParameterization`, `ReducedBasisFourDVar(basis=...)` or `IncrementalFourDVar`'s whitened control), it draws in coefficient space instead, $x^{(e)} = x^* + \Phi P_\theta^{1/2} \xi^{(e)}$, which only factors the small $P_\theta$. A posterior that already holds `samples` returns a random subset of them.
 
 `OptimalInterpolation` and `IncrementalFourDVar` produce posteriors as
 part of the analysis call (closed-form / GN-Hessian reuse). The other
