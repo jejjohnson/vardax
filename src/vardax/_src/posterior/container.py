@@ -93,9 +93,11 @@ class Posterior(eqx.Module):
                $x^{(e)} = x^* + \Phi P_\theta^{1/2} \xi^{(e)}$.
             2. Else with ``cov``:
                $x^{(e)} = x^* + P^{1/2} \xi^{(e)}$, $\xi^{(e)} \sim
-               \mathcal{N}(0, I)$, with the square root from
-               ``gaussx.sqrt`` (closed form for structured operators, a
-               dense eigendecomposition otherwise).
+               \mathcal{N}(0, I)$, by ``gaussx.sample_mvn``: an FFT
+               circulant embedding for ``Toeplitz``, a block-banded
+               Cholesky for ``BlockTriDiag``, closed forms for other
+               structured operators and the symmetric square root
+               otherwise, so a singular $P$ still has finite gradients.
             3. Else with ``samples``: a random subset of them, without
                replacement.
 
@@ -125,14 +127,12 @@ class Posterior(eqx.Module):
             # x⁽ᵉ⁾ = x* + Φ P_θ^{1/2} ξ⁽ᵉ⁾
             return self.mean + draws.reshape(n_samples, *self.mean.shape)
         if self.cov is not None:
-            # L Lᵀ = P; gaussx may act on the flattened state
-            root = gaussx.sqrt(self.cov)
-            noise = jax.random.normal(
-                key, (n_samples, *root.in_structure().shape), self.mean.dtype
+            # x⁽ᵉ⁾ = x* + L ξ⁽ᵉ⁾ with L Lᵀ = P, on the flattened state;
+            # sample_mvn picks L by P's structure
+            flat = gaussx.sample_mvn(
+                self.mean.ravel(), self.cov, key=key, num_samples=n_samples
             )
-            draws = jax.vmap(root.mv)(noise)
-            # x⁽ᵉ⁾ = x* + P^{1/2} ξ⁽ᵉ⁾
-            return self.mean + draws.reshape(n_samples, *self.mean.shape)
+            return flat.reshape(n_samples, *self.mean.shape)
         if self.samples is not None:
             n_stored = self.samples.shape[0]
             if n_samples > n_stored:
