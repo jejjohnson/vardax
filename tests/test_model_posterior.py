@@ -179,3 +179,24 @@ def test_inverse_operator_stays_a_gaussx_inverse():
     assert isinstance(lx.linearise(inverse), InverseOperator)
     expected = jnp.linalg.inv(matrix.as_matrix())
     assert jnp.allclose(inverse.as_matrix(), expected, rtol=1e-5)
+
+
+def test_a_float32_mask_composes_with_a_float64_tangent():
+    """utils/masks.py makes float32 masks whatever the data's dtype."""
+    with jax.enable_x64(True):
+        model = vdx.ThreeDVar(
+            obs_op=vdx.MaskedIdentity(),
+            prior_mean=jnp.zeros(3),
+            prior_cov_op=lx.MatrixLinearOperator(
+                jnp.eye(3, dtype=jnp.float64), lx.positive_semidefinite_tag
+            ),
+            obs_cov_op=lx.MatrixLinearOperator(
+                jnp.eye(3, dtype=jnp.float64), lx.positive_semidefinite_tag
+            ),
+        )
+        batch = vdx.Batch1D(
+            input=jnp.ones((1, 3), dtype=jnp.float64),
+            mask=jnp.array([[1.0, 0.0, 1.0]], dtype=jnp.float32),
+        )
+        variances = jnp.diag(model.posterior(batch).cov.as_matrix())
+        assert jnp.allclose(variances, jnp.array([0.5, 1.0, 0.5]), rtol=1e-5)
