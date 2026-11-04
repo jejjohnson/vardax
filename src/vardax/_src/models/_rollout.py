@@ -11,9 +11,11 @@ from collections.abc import Callable
 import inspect
 from typing import Any
 
+import gaussx
 import jax
 import jax.numpy as jnp
 from jaxtyping import Array, Float
+import lineax as lx
 
 from vardax._src.errors import ConfigurationError, UnsupportedInputError
 
@@ -254,39 +256,47 @@ def observed_trajectory(
     return observed
 
 
-def linearise(
-    fn: Callable[[Any], Array], point: Any, jac: str = "fwd"
-) -> tuple[Callable[[Any], Array], Callable[[Array], tuple[Any]]]:
-    """Tangent v ↦ f'(p) v and adjoint w ↦ (f'(p)ᵀ w,) of ``fn`` at ``point``.
+def gauss_newton_hessian(
+    residual_fn: Callable[[Any], Array],
+    point: Any,
+    noise_precision: Callable[[Array], Array],
+    prior_precision: Callable[[Any], Any],
+    jac: str = "fwd",
+) -> lx.AbstractLinearOperator:
+    """P + r'ᵀ W r' at ``point``, by ``gaussx.gauss_newton_operator``.
 
-    ``jac="fwd"`` uses ``jax.linearize`` and ``jax.vjp``, matrix-free.
-    ``jac="bwd"`` forms the Jacobian with ``jax.jacrev`` (one VJP per
-    output) and applies it as a dense array, for maps that define only a
+    ``jac="fwd"`` is matrix-free. ``jac="bwd"`` forms the Jacobian with
+    ``jax.jacrev`` (one VJP per output), for maps that define only a
     reverse-mode rule (a ``jax.custom_vjp``, such as a diffrax solve under
-    ``RecursiveCheckpointAdjoint``); ``point`` must then be one array.
+    ``RecursiveCheckpointAdjoint``); ``point`` must then be one array. gaussx's
+    own ``jac="bwd"`` gets J v by transposing the VJP, which cannot pass through
+    that solve's ``while_loop``, so it receives the dense J as a linear map.
 
     Args:
-        fn: The map f.
-        point: Where to linearise, p.
+        residual_fn: The residual r.
+        point: Where to linearise.
+        noise_precision: r ↦ W r.
+        prior_precision: v ↦ P v.
         jac: ``"fwd"`` or ``"bwd"``.
 
     Returns:
-        ``(tangent, adjoint)``; ``adjoint`` returns a one-tuple, as
-        ``jax.vjp``'s pullback does.
+        The lazy PSD operator.
     """
     if jac == "fwd":
-        _, tangent = jax.linearize(fn, point)
-        _, adjoint = jax.vjp(fn, point)
-        return tangent, adjoint
-    # J = ∂f/∂p, shape (*out, *in)
-    jacobian = jax.jacrev(fn)(point)
+        tangent_fn, base_point = residual_fn, point
+    else:
+        # J = ∂r/∂p, shape (*out, *in)
+        jacobian = jax.jacrev(residual_fn)(point)
 
-    def dense_tangent(direction: Array) -> Array:
-        # J v
-        return jnp.tensordot(jacobian, direction, axes=direction.ndim)
+        def tangent_fn(direction: Array) -> Array:
+            # J v
+            return jnp.tensordot(jacobian, direction, axes=direction.ndim)
 
-    def dense_adjoint(cotangent: Array) -> tuple[Array]:
-        # Jᵀ w
-        return (jnp.tensordot(cotangent, jacobian, axes=cotangent.ndim),)
-
-    return dense_tangent, dense_adjoint
+        base_point = jnp.zeros_like(point)
+    return gaussx.gauss_newton_operator(
+        tangent_fn,
+        base_point,
+        noise_precision=noise_precision,
+        prior_precision=prior_precision,
+        jac="fwd",
+    )

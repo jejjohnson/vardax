@@ -24,6 +24,7 @@ from collections.abc import Callable
 from typing import Any
 
 import equinox as eqx
+import gaussx
 import jax
 from jaxtyping import Array, Float
 import lineax as lx
@@ -48,7 +49,6 @@ from vardax._src.protocols import Minimiser, StateParameterization
 from vardax._src.utils.covariance import (
     as_covariance,
     half_weighted_norm,
-    masked_obs_cov,
 )
 from vardax._src.utils.shapes import as_shape
 
@@ -285,7 +285,7 @@ class ThreeDVar(eqx.Module):
     ) -> Any:
         """Minimise the 3D-Var cost of one sample around the ``background``."""
         # R̃ = M R M + (I − M): masked entries drop out of the likelihood
-        masked_cov = masked_obs_cov(obs_cov_op, sample_mask)
+        masked_cov = gaussx.masked_obs_covariance(obs_cov_op, sample_mask)
 
         def obs_cost(state: Float[Array, "*state"]) -> Float[Array, ""]:
             # Observation term — apply R^{-1} via lineax solve.

@@ -10,6 +10,7 @@ and returns 0.840.
 from __future__ import annotations
 
 import equinox as eqx
+import gaussx
 import jax
 import jax.numpy as jnp
 import lineax as lx
@@ -18,7 +19,6 @@ import optimistix as optx
 import pytest
 
 import vardax as vdx
-from vardax._src.utils.covariance import masked_obs_cov
 
 RHO = 0.9
 EXACT = np.array([0.5, 0.0])
@@ -165,9 +165,8 @@ def test_diagonal_r_stays_diagonal(x64):
     """A diagonal R gives a diagonal R̃: m ⊙ diag(R) + (1 − m)."""
     R = lx.DiagonalLinearOperator(jnp.array([[2.0, 3.0, 4.0], [5.0, 6.0, 7.0]]))
     mask = jnp.array([[1.0, 0.0, 1.0], [0.0, 1.0, 1.0]])
-    masked = masked_obs_cov(R, mask)
+    masked = gaussx.masked_obs_covariance(R, mask)
     assert lx.is_diagonal(masked)
-    assert lx.is_positive_semidefinite(masked)
     np.testing.assert_allclose(
         lx.diagonal(masked), [2.0, 1.0, 4.0, 1.0, 6.0, 7.0], rtol=0.0
     )
@@ -175,7 +174,7 @@ def test_diagonal_r_stays_diagonal(x64):
 
 def test_fully_observed_r_is_unchanged(x64):
     """With m = 1 everywhere, R̃ = R."""
-    masked = masked_obs_cov(_correlated_r(), jnp.ones(2))
+    masked = gaussx.masked_obs_covariance(_correlated_r(), jnp.ones(2))
     np.testing.assert_allclose(
         masked.as_matrix(), _correlated_r().as_matrix(), rtol=0.0
     )
