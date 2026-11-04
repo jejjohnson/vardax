@@ -1,13 +1,8 @@
-"""Map pipekit adjoint specs onto optimistix adjoints.
+"""Map pipekit adjoint specs onto optimistix adjoints at the inner-solve layer.
 
-The shared vocabulary lives in ``pipekit_cycle.adjoints`` (frozen
-dataclasses named after their diffrax counterparts); vardax's inner
-solvers consume ``optimistix.AbstractAdjoint`` instances. This module
-is the inner-solve-layer interpreter — the counterpart of
-``pipekit_jax.to_diffrax_adjoint`` at the dynamics layer.
-
-Specs are matched structurally by class name, so the identically-named
-classes from other libraries are accepted interchangeably.
+This is the counterpart of ``pipekit_jax.to_diffrax_adjoint`` at the dynamics layer: the
+specs of ``pipekit_cycle.adjoints`` become the ``optimistix.AbstractAdjoint`` instances
+that vardax's inner solvers consume.
 """
 
 from __future__ import annotations
@@ -23,6 +18,9 @@ from .k_step import KStepAdjoint
 
 def to_optimistix_adjoint(spec: Any) -> optx.AbstractAdjoint:
     """Map an adjoint spec onto an ``optimistix.AbstractAdjoint``.
+
+    Specs are matched structurally by class name, so identically named classes from
+    other libraries are accepted interchangeably.
 
     Algorithm:
         1. Return ``spec`` unchanged if it already is an
@@ -69,7 +67,8 @@ def to_optimistix_adjoint(spec: Any) -> optx.AbstractAdjoint:
         ... )
         True
 
-        A pipekit ``TruncatedAdjoint(k=1)`` is the one-step adjoint.
+        A pipekit ``TruncatedAdjoint(k=1)`` is the one-step estimator, as a
+        ``KStepAdjoint`` with ``k=1`` rather than the `OneStepAdjoint` subclass.
 
         >>> import vardax
         >>> adjoint = to_optimistix_adjoint(TruncatedAdjoint(k=1))
@@ -88,6 +87,7 @@ def to_optimistix_adjoint(spec: Any) -> optx.AbstractAdjoint:
     """
     if isinstance(spec, optx.AbstractAdjoint):
         return spec
+    # by name, so identically named classes from other libraries match too
     name = type(spec).__name__
     if name == "ImplicitAdjoint":
         return optx.ImplicitAdjoint()

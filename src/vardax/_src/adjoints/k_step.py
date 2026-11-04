@@ -1,20 +1,8 @@
-r"""K-step differentiation of iterative algorithms.
+"""K-step differentiation of iterative algorithms, generalising one-step.
 
-Generalises the one-step strategy of Bolte, Pauwels & Vaiter (2023):
-run the first ``n_steps - k`` iterations of the inner solver under
-``jax.lax.stop_gradient``, then ``k`` differentiable steps. Memory for
-the backward pass is $O(k)$ regardless of the total iteration count,
-and at a converged fixed point the estimator is exact for any ``k``
-(the warmup iterations contribute nothing). For unconverged, truncated
-solvers — the 4DVarNet regime — larger ``k`` trades memory for a less
-biased gradient.
-
-``KStepAdjoint(k=1)`` is exactly
-[`OneStepAdjoint`][vardax.adjoints.OneStepAdjoint], which remains as
-the familiar alias. In the shared pipekit vocabulary this strategy is
-``pipekit_cycle.adjoints.TruncatedAdjoint(k)`` applied at the
-inner-solve layer — see
-[`to_optimistix_adjoint`][vardax.adjoints.to_optimistix_adjoint].
+`KStepAdjoint` only selects a strategy for the FourDVarNet inner solver; the dispatch
+lives in ``vardax._src.solver``, and in the pipekit vocabulary it is
+``pipekit_cycle.adjoints.TruncatedAdjoint(k)`` at the inner-solve layer.
 """
 
 from __future__ import annotations
@@ -29,52 +17,40 @@ from vardax._src.errors import ConfigurationError
 
 
 class KStepAdjoint(optx.AbstractAdjoint):
-    r"""K-step differentiation: warmup under ``stop_gradient``, then ``k`` live steps.
+    """K-step differentiation: warmup under ``stop_gradient``, then ``k`` live steps.
 
-    For a solver iteration $z_{j+1} = T(z_j)$ run $n$ times, the gradient
-    flows only through the last $k$ steps,
+        x^(j+1) = g_step(x^(j); θ),   j = 0, …, N_iter − 1
+        dx^(N_iter) / dθ ≈ ∂ g_stepᵏ(x^(N_iter − k); θ) / ∂θ
 
-    $$ \frac{d z_n}{d\phi} \approx \frac{\partial T^{k}(\bar z_{n-k})}{\partial\phi} $$
-
-    where $\bar z_{n-k}$ is the iterate after the warmup, held fixed.
+    g_step is one iteration of the inner solver, and the iterate x^(N_iter − k) after
+    the warmup is held fixed, so the gradient flows only through the last k steps.
+    Memory for the backward pass is O(k) whatever the total iteration count, and at a
+    converged fixed point the estimator is exact for any k, since the warmup
+    iterations contribute nothing. For unconverged, truncated solvers, the 4DVarNet
+    regime, a larger k trades memory for a less biased gradient. Use it as the
+    ``solver_adjoint`` of [`FourDVarNet1D`][vardax.FourDVarNet1D] or
+    [`FourDVarNet2D`][vardax.FourDVarNet2D].
 
     Algorithm:
-        1. Run the first $n - k$ solver iterations under
+        1. Run the first N_iter − k solver iterations under
            ``jax.lax.stop_gradient``.
-        2. Run the last $k$ iterations differentiably.
-        3. Backpropagate through those $k$ iterations only, at memory cost
-           $O(k)$.
+        2. Run the last k iterations differentiably.
+        3. Backpropagate through those k iterations only.
 
-    Use as the ``solver_adjoint`` argument to
-    [`FourDVarNet1D`][vardax.FourDVarNet1D] /
-    [`FourDVarNet2D`][vardax.FourDVarNet2D]:
-
-    ```python
-    from vardax.adjoints import KStepAdjoint
-
-    model = FourDVarNet1D(
-        state_dim=N, n_time=T, ...,
-        solver_adjoint=KStepAdjoint(k=3),
-        key=key,
-    )
-    ```
+    Attributes:
+        k: Number of trailing solver iterations that propagate gradients. Must be at
+            least 1; values larger than ``n_solver_steps`` are clipped to a fully
+            differentiable solve.
 
     Raises:
         ConfigurationError: If ``k`` is below 1.
-
-    Attributes:
-        k: Number of trailing solver iterations that propagate
-            gradients. Must be at least 1; values larger than
-            ``n_solver_steps`` are clipped to a fully differentiable
-            solve.
 
     Examples:
         >>> import vardax
         >>> vardax.KStepAdjoint(k=3)
         KStepAdjoint(k=3)
 
-        ``k=1`` is the one-step estimator, and `OneStepAdjoint` is a
-        subclass.
+        ``k=1`` is the one-step estimator, and `OneStepAdjoint` is a subclass.
 
         >>> isinstance(vardax.OneStepAdjoint(), vardax.KStepAdjoint)
         True
@@ -89,8 +65,8 @@ class KStepAdjoint(optx.AbstractAdjoint):
         ConfigurationError: KStepAdjoint needs k >= 1; got k=0.
 
     References:
-        Bolte, J., Pauwels, E. & Vaiter, S. (2023). One-step
-        differentiation of iterative algorithms. NeurIPS 36.
+        Bolte, J., Pauwels, E. & Vaiter, S. (2023). One-step differentiation of
+        iterative algorithms. NeurIPS 36.
         [arXiv:2305.13768](https://arxiv.org/abs/2305.13768).
     """
 
@@ -107,12 +83,10 @@ class KStepAdjoint(optx.AbstractAdjoint):
         inputs: PyTree,
         tags: frozenset[object],
     ) -> PyTree[Array]:
-        """Not used by vardax's custom learned solver — dispatch happens
-        in ``vardax._src.solver`` via ``isinstance`` on the adjoint type.
+        """Raise: the learned solver dispatches on the adjoint's type instead.
 
-        Implementing this method for upstream ``optimistix.minimise``
-        compatibility is tracked under the planned upstream
-        contribution (Decision D6).
+        ``optimistix.minimise`` is not the use site for the learned solver, which
+        selects its path in ``vardax._src.solver`` by ``isinstance`` on the adjoint.
 
         Args:
             primal_fn: The primal solve (unused).
@@ -132,13 +106,16 @@ class KStepAdjoint(optx.AbstractAdjoint):
         )
 
     def __repr__(self) -> str:  # pragma: no cover - cosmetic
+        """Return ``KStepAdjoint(k=...)``."""
         return f"KStepAdjoint(k={self.k})"
 
     def get_config(self) -> dict[str, Any]:
+        """Return the fields needed to rebuild the adjoint."""
         return {
             "k": self.k,
         }
 
     @classmethod
     def from_config(cls, config: dict[str, Any]) -> KStepAdjoint:
+        """Rebuild an adjoint from ``get_config``."""
         return cls(**config)

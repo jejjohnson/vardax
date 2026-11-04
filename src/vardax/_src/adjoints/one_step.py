@@ -1,28 +1,7 @@
 """One-step differentiation of iterative algorithms (Bolte et al., 2023).
 
-vardax-owned ``optimistix.AbstractAdjoint`` subclass implementing the
-one-step differentiation strategy from
-
-    Bolte, Pauwels & Vaiter (2023). One-step differentiation of
-    iterative algorithms. NeurIPS 36. arXiv:2305.13768
-
-The strategy: run ``K - 1`` iterations of the inner solver with
-``jax.lax.stop_gradient`` applied to the iterate, then one
-differentiable step. Memory is O(1) (matching ``ImplicitAdjoint``)
-without requiring strict convergence to a fixed point.
-
-The plan (Decision D6, D15) is to contribute this upstream to
-``optimistix`` once stable. Until then, it lives in vardax. The class
-is implemented as a marker / strategy selector for the
-``FourDVarNet`` inner solver — the actual one-step dispatch lives in
-``vardax._src.solver.one_step_solve_4dvarnet_*``. The model's
-``__call__`` uses ``isinstance(model.solver_adjoint, OneStepAdjoint)``
-to pick the path.
-
-Because optimistix's ``minimise`` is not the use site for vardax's
-custom learned solver, the ``apply()`` method here is a no-op stub
-(raises ``NotImplementedError`` if hit). This will fill in when the
-adjoint is generalised for upstream contribution.
+`OneStepAdjoint` is the ``k=1`` alias of `KStepAdjoint`; like it, the class only selects
+a strategy, and the dispatch lives in ``vardax._src.solver``.
 """
 
 from __future__ import annotations
@@ -33,35 +12,24 @@ from .k_step import KStepAdjoint
 
 
 class OneStepAdjoint(KStepAdjoint):
-    r"""One-step differentiation (Bolte et al., 2023).
+    """One-step differentiation: every iteration but the last under ``stop_gradient``.
 
-    Run ``K - 1`` warmup iterations of the inner solver with
-    ``jax.lax.stop_gradient``, then one differentiable step. Gives
-    O(1) memory and is exact at the fixed point of the inner
-    iteration.
+        dx^(N_iter) / dθ ≈ ∂ g_step(x^(N_iter − 1); θ) / ∂θ
 
-    $$ \frac{d z^\star}{d\phi} \approx \partial_\phi T(\bar z_{K-1}; \phi) $$
-
-    where $\bar z_{K-1}$ is the iterate after the warmup, held fixed.
+    g_step is one iteration of the inner solver, j counts its iterations in x^(j), and
+    the iterate x^(N_iter − 1) is held fixed. It gives O(1) memory, matching
+    ``ImplicitAdjoint``, without requiring strict convergence, and is exact at the
+    fixed point of the inner iteration. Use it as the ``solver_adjoint`` of
+    [`FourDVarNet1D`][vardax.FourDVarNet1D] or
+    [`FourDVarNet2D`][vardax.FourDVarNet2D].
 
     Algorithm:
-        1. Run $K - 1$ solver iterations under ``jax.lax.stop_gradient``.
+        1. Run N_iter − 1 solver iterations under ``jax.lax.stop_gradient``.
         2. Run the last iteration differentiably.
         3. Backpropagate through that single step.
 
-    Use as the ``solver_adjoint`` argument to
-    [`FourDVarNet1D`][vardax.FourDVarNet1D] /
-    [`FourDVarNet2D`][vardax.FourDVarNet2D]:
-
-    ```python
-    from vardax.adjoints import OneStepAdjoint
-
-    model = FourDVarNet1D(
-        state_dim=N, n_time=T, ...,
-        solver_adjoint=OneStepAdjoint(),
-        key=key,
-    )
-    ```
+    Attributes:
+        k: Number of trailing iterations that propagate gradients, here 1.
 
     Examples:
         >>> import vardax
@@ -76,15 +44,31 @@ class OneStepAdjoint(KStepAdjoint):
         >>> isinstance(adjoint, vardax.KStepAdjoint)
         True
 
+        It selects the strategy of a model's inner solver.
+
+        >>> import jax
+        >>> model = vardax.FourDVarNet1D(
+        ...     state_dim=4,
+        ...     n_time=3,
+        ...     latent_dim=2,
+        ...     hidden_dim=2,
+        ...     n_solver_steps=2,
+        ...     solver_adjoint=adjoint,
+        ...     key=jax.random.PRNGKey(0),
+        ... )
+        >>> model.solver_adjoint
+        OneStepAdjoint()
+
     References:
-        Bolte, J., Pauwels, E. & Vaiter, S. (2023). One-step
-        differentiation of iterative algorithms. NeurIPS 36.
+        Bolte, J., Pauwels, E. & Vaiter, S. (2023). One-step differentiation of
+        iterative algorithms. NeurIPS 36.
         [arXiv:2305.13768](https://arxiv.org/abs/2305.13768).
     """
 
     k: int = 1
 
     def __repr__(self) -> str:  # pragma: no cover - cosmetic
+        """Return ``OneStepAdjoint()``."""
         return "OneStepAdjoint()"
 
 
