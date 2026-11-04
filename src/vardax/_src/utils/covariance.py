@@ -7,6 +7,8 @@ import jax.numpy as jnp
 from jaxtyping import Array, Bool, Float
 import lineax as lx
 
+_COMPOSITES = (lx.MulLinearOperator, gaussx.Kronecker, gaussx.BlockDiag)
+
 
 def as_covariance(operator: lx.AbstractLinearOperator) -> lx.AbstractLinearOperator:
     """Tag a covariance operator positive semidefinite.
@@ -22,10 +24,18 @@ def as_covariance(operator: lx.AbstractLinearOperator) -> lx.AbstractLinearOpera
         ``operator`` unchanged if it is already PSD, else ``operator``
         wrapped in a PSD ``TaggedLinearOperator``.
     """
-    if isinstance(operator, gaussx.Kronecker):
-        # gaussx.solve hands each factor to the solver, and lx.CG refuses an
-        # untagged one; a covariance's Kronecker factors are covariances
+    # gaussx.solve hands each part to the solver, and lx.CG refuses an untagged
+    # one; the parts of a covariance's product or block form are covariances
+    if isinstance(operator, lx.TaggedLinearOperator) and isinstance(
+        operator.operator, _COMPOSITES
+    ):
+        operator = operator.operator
+    if isinstance(operator, lx.MulLinearOperator):
+        operator = as_covariance(operator.operator) * operator.scalar
+    elif isinstance(operator, gaussx.Kronecker):
         operator = gaussx.Kronecker(*(as_covariance(op) for op in operator.operators))
+    elif isinstance(operator, gaussx.BlockDiag):
+        operator = gaussx.BlockDiag(*(as_covariance(op) for op in operator.operators))
     if lx.is_positive_semidefinite(operator):
         return operator
     return lx.TaggedLinearOperator(operator, lx.positive_semidefinite_tag)

@@ -147,14 +147,43 @@ def test_a_two_dimensional_diagonal_keeps_its_shape(x64):
     assert jnp.allclose(actual, 0.5 * jnp.sum(1.0 / variances), rtol=1e-10)
 
 
-def test_a_kronecker_with_untagged_factors_works_under_the_default_cg(x64):
-    """lx.CG refuses an untagged factor, so as_covariance tags each one."""
+def _untagged_composite(name):
     left, right = _factors()
-    untagged = gaussx.Kronecker(
+    kronecker = gaussx.Kronecker(
         lx.MatrixLinearOperator(left), lx.MatrixLinearOperator(right)
     )
+    blocks = gaussx.BlockDiag(
+        lx.MatrixLinearOperator(jnp.kron(left, left)),
+        lx.MatrixLinearOperator(left),
+    )
+    return {
+        "kronecker": kronecker,
+        "block_diag": blocks,
+        "tagged_kronecker": lx.TaggedLinearOperator(kronecker, PSD),
+        "tagged_block_diag": lx.TaggedLinearOperator(blocks, PSD),
+        "scaled_kronecker": 2.0 * kronecker,
+    }[name]
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "kronecker",
+        "block_diag",
+        "tagged_kronecker",
+        "tagged_block_diag",
+        "scaled_kronecker",
+    ],
+)
+def test_untagged_parts_work_under_the_default_cg(x64, name):
+    """lx.CG refuses an untagged part, so as_covariance tags each one."""
+    untagged = _untagged_composite(name)
+    vector = jnp.asarray(np.random.default_rng(4).normal(size=N))
     covariance = as_covariance(untagged)
-    assert all(lx.is_positive_semidefinite(op) for op in covariance.operators)
+    assert lx.is_positive_semidefinite(covariance)
+    actual = half_weighted_norm(covariance, vector, lx.CG(atol=1e-13, rtol=1e-13))
+    expected = 0.5 * vector @ jnp.linalg.solve(untagged.as_matrix(), vector)
+    assert jnp.allclose(actual, expected, rtol=1e-9)
     model = vdx.ThreeDVar(
         obs_op=vdx.MaskedIdentity(),
         prior_mean=jnp.zeros(N),
