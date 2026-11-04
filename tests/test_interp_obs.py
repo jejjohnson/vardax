@@ -175,8 +175,31 @@ def test_is_pytree_with_grid_shape_static(grid):
     assert len(leaves) == 2
 
 
+def test_a_narrow_cell_on_a_wide_axis_keeps_its_offsets():
+    """Scaling by the whole span would collapse this cell in float32."""
+    y = np.array([0.0, 1e8, 1e8 + 1.0, 2e8])
+    x = np.array([0.0, 1.0])
+    op = interp_obs_from_coords(
+        (y, x), np.array([[1e8 + 0.25, 0.0], [1e8 + 0.75, 0.0]])
+    )
+    # in the narrow cell, at offsets 0.25 and 0.75; x sits on its first node
+    np.testing.assert_array_equal(np.asarray(op.indices[:, 0]), [2, 2])
+    np.testing.assert_allclose(np.asarray(op.weights[:, 0]), [0.75, 0.25], atol=1e-6)
+    np.testing.assert_allclose(np.asarray(op.weights[:, 2]), [0.25, 0.75], atol=1e-6)
+
+
+def test_building_the_stencil_inside_jit():
+    """The coordinates are concrete, so building under jit stays possible."""
+    axis = np.arange(3.0)
+
+    def predict(state):
+        return interp_obs_from_coords((axis, axis), np.array([[0.5, 0.5]]))(state)
+
+    assert jnp.allclose(jax.jit(predict)(jnp.ones((3, 3))), 1.0)
+
+
 def test_projected_coordinates_keep_their_offset_in_a_cell():
-    """Coordinates of order 1e6 are scaled in float64 before reaching float32."""
+    """Coordinates of order 1e6 are computed in float64, then cast."""
     y = 4.0e6 + 1000.0 * np.arange(5.0)
     x = 5.0e5 + 1000.0 * np.arange(5.0)
     op = interp_obs_from_coords((y, x), np.array([[4.0e6 + 1250.0, 5.0e5 + 2500.0]]))

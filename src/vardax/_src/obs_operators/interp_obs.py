@@ -221,26 +221,15 @@ def interp_obs_from_coords(
         indices = _np.zeros((0, 4), dtype=_np.int32)
         weights = _np.zeros((0, 4))
     else:
-        # Scale the coordinates here, in float64: as float32, projected
-        # coordinates of order 1e6 would lose the offset within a grid cell.
+        # In float64 whatever JAX's default, as these coordinates are concrete:
+        # in float32, a projected coordinate of order 1e6 or a narrow cell on a
+        # wide axis would lose its offset. Only the finished weights are cast.
         # The stencil is row-major: (lo, lo), (lo, hi), (hi, lo), (hi, hi).
-        y_origin, y_span = y_axis[0], y_axis[-1] - y_axis[0]
-        x_origin, x_span = x_axis[0], x_axis[-1] - x_axis[0]
-        indices, weights = gaussx.linear_interpolation_weights(
-            jnp.asarray(
-                _np.stack(
-                    [
-                        (points[:, 0] - y_origin) / y_span,
-                        (points[:, 1] - x_origin) / x_span,
-                    ],
-                    axis=1,
-                )
-            ),
-            [
-                jnp.asarray((y_axis - y_origin) / y_span),
-                jnp.asarray((x_axis - x_origin) / x_span),
-            ],
-        )
+        with jax.ensure_compile_time_eval(), jax.enable_x64(True):
+            indices, weights = gaussx.linear_interpolation_weights(
+                jnp.asarray(points), [jnp.asarray(y_axis), jnp.asarray(x_axis)]
+            )
+            indices, weights = _np.asarray(indices), _np.asarray(weights)
 
     return InterpObs(
         indices=jnp.asarray(indices, dtype=jnp.int32),
