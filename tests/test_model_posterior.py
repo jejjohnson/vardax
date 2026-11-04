@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import gaussx
+from gaussx._primitives._inv import InverseOperator
 import jax
 import jax.numpy as jnp
 import lineax as lx
@@ -17,6 +19,7 @@ import numpy as np
 import pytest
 
 import vardax as vdx
+from vardax._src.utils.covariance import inverse_operator
 
 N_STATE = 3
 
@@ -141,3 +144,38 @@ def test_adapter_without_covariances_anywhere_raises():
     view = SimpleNamespace(obs_op=vdx.LinearObs(operator=eye))
     with pytest.raises(ValueError, match="pass prior_cov_op="):
         vdx.LaplaceCovariance()(jnp.zeros(N_STATE), view, batch=None)
+
+
+def test_diagonal_posterior_is_closed_form(monkeypatch):
+    """Diagonal B, H = I, diagonal R: diag(P*) needs no dense inverse (#194)."""
+    variances, noise = jnp.array([1.0, 2.0, 3.0, 4.0]), jnp.array([0.5, 1.0, 2.0, 0.25])
+    model = vdx.ThreeDVar(
+        obs_op=vdx.MaskedIdentity(),
+        prior_mean=jnp.zeros(4),
+        prior_cov_op=lx.DiagonalLinearOperator(variances),
+        obs_cov_op=lx.DiagonalLinearOperator(noise),
+    )
+    batch = vdx.Batch1D(input=jnp.ones((1, 4)), mask=jnp.array([[1.0, 1.0, 0.0, 1.0]]))
+    posterior = model.posterior(batch)
+
+    def forbidden(self):
+        raise AssertionError("materialised the covariance")
+
+    monkeypatch.setattr(InverseOperator, "as_matrix", forbidden)
+    monkeypatch.setattr(lx.DiagonalLinearOperator, "as_matrix", forbidden)
+    # the unobserved cell keeps its prior variance
+    mask = jnp.array([1.0, 1.0, 0.0, 1.0])
+    expected = 1.0 / (1.0 / variances + mask / noise)
+    assert jnp.allclose(gaussx.diag(posterior.cov), expected, rtol=1e-5)
+
+
+def test_inverse_operator_stays_a_gaussx_inverse():
+    matrix = lx.MatrixLinearOperator(
+        jnp.array([[2.0, 0.5], [0.5, 1.0]]), lx.positive_semidefinite_tag
+    )
+    inverse = inverse_operator(matrix, lx.Cholesky())
+    assert isinstance(inverse, InverseOperator)
+    # lineax can linearise it inside a composed precision that is solved
+    assert isinstance(lx.linearise(inverse), InverseOperator)
+    expected = jnp.linalg.inv(matrix.as_matrix())
+    assert jnp.allclose(inverse.as_matrix(), expected, rtol=1e-5)

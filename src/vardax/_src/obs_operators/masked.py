@@ -9,6 +9,7 @@ Satisfies ``pipekit_cycle.ObservationOperator``.
 from __future__ import annotations
 
 import equinox as eqx
+import jax
 from jaxtyping import Array, Float
 import lineax as lx
 
@@ -27,7 +28,7 @@ class MaskedIdentity(eqx.Module):
         >>> op(x, mask=jnp.array([1.0, 0.0, 1.0]))
         Array([1., 0., 3.], dtype=float32)
         >>> type(op.linearize(x)).__name__
-        'JacobianLinearOperator'
+        'IdentityLinearOperator'
 
         Without a mask the operator is the identity:
 
@@ -57,6 +58,6 @@ class MaskedIdentity(eqx.Module):
             x: State at which to linearise.
 
         Returns:
-            An identity-like Jacobian operator on the shape of ``x``.
+            The identity operator on the shape of ``x``.
         """
-        return lx.JacobianLinearOperator(lambda y, _args=None: y, x)
+        return lx.IdentityLinearOperator(jax.eval_shape(lambda: x))

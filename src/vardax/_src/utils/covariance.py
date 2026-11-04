@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import gaussx
 import jax.numpy as jnp
 from jaxtyping import Array, Bool, Float
 import lineax as lx
@@ -24,6 +25,27 @@ def as_covariance(operator: lx.AbstractLinearOperator) -> lx.AbstractLinearOpera
     if lx.is_positive_semidefinite(operator):
         return operator
     return lx.TaggedLinearOperator(operator, lx.positive_semidefinite_tag)
+
+
+def inverse_operator(
+    operator: lx.AbstractLinearOperator, solver: lx.AbstractLinearSolver
+) -> lx.AbstractLinearOperator:
+    """Lazy inverse of a PSD operator, keeping gaussx's ``InverseOperator``.
+
+    ``gaussx.inv`` does not look through the PSD tag added here, so a tagged
+    structured operator becomes a generic ``InverseOperator``. Its matvec is
+    still ``gaussx.solve``, which is structured, and ``gaussx.diag`` of it is
+    closed form when the operator is diagonal.
+
+    Args:
+        operator: Symmetric positive-definite operator A.
+        solver: Linear solver for operators without a closed-form inverse.
+
+    Returns:
+        A⁻¹ as a lazy operator, tagged by way of A.
+    """
+    tagged = lx.TaggedLinearOperator(operator, lx.positive_semidefinite_tag)
+    return gaussx.inv(tagged, solver=solver)
 
 
 def guarded_solve(
