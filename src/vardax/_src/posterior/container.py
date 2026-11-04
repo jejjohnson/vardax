@@ -38,6 +38,9 @@ class Posterior(eqx.Module):
             so that ``cov`` $= \Phi P_\theta \Phi^\top$.
         coefficient_cov: $P_\theta$, the coefficient-space covariance of
             a linear control, or ``None``.
+        precision: $A = P^{-1}$ when an adapter built ``cov`` by inverting
+            it, or ``None``. It gives the marginal variances through
+            ``gaussx.diag_inv`` without forming the inverse.
         provenance: Free-form dict carrying audit info — at minimum
             ``{forward_model_id, n_iter, J_star, converged,
             vardax_version}``. Consumed by
@@ -81,6 +84,7 @@ class Posterior(eqx.Module):
     provenance: dict[str, Any] = eqx.field(default_factory=dict)
     basis: lx.AbstractLinearOperator | None = None
     coefficient_cov: lx.AbstractLinearOperator | None = None
+    precision: lx.AbstractLinearOperator | None = None
 
     def sample(
         self, key: PRNGKeyArray, n_samples: int

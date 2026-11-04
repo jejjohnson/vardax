@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import gaussx
 import jax
 import jax.numpy as jnp
 import lineax as lx
@@ -178,3 +179,87 @@ class TestGaussianMarkLikelihood:
         d = mark.to_dict()
         # Should serialise without error
         json.dumps(d)
+
+
+def _precisions():
+    psd = lx.positive_semidefinite_tag
+    dense = jnp.array([[2.0, 0.5, 0.0], [0.5, 2.0, 0.5], [0.0, 0.5, 2.0]])
+    return [
+        pytest.param(lx.MatrixLinearOperator(dense, psd), id="dense"),
+        pytest.param(
+            lx.DiagonalLinearOperator(jnp.array([1.0, 2.0, 4.0])), id="diagonal"
+        ),
+        pytest.param(
+            gaussx.Kronecker(
+                lx.MatrixLinearOperator(jnp.array([[2.0, 0.5], [0.5, 1.0]]), psd),
+                lx.MatrixLinearOperator(dense, psd),
+            ),
+            id="kronecker",
+        ),
+    ]
+
+
+@pytest.mark.parametrize("precision", _precisions())
+def test_marginal_variances_from_the_stored_precision(precision):
+    """diag(P) = diag(A⁻¹), and to_dict's keys do not depend on the precision (#195)."""
+    size = precision.in_size()
+    posterior = Posterior(
+        mean=jnp.zeros(size), cov=gaussx.inv(precision), precision=precision
+    )
+    mark = GaussianMarkLikelihood(posterior=posterior)
+    expected = jnp.diag(jnp.linalg.inv(precision.as_matrix()))
+    assert jnp.allclose(mark._cov_diag(), expected, rtol=1e-5)
+    without = GaussianMarkLikelihood(
+        posterior=Posterior(mean=jnp.zeros(size), cov=gaussx.inv(precision))
+    )
+    assert mark.to_dict().keys() == without.to_dict().keys()
+    assert jnp.allclose(
+        jnp.asarray(mark.to_dict()["cov_diag"]),
+        jnp.asarray(without.to_dict()["cov_diag"]),
+        rtol=1e-5,
+    )
+
+
+def test_a_large_unstructured_precision_is_never_estimated(monkeypatch):
+    """Above the dense limit, the result comes from cov and not from a random probe."""
+    size = 2049
+    precision = lx.FunctionLinearOperator(
+        lambda v: 2.0 * v,
+        jax.ShapeDtypeStruct((size,), jnp.float32),
+        lx.positive_semidefinite_tag,
+    )
+    calls = []
+    monkeypatch.setattr(gaussx, "diag_inv", lambda *a, **k: calls.append(1))
+    cov = lx.DiagonalLinearOperator(jnp.full(size, 0.5))
+    mark = GaussianMarkLikelihood(
+        posterior=Posterior(mean=jnp.zeros(size), cov=cov, precision=precision)
+    )
+    assert jnp.allclose(mark._cov_diag(), jnp.full(size, 0.5))
+    assert not calls
+
+
+@pytest.mark.parametrize(
+    "make_model",
+    [
+        pytest.param(OptimalInterpolation, id="oi-laplace"),
+        pytest.param(ThreeDVar, id="3dvar"),
+    ],
+)
+def test_adapters_store_the_precision(make_model):
+    B = lx.MatrixLinearOperator(
+        jnp.array([[2.0, 0.5], [0.5, 1.0]]), lx.positive_semidefinite_tag
+    )
+    model = make_model(
+        obs_op=MaskedIdentity(),
+        prior_mean=jnp.zeros(2),
+        prior_cov_op=B,
+        obs_cov_op=lx.DiagonalLinearOperator(jnp.ones(2)),
+    )
+    batch = Batch1D(input=jnp.ones((1, 2)), mask=jnp.ones((1, 2)))
+    posterior = model.posterior(batch, LaplaceCovariance())
+    assert posterior.precision is not None
+    assert jnp.allclose(
+        posterior.precision.as_matrix(),
+        jnp.linalg.inv(posterior.cov.as_matrix()),
+        rtol=1e-3,
+    )

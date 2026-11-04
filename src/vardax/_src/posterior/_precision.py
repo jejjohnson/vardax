@@ -181,17 +181,33 @@ def _single_time_mask(
     return mask
 
 
-def _all_diagonal_identity(
+def _single_time_precision(
+    raw_tangent: lx.AbstractLinearOperator,
     tangent: lx.AbstractLinearOperator,
+    mask: Float[Array, "*obs"] | None,
     obs_precision: lx.AbstractLinearOperator,
     prior_precision: lx.AbstractLinearOperator,
-) -> bool:
-    """Whether P*⁻¹ = M R⁻¹ M + B⁻¹ is diagonal because H' = I."""
-    return (
-        isinstance(tangent, lx.IdentityLinearOperator)
+) -> lx.AbstractLinearOperator:
+    """P*⁻¹ = H'ᵀ R⁻¹ H' + B⁻¹, an actual diagonal when H' = I and B, R are diagonal.
+
+    Args:
+        raw_tangent: H' without the mask.
+        tangent: M H'.
+        mask: The mask m of a single-time batch, or ``None``.
+        obs_precision: R⁻¹.
+        prior_precision: B⁻¹.
+
+    Returns:
+        The precision.
+    """
+    if (
+        isinstance(raw_tangent, lx.IdentityLinearOperator)
         and lx.is_diagonal(obs_precision)
         and lx.is_diagonal(prior_precision)
-    )
+    ):
+        return _diagonal_precision(mask, obs_precision, prior_precision)
+    precision = tangent.transpose() @ obs_precision @ tangent + prior_precision
+    return lx.TaggedLinearOperator(precision, lx.positive_semidefinite_tag)
 
 
 def _diagonal_precision(
@@ -288,7 +304,13 @@ def gauss_newton_covariance(
     prior_cov_op: lx.AbstractLinearOperator | None,
     obs_cov_op: lx.AbstractLinearOperator | None,
     solver: lx.AbstractLinearSolver,
-) -> tuple[Float[Array, ...], lx.AbstractLinearOperator, str, Any]:
+) -> tuple[
+    Float[Array, ...],
+    lx.AbstractLinearOperator,
+    str,
+    Any,
+    lx.AbstractLinearOperator | None,
+]:
     r"""Mean and lazy Gauss–Newton covariance of the analysis.
 
     Algorithm:
@@ -317,10 +339,12 @@ def gauss_newton_covariance(
         solver: Linear solver for the lazy inverses.
 
     Returns:
-        ``(mean, covariance, structure, coefficients)``, where
+        ``(mean, covariance, structure, coefficients, precision)``, where
         ``structure`` names the branch taken (``"single_time"``,
-        ``"strong_4dvar"`` or ``"weak_4dvar"``) and ``coefficients`` is
-        ``(Φ, P_θ)`` for a linear control, else ``None``.
+        ``"strong_4dvar"`` or ``"weak_4dvar"``), ``coefficients`` is
+        ``(Φ, P_θ)`` for a linear control, else ``None``, and ``precision``
+        is the operator ``covariance`` inverts, when it is a plain inverse
+        (not for a linear control or the x₀ block of a weak 4DVar).
 
     Raises:
         AttributeError: If the model exposes no ``obs_op``.
@@ -367,26 +391,19 @@ def gauss_newton_covariance(
             # R̃ = M R M + (I − M), as the cost: masked entries drop out
             obs_precision = inverse_operator(masked_obs_cov(obs_cov_op, mask), solver)
         if basis_op is None:
-            if _all_diagonal_identity(raw_tangent, obs_precision, prior_precision):
-                return (
-                    analysis,
-                    gaussx.inv(
-                        _diagonal_precision(mask, obs_precision, prior_precision)
-                    ),
-                    "single_time",
-                    None,
-                )
             # P*⁻¹ = H'ᵀ R⁻¹ H' + B⁻¹
-            precision = tangent.transpose() @ obs_precision @ tangent + prior_precision
-            tagged = lx.TaggedLinearOperator(precision, lx.positive_semidefinite_tag)
-            return analysis, gaussx.inv(tagged, solver=solver), "single_time", None
+            state_precision = _single_time_precision(
+                raw_tangent, tangent, mask, obs_precision, prior_precision
+            )
+            covariance = gaussx.inv(state_precision, solver=solver)
+            return analysis, covariance, "single_time", None, state_precision
         # P_θ⁻¹ = Φᵀ H'ᵀ R⁻¹ H' Φ + Q⁻¹
         reduced = tangent @ basis_op
         precision = reduced.transpose() @ obs_precision @ reduced + coefficient_prior
         tagged = lx.TaggedLinearOperator(precision, lx.positive_semidefinite_tag)
         coefficient_cov = gaussx.inv(tagged, solver=solver)
         covariance = _state_covariance(basis_op, coefficient_cov)
-        return analysis, covariance, "single_time", (basis_op, coefficient_cov)
+        return analysis, covariance, "single_time", (basis_op, coefficient_cov), None
 
     mask = window_mask(batch)
 
@@ -407,7 +424,7 @@ def gauss_newton_covariance(
                 "The posterior adapters do not support a WeakFourDVar with "
                 "model_err_basis yet; its control is (x0, ω), not (x0, η)."
             )
-        return _weak_covariance(
+        mean, covariance, structure, coefficients = _weak_covariance(
             analysis,
             underlying,
             mask,
@@ -415,6 +432,7 @@ def gauss_newton_covariance(
             apply_obs_precision,
             solver,
         )
+        return mean, covariance, structure, coefficients, None
 
     # --- 2. strong 4DVar ---
     observed = observed_trajectory(underlying, mask)
@@ -433,16 +451,21 @@ def gauss_newton_covariance(
             _jac_mode(underlying),
         )
         covariance = _state_covariance(basis_op, coefficient_cov)
-        return analysis, covariance, "strong_4dvar", (basis_op, coefficient_cov)
-    covariance = _strong_covariance(
-        analysis,
+        return analysis, covariance, "strong_4dvar", (basis_op, coefficient_cov), None
+    precision = _gauss_newton_precision(
         observed,
-        prior_precision,
+        analysis,
+        prior_precision.mv,
         apply_obs_precision,
-        solver,
         _jac_mode(underlying),
     )
-    return analysis, covariance, "strong_4dvar", None
+    return (
+        analysis,
+        gaussx.inv(precision, solver=solver),
+        "strong_4dvar",
+        None,
+        precision,
+    )
 
 
 def _gauss_newton_precision(
