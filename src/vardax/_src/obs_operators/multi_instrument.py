@@ -40,6 +40,7 @@ from jaxtyping import Array, Float
 import lineax as lx
 
 from vardax._src.models._observations import fill_gaps
+from vardax._src.obs_operators.tangent import obs_tangent
 from vardax._src.utils.covariance import as_covariance
 
 
@@ -198,7 +199,7 @@ class MultiInstrumentFusion(eqx.Module):
             x: State at which to linearise.
         """
         return {
-            inst_id: spec.obs_op.linearize(x)
+            inst_id: obs_tangent(spec.obs_op, x)
             for inst_id, spec in self.registry.entries.items()
         }
 

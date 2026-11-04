@@ -39,6 +39,7 @@ from vardax._src.models._rollout import (
     gauss_newton_hessian,
     observed_trajectory,
 )
+from vardax._src.obs_operators.tangent import obs_tangent
 from vardax._src.utils.covariance import inverse_operator
 from vardax._src.utils.shapes import as_shape
 
@@ -391,7 +392,7 @@ def gauss_newton_covariance(
     if not rollout:
         # H' at the analysis; the cost observes M ⊙ H(x), so the tangent is
         # M H' (missing entries carry no information)
-        raw_tangent = underlying.obs_op.linearize(analysis)
+        raw_tangent = obs_tangent(underlying.obs_op, analysis)
         mask = _single_time_mask(batch, raw_tangent.out_structure())
         tangent = _masked_tangent(raw_tangent, mask)
         if mask is not None:
