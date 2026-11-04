@@ -8,6 +8,7 @@ give a model the same weighted likelihood.
 
 from __future__ import annotations
 
+import gaussx
 import jax
 import jax.numpy as jnp
 import lineax as lx
@@ -63,3 +64,83 @@ def test_obs_cov_op_blocks_follow_sorted_ids():
     diagonal = jax.vmap(fusion.obs_cov_op().mv)(jnp.eye(3)).diagonal()
     # a first (R_a), then b (R_b / 0.5)
     np.testing.assert_allclose(diagonal, [0.5, 2.0, 0.5], rtol=1e-6)
+
+
+def _registry_of_three():
+    """One 2-D and two 1-D observation shapes, with diagonal and dense R."""
+    dtype = jnp.result_type(float)
+    identity = vdx.MaskedIdentity()
+    dense = lx.MatrixLinearOperator(
+        jnp.array([[2.0, 0.5], [0.5, 1.0]], dtype), lx.positive_semidefinite_tag
+    )
+    entries = {
+        "a": vdx.InstrumentSpec(
+            identity,
+            jnp.ones((2, 2), dtype),
+            lx.DiagonalLinearOperator(jnp.array([[1.0, 2.0], [3.0, 4.0]], dtype)),
+            "a",
+        ),
+        "b": vdx.InstrumentSpec(identity, jnp.ones(2, dtype), dense, "b"),
+        "c": vdx.InstrumentSpec(
+            identity,
+            jnp.ones(3, dtype),
+            lx.DiagonalLinearOperator(jnp.array([1.0, 0.5, 0.25], dtype)),
+            "c",
+        ),
+    }
+    return vdx.MultiInstrumentFusion(
+        vdx.InstrumentRegistry(entries=entries), weights={"a": 2.0, "b": 0.5, "c": 1.0}
+    )
+
+
+def _dense_fused_r():
+    dtype = jnp.result_type(float)
+    return jax.scipy.linalg.block_diag(
+        jnp.diag(jnp.array([1.0, 2.0, 3.0, 4.0], dtype)) / 2.0,
+        jnp.array([[2.0, 0.5], [0.5, 1.0]], dtype) / 0.5,
+        jnp.diag(jnp.array([1.0, 0.5, 0.25], dtype)),
+    )
+
+
+def test_obs_cov_op_is_block_diag_and_solves_like_the_dense_r():
+    """R = blockdiag(Rᵢ / αᵢ), with a flattened 2-D block (#191)."""
+    covariance = _registry_of_three().obs_cov_op()
+    assert isinstance(covariance, gaussx.BlockDiag)
+    assert lx.is_positive_semidefinite(covariance)
+    dense = _dense_fused_r()
+    vector = jnp.arange(1.0, 10.0, dtype=dense.dtype)
+    assert jnp.allclose(covariance.mv(vector), dense @ vector, rtol=1e-5)
+    solved = gaussx.solve(covariance, vector)
+    assert jnp.allclose(solved, jnp.linalg.solve(dense, vector), rtol=1e-4)
+    assert jnp.allclose(
+        gaussx.logdet(covariance), jnp.linalg.slogdet(dense)[1], rtol=1e-4
+    )
+
+
+def test_a_shaped_dense_block_is_reshaped():
+    """A 2-D block that is not diagonal goes through the lazy flatten."""
+    dtype = jnp.result_type(float)
+    shaped = lx.FunctionLinearOperator(
+        lambda v: 3.0 * v,
+        jax.ShapeDtypeStruct((2, 2), dtype),
+        lx.positive_semidefinite_tag,
+    )
+    fusion = vdx.MultiInstrumentFusion(
+        vdx.InstrumentRegistry(
+            entries={
+                "a": vdx.InstrumentSpec(
+                    vdx.MaskedIdentity(), jnp.ones((2, 2), dtype), shaped, "a"
+                )
+            }
+        )
+    )
+    vector = jnp.arange(4.0, dtype=dtype)
+    assert jnp.allclose(fusion.obs_cov_op().mv(vector), 3.0 * vector)
+
+
+def test_an_empty_registry_has_an_empty_covariance():
+    fusion = vdx.MultiInstrumentFusion(vdx.InstrumentRegistry(entries={}))
+    covariance = fusion.obs_cov_op()
+    assert covariance.in_size() == 0
+    assert covariance.mv(jnp.zeros(0)).shape == (0,)
+    assert fusion.cost(jnp.zeros(2), {}) == 0.0
