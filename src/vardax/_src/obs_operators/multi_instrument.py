@@ -33,6 +33,7 @@ from __future__ import annotations
 from typing import Any
 
 import equinox as eqx
+import gaussx
 import jax
 import jax.numpy as jnp
 from jaxtyping import Array, Float
@@ -234,13 +235,12 @@ class MultiInstrumentFusion(eqx.Module):
             observations: Observations $y_i$ keyed by instrument id, one
                 for every instrument in the registry.
             solver: Linear solver for $R_i^{-1} r_i$. Default ``None``:
-                ``lx.AutoLinearSolver(well_posed=True)``, a direct solve
+                ``gaussx.solve``'s structural dispatch, a direct solve
                 (closed form for a diagonal $R_i$).
 
         Returns:
             The scalar cost.
         """
-        solver = solver or lx.AutoLinearSolver(well_posed=True)
         total = jnp.zeros(())
         for inst_id, spec in self.registry.entries.items():
             observed = fill_gaps(observations[inst_id], spec.mask)
@@ -248,7 +248,7 @@ class MultiInstrumentFusion(eqx.Module):
             residual = spec.mask * (observed - spec.obs_op(x))
             # R̃ᵢ⁻¹ rᵢ with R̃ᵢ = Mᵢ Rᵢ Mᵢ + (I − Mᵢ), so masked cells drop out
             masked_cov = masked_obs_cov(as_covariance(spec.obs_cov_op), spec.mask)
-            weighted = lx.linear_solve(masked_cov, residual, solver=solver).value
+            weighted = gaussx.solve(masked_cov, residual, solver=solver)
             # αᵢ ½ rᵢᵀ R̃ᵢ⁻¹ rᵢ
             total = total + self.weight(inst_id) * 0.5 * jnp.sum(residual * weighted)
         return total
@@ -261,28 +261,27 @@ class MultiInstrumentFusion(eqx.Module):
         weighted fused cost.
 
         Returns:
-            A lazy PSD operator on the concatenated observation vector.
+            A `gaussx.BlockDiag` on the concatenated observation vector, so
+            solves and factors work block by block.
         """
         ids = sorted(self.registry.entries)
-        covs = [self.registry.entries[k].obs_cov_op for k in ids]
-        shapes = [cov.in_structure().shape for cov in covs]
-        sizes = [int(jnp.prod(jnp.array(shape))) for shape in shapes]
-        dtype = covs[0].in_structure().dtype if covs else jnp.float32
-        flat = jax.ShapeDtypeStruct((sum(sizes),), dtype)
-
-        def covariance_mv(vector: Float[Array, " M"]) -> Float[Array, " M"]:
-            blocks = []
-            offset = 0
-            for inst_id, cov, shape, size in zip(ids, covs, shapes, sizes, strict=True):
-                segment = vector[offset : offset + size].reshape(shape)
-                # Rᵢ vᵢ / αᵢ
-                block = cov.mv(segment) / self.weight(inst_id)
-                blocks.append(jnp.ravel(block))
-                offset += size
-            return jnp.concatenate(blocks)
-
-        return lx.FunctionLinearOperator(
-            covariance_mv, flat, lx.positive_semidefinite_tag
+        if not ids:
+            # BlockDiag needs at least one block
+            return lx.FunctionLinearOperator(
+                lambda vector: vector,
+                jax.ShapeDtypeStruct((0,), jnp.float32),
+                lx.positive_semidefinite_tag,
+            )
+        # blockdiag(R₁ / α₁, …, R_k / α_k)
+        return gaussx.BlockDiag(
+            *(
+                gaussx.scaled_operator(
+                    _flat_covariance(self.registry.entries[inst_id].obs_cov_op),
+                    1.0 / self.weight(inst_id),
+                    tags=lx.positive_semidefinite_tag,
+                )
+                for inst_id in ids
+            )
         )
 
     def to_observation_operator(self) -> _FlattenedMultiInstrument:
@@ -293,6 +292,29 @@ class MultiInstrumentFusion(eqx.Module):
         consumer requires a single ``(state) -> Array`` signature.
         """
         return _FlattenedMultiInstrument(fusion=self)
+
+
+def _flat_covariance(cov: lx.AbstractLinearOperator) -> lx.AbstractLinearOperator:
+    """``cov`` on flattened vectors, as a `gaussx.BlockDiag` block must act.
+
+    Args:
+        cov: A covariance on an instrument's observation shape.
+
+    Returns:
+        The same covariance acting on 1-D vectors: ``cov`` itself when it
+        already does, a diagonal when it is diagonal, else a lazy reshape.
+    """
+    structure = cov.in_structure()
+    if len(structure.shape) == 1:
+        return cov
+    if lx.is_diagonal(cov):
+        return lx.DiagonalLinearOperator(lx.diagonal(cov))
+    flat = jax.ShapeDtypeStruct((cov.in_size(),), structure.dtype)
+
+    def flat_mv(vector: Float[Array, " M"]) -> Float[Array, " M"]:
+        return jnp.ravel(cov.mv(vector.reshape(structure.shape)))
+
+    return lx.FunctionLinearOperator(flat_mv, flat, lx.positive_semidefinite_tag)
 
 
 class _FlattenedMultiInstrument(eqx.Module):
