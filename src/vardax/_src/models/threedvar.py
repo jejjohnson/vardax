@@ -25,7 +25,6 @@ from typing import Any
 
 import equinox as eqx
 import jax
-import jax.numpy as jnp
 from jaxtyping import Array, Float
 import lineax as lx
 import optimistix as optx
@@ -46,7 +45,11 @@ from vardax._src.obs_operators.point import (
 )
 from vardax._src.parameterization import NeuralFieldParameterization
 from vardax._src.protocols import Minimiser, StateParameterization
-from vardax._src.utils.covariance import as_covariance, masked_obs_cov
+from vardax._src.utils.covariance import (
+    as_covariance,
+    half_weighted_norm,
+    masked_obs_cov,
+)
 from vardax._src.utils.shapes import as_shape
 
 
@@ -297,14 +300,8 @@ class ThreeDVar(eqx.Module):
             )
             # r = m ⊙ (y − H(x))
             residual = sample_mask * (sample_obs - predicted_obs)
-            # R̃⁻¹r
-            weighted_residual = lx.linear_solve(
-                masked_cov,
-                residual,
-                solver=self.cov_solver,
-            ).value
             # J_o = ½ rᵀ R̃⁻¹ r
-            return 0.5 * jnp.sum(residual * weighted_residual)
+            return half_weighted_norm(masked_cov, residual, self.cov_solver)
 
         return self._solve(background, obs_cost, with_result=with_result)
 
@@ -372,14 +369,10 @@ class ThreeDVar(eqx.Module):
             # Background term — apply B^{-1} via lineax solve.
             # δx = x − x_b
             increment = state - background
-            # B⁻¹δx
-            weighted_increment = lx.linear_solve(
-                self.prior_cov_op,
-                increment,
-                solver=self.cov_solver,
-            ).value
             # J_b = ½ δxᵀ B⁻¹ δx
-            background_cost = 0.5 * jnp.sum(increment * weighted_increment)
+            background_cost = half_weighted_norm(
+                self.prior_cov_op, increment, self.cov_solver
+            )
             assert obs_cost is not None
             return background_cost + obs_cost(state)
 

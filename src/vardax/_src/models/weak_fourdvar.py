@@ -52,7 +52,11 @@ from vardax._src.obs_operators.point import (
     window_steps,
 )
 from vardax._src.protocols import Minimiser, StateParameterization
-from vardax._src.utils.covariance import as_covariance, masked_obs_cov
+from vardax._src.utils.covariance import (
+    as_covariance,
+    half_weighted_norm,
+    masked_obs_cov,
+)
 from vardax._src.utils.shapes import as_shape
 
 
@@ -325,15 +329,13 @@ class WeakFourDVar(eqx.Module):
                     )
                     # r = m ⊙ (y − H(x))
                     residual = step_mask * (observation - predicted_obs)
-                    # R̃⁻¹r with R̃ = M R M + (I − M), so masked entries
-                    # drop out of the likelihood
-                    weighted_residual = lx.linear_solve(
+                    # J_o,t = ½ rᵀ R̃⁻¹ r with R̃ = M R M + (I − M), so masked
+                    # entries drop out of the likelihood
+                    return half_weighted_norm(
                         masked_obs_cov(obs_cov_op, step_mask),
                         residual,
-                        solver=self.cov_solver,
-                    ).value
-                    # J_o,t = ½ rᵀ R̃⁻¹ r
-                    return 0.5 * jnp.sum(residual * weighted_residual)
+                        self.cov_solver,
+                    )
 
                 per_step_costs = jax.vmap(_per_step)(
                     trajectory, window_obs, window_mask
@@ -364,14 +366,10 @@ class WeakFourDVar(eqx.Module):
 
             def model_error_cost(error_control: Array) -> Float[Array, ""]:
                 def _model_error_cost(step_error):
-                    # Q⁻¹η
-                    weighted_error = lx.linear_solve(
-                        model_err_cov,
-                        step_error,
-                        solver=self.cov_solver,
-                    ).value
                     # J_q,t = ½ ηᵀ Q⁻¹ η
-                    return 0.5 * jnp.sum(step_error * weighted_error)
+                    return half_weighted_norm(
+                        model_err_cov, step_error, self.cov_solver
+                    )
 
                 # A one-state window has no model-error steps (vmap over an
                 # empty axis would trip lineax's CG on a zero-size operand).
@@ -433,14 +431,8 @@ class WeakFourDVar(eqx.Module):
         def background_cost(initial_state: Float[Array, " N"]) -> Float[Array, ""]:
             # δx = x₀ − x_b
             increment = initial_state - self.prior_mean
-            # B⁻¹δx
-            weighted_increment = lx.linear_solve(
-                self.prior_cov_op,
-                increment,
-                solver=self.cov_solver,
-            ).value
             # J_b = ½ δxᵀ B⁻¹ δx
-            return 0.5 * jnp.sum(increment * weighted_increment)
+            return half_weighted_norm(self.prior_cov_op, increment, self.cov_solver)
 
         if basis is not None:
             # control (x₀, ω)
