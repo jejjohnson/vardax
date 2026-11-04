@@ -31,9 +31,10 @@ from collections.abc import Callable
 
 import einx
 import equinox as eqx
+import gaussx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, Float, Int
+from jaxtyping import Array, Float
 import lineax as lx
 import numpy as np
 
@@ -151,16 +152,6 @@ def whitened_residual(
     )
 
 
-def _bracket(
-    axis: Float[Array, " K"], points: Float[Array, " N_obs"]
-) -> tuple[Int[Array, " N_obs"], Float[Array, " N_obs"]]:
-    """Left neighbour index and fractional offset, clamped to the axis."""
-    left_index = jnp.clip(jnp.searchsorted(axis, points) - 1, 0, axis.shape[0] - 2)
-    span = axis[left_index + 1] - axis[left_index]
-    fraction = jnp.clip((points - axis[left_index]) / span, 0.0, 1.0)
-    return left_index, fraction
-
-
 class GridPointObs(eqx.Module):
     r"""$\mathcal H_t(x_t)$ at scattered points for a gridded state.
 
@@ -266,28 +257,22 @@ class GridPointObs(eqx.Module):
         n_obs = safe.values.shape[0]
         grid_shape = tuple(axis.shape[0] for axis in self.grid_axes)
         flat_frames = einx.id("t s... -> t (s...)", state)
-        frames = einx.id("t (g...) -> t g...", flat_frames, g=grid_shape)
+        # raises when the state does not hold this grid
+        einx.id("t (g...) -> t g...", flat_frames, g=grid_shape)
         time_indices = (
             jnp.zeros(n_obs, dtype=jnp.int32)
             if safe.time_index is None
             else jnp.clip(safe.time_index, 0, state.shape[0] - 1)
         )
-        if len(self.grid_axes) == 1:
-            left_index, right_weight = _bracket(self.grid_axes[0], safe.coords[:, 0])
-            left = frames[time_indices, left_index]
-            right = frames[time_indices, left_index + 1]
-            # ŷ = (1 − w) f_left + w f_right
-            return (1.0 - right_weight) * left + right_weight * right
-        y_index, y_weight = _bracket(self.grid_axes[0], safe.coords[:, 0])
-        x_index, x_weight = _bracket(self.grid_axes[1], safe.coords[:, 1])
-        corner_00 = frames[time_indices, y_index, x_index]
-        corner_01 = frames[time_indices, y_index, x_index + 1]
-        corner_10 = frames[time_indices, y_index + 1, x_index]
-        corner_11 = frames[time_indices, y_index + 1, x_index + 1]
-        # ŷ = (1 − w_y) [(1 − w_x) f₀₀ + w_x f₀₁] + w_y [(1 − w_x) f₁₀ + w_x f₁₁]
-        return (1.0 - y_weight) * (
-            (1.0 - x_weight) * corner_00 + x_weight * corner_01
-        ) + y_weight * ((1.0 - x_weight) * corner_10 + x_weight * corner_11)
+        n_axes = len(self.grid_axes)
+        # flat grid indices and weights of each point's 2^D corners
+        indices, weights = gaussx.linear_interpolation_weights(
+            safe.coords[:, :n_axes], list(self.grid_axes)
+        )
+        # f[t, iₖ], one row per observation
+        corners = flat_frames[time_indices[:, None], indices]
+        # ŷ = Σₖ wₖ f[t, iₖ], bilinear in 2-D
+        return einx.sum("o [k]", weights * corners)
 
 
 class FieldPointObs(eqx.Module):

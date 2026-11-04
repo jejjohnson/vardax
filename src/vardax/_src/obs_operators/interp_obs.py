@@ -19,6 +19,7 @@ up automatically.
 from __future__ import annotations
 
 import equinox as eqx
+import gaussx
 import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike, Float, Int
@@ -112,11 +113,10 @@ class InterpObs(eqx.Module):
     ) -> lx.AbstractLinearOperator:
         """Tangent-linear at ``x``: ``H`` itself (linear operator).
 
-        Wraps ``__call__`` as a ``lineax.FunctionLinearOperator`` so it
-        plugs straight into ``IncrementalFourDVar``'s GN Hessian
-        assembly and ``LaplaceCovariance``. The transpose ``H^T`` is
-        derived via ``jax.vjp`` (cached numpy adjoint is no longer
-        exposed; use ``op.transpose().mv(y)`` instead).
+        ``gaussx.interpolation_operator`` holds the stencil, so it plugs
+        straight into ``IncrementalFourDVar``'s GN Hessian assembly and
+        ``LaplaceCovariance``, and ``op.transpose().mv(y)`` is its
+        scatter-add.
 
         The input structure is taken from ``x.shape`` so the operator
         composes with both 2-D ``(Ny, Nx)`` and flat ``(Ny*Nx,)`` state
@@ -131,7 +131,14 @@ class InterpObs(eqx.Module):
             The operator $H$, which does not depend on ``x`` otherwise.
         """
         in_struct = jax.ShapeDtypeStruct(x.shape, x.dtype)
-        return lx.FunctionLinearOperator(self.__call__, in_struct)
+        flatten_state = lx.FunctionLinearOperator(jnp.ravel, in_struct)
+        # W, the gather of the four corners, with its scatter-add transpose
+        interpolation = gaussx.interpolation_operator(
+            self.indices,
+            self.weights.astype(x.dtype),
+            self.grid_shape[0] * self.grid_shape[1],
+        )
+        return interpolation @ flatten_state
 
 
 def interp_obs_from_coords(
@@ -209,49 +216,35 @@ def interp_obs_from_coords(
     if points.ndim != 2 or points.shape[1] != 2:
         raise ShapeError(f"obs_coords must be (n_obs, 2); got {points.shape}.")
 
-    n_y, n_x = y_axis.size, x_axis.size
-    y_lower_index, y_upper_weight = _bracket(y_axis, points[:, 0])
-    x_lower_index, x_upper_weight = _bracket(x_axis, points[:, 1])
-    y_upper_index, x_upper_index = y_lower_index + 1, x_lower_index + 1
-    y_lower_weight, x_lower_weight = 1.0 - y_upper_weight, 1.0 - x_upper_weight
-
-    # flat index of the 2x2 stencil: (lo, lo), (lo, hi), (hi, lo), (hi, hi)
-    indices = _np.stack(
-        [
-            y_lower_index * n_x + x_lower_index,
-            y_lower_index * n_x + x_upper_index,
-            y_upper_index * n_x + x_lower_index,
-            y_upper_index * n_x + x_upper_index,
-        ],
-        axis=1,
-    )
-    # bilinear weight of each corner, w_y w_x, in the same order
-    weights = _np.stack(
-        [
-            y_lower_weight * x_lower_weight,
-            y_lower_weight * x_upper_weight,
-            y_upper_weight * x_lower_weight,
-            y_upper_weight * x_upper_weight,
-        ],
-        axis=1,
-    )
+    if points.shape[0] == 0:
+        # gaussx's weights reject an empty batch on a 2-D grid
+        indices = _np.zeros((0, 4), dtype=_np.int32)
+        weights = _np.zeros((0, 4))
+    else:
+        # Scale the coordinates here, in float64: as float32, projected
+        # coordinates of order 1e6 would lose the offset within a grid cell.
+        # The stencil is row-major: (lo, lo), (lo, hi), (hi, lo), (hi, hi).
+        y_origin, y_span = y_axis[0], y_axis[-1] - y_axis[0]
+        x_origin, x_span = x_axis[0], x_axis[-1] - x_axis[0]
+        indices, weights = gaussx.linear_interpolation_weights(
+            jnp.asarray(
+                _np.stack(
+                    [
+                        (points[:, 0] - y_origin) / y_span,
+                        (points[:, 1] - x_origin) / x_span,
+                    ],
+                    axis=1,
+                )
+            ),
+            [
+                jnp.asarray((y_axis - y_origin) / y_span),
+                jnp.asarray((x_axis - x_origin) / x_span),
+            ],
+        )
 
     return InterpObs(
         indices=jnp.asarray(indices, dtype=jnp.int32),
         # JAX's default float dtype, so the weights are float64 under x64
         weights=jnp.asarray(weights),
-        grid_shape=(int(n_y), int(n_x)),
+        grid_shape=(y_axis.size, x_axis.size),
     )
-
-
-def _bracket(axis: _np.ndarray, points: _np.ndarray) -> tuple[_np.ndarray, _np.ndarray]:
-    """For each point ``p`` in ``points``, return ``(idx, frac)`` such that
-    ``axis[idx] + frac * (axis[idx+1] - axis[idx])`` matches ``p``.
-
-    Points outside ``axis`` are clamped to the edges.
-    """
-    n_nodes = axis.size
-    left_index = _np.clip(_np.searchsorted(axis, points) - 1, 0, n_nodes - 2)
-    span = axis[left_index + 1] - axis[left_index]
-    fraction = _np.where(span > 0, (points - axis[left_index]) / span, 0.0)
-    return left_index, _np.clip(fraction, 0.0, 1.0)

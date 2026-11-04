@@ -157,9 +157,8 @@ def optimal_estimation(
         True
     """
     n_state = x_a.shape[0]
-    whiten_e, logdet_e = _whitener(S_e)
-    whiten_a, logdet_a = _whitener(S_a)
-    del logdet_e
+    whiten_e = _whitener(S_e)
+    whiten_a = _whitener(S_a)
 
     def residual(
         state: Float[Array, " n"], measurements: Float[Array, " m"]
@@ -186,22 +185,9 @@ def optimal_estimation(
     prior_root_inverse = jax.vmap(whiten_a, in_axes=1, out_axes=1)(
         jnp.eye(n_state, dtype=x_hat.dtype)
     )
-    # Kᵀ S_ε⁻¹ K
-    data_precision = whitened_jacobian.T @ whitened_jacobian
-    # Ŝ⁻¹ = Kᵀ S_ε⁻¹ K + S_a⁻¹
-    precision = data_precision + prior_root_inverse.T @ prior_root_inverse
-    precision_factor = jnp.linalg.cholesky(precision)
-    identity = jnp.eye(n_state, dtype=x_hat.dtype)
-    covariance = jax.scipy.linalg.cho_solve((precision_factor, True), identity)
-    covariance = gaussx.symmetrize(covariance)
-    # A = Ŝ Kᵀ S_ε⁻¹ K
-    averaging_kernel = covariance @ data_precision
-    # S_m = G S_ε Gᵀ = Ŝ Kᵀ S_ε⁻¹ K Ŝ = A Ŝ, with G = Ŝ Kᵀ S_ε⁻¹
-    retrieval_noise = averaging_kernel @ covariance
-    retrieval_noise = gaussx.symmetrize(retrieval_noise)
-    # H = ½ ln det(S_a Ŝ⁻¹) = ½ (ln det S_a + ln det Ŝ⁻¹)
-    logdet_precision = gaussx.cholesky_logdet(precision_factor)
-    information = 0.5 * (logdet_a + logdet_precision)
+    # Ŝ, A, d_s, H and S_m at x̂, by gaussx's square-root formulation
+    diagnostics = gaussx.information_diagnostics(jacobian, S_e, S_a)
+    covariance = diagnostics.posterior_cov
 
     data_residual, prior_residual = residual(x_hat, y)
     # J(x̂) = ‖r̃_ε‖² + ‖r̃_a‖²
@@ -214,24 +200,24 @@ def optimal_estimation(
     return OEResult(
         x_hat=x_hat,
         S_hat=lx.MatrixLinearOperator(covariance, lx.positive_semidefinite_tag),
-        averaging_kernel=averaging_kernel,
-        dofs=jnp.trace(averaging_kernel),
-        information=information,
+        averaging_kernel=diagnostics.averaging_kernel,
+        dofs=diagnostics.dofs,
+        information=diagnostics.information_content,
         chi2=chi2,
         d2=d2,
         n_iter=jnp.asarray(solution.stats["num_steps"]),
         converged=jnp.all(jnp.isfinite(x_hat)) & (d2 < convergence_tol * n_state),
         prior_mean=x_a,
         retrieval_noise_cov=lx.MatrixLinearOperator(
-            retrieval_noise, lx.positive_semidefinite_tag
+            diagnostics.retrieval_noise_cov, lx.positive_semidefinite_tag
         ),
     )
 
 
 def _whitener(
     covariance: lx.AbstractLinearOperator,
-) -> tuple[Callable[[Array], Array], Float[Array, ""]]:
-    """v ↦ L⁻¹ v with L Lᵀ = S, and ln det S, keeping S's structure.
+) -> Callable[[Array], Array]:
+    """v ↦ L⁻¹ v with L Lᵀ = S, keeping S's structure.
 
     ``gaussx.cholesky`` keeps a diagonal, Kronecker or block-diagonal S
     structured instead of materialising it.
@@ -243,4 +229,4 @@ def _whitener(
         # L⁻¹ v
         return gaussx.solve(factor, vector)
 
-    return whiten, gaussx.logdet(covariance)
+    return whiten
