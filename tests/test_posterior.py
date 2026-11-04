@@ -16,6 +16,7 @@ from vardax import (
     MaskedIdentity,
     OptimalInterpolation,
     Posterior,
+    ThreeDVar,
 )
 
 
@@ -38,6 +39,29 @@ def linear_gaussian_oi():
         target=None,
     )
     return {"oi": oi, "batch": batch, "B_op": B_op, "R_op": R_op}
+
+
+@pytest.mark.parametrize(
+    "make_model",
+    [
+        pytest.param(OptimalInterpolation, id="oi"),
+        pytest.param(ThreeDVar, id="3dvar"),
+    ],
+)
+def test_multi_time_diagonal_r(make_model):
+    """A (T, N) diagonal R: P* = (B⁻¹ + R⁻¹)⁻¹ = (1 + 2)⁻¹ per cell (#149)."""
+    shape = (2, 3)
+    model = make_model(
+        obs_op=MaskedIdentity(),
+        prior_mean=jnp.zeros(shape),
+        prior_cov_op=lx.IdentityLinearOperator(
+            jax.ShapeDtypeStruct(shape, jnp.float32)
+        ),
+        obs_cov_op=lx.DiagonalLinearOperator(jnp.full(shape, 0.5)),
+    )
+    batch = Batch1D(input=jnp.ones((1, *shape)), mask=jnp.ones((1, *shape)))
+    spread = model.posterior(batch).cov.mv(jnp.ones(shape))
+    assert jnp.allclose(spread, jnp.full(shape, 1.0 / 3.0), rtol=1e-3)
 
 
 class TestPosteriorContainer:
