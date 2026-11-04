@@ -6,8 +6,9 @@ name: Tests
 #   integration  end-to-end files, marked with a module-level pytestmark
 #
 # Pull requests run the fast tier on the full matrix and the slow and
-# integration tiers once (Ubuntu, Python 3.13). Pushes to main run every
-# tier on the full matrix.
+# integration tiers on both operating systems with Python 3.13, because CPU
+# rounding differs between them. Pushes to main run every tier on the full
+# matrix.
 #
 # Stacked pull requests: a PR whose branch has another open PR stacked on
 # it skips these jobs, because the top PR's branch contains its commits
@@ -80,8 +81,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # once on pull requests, the full matrix on main
-        os: ${{ fromJSON(github.event_name == 'push' && '["ubuntu-latest", "macos-latest"]' || '["ubuntu-latest"]') }}
+        # one Python per OS on pull requests, the full matrix on main
+        os: [ubuntu-latest, macos-latest]
         python-version: ${{ fromJSON(github.event_name == 'push' && '["3.12", "3.13"]' || '["3.13"]') }}
     steps:
       - name: Checkout repository

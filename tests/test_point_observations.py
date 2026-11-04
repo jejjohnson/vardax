@@ -343,19 +343,23 @@ def test_padding_invariance_of_strong_4dvar_analysis():
 
 
 def test_batched_point_batch():
-    B, _ = _ops()
-    _, points, _ = _grid_and_points(jnp.ones(N, bool))
-    stacked = jax.tree.map(lambda a: jnp.stack([a, a]), points)
-    model = StrongFourDVar(
-        forward=IdentityForward(),
-        obs_op=GridPointObs((AXIS,)),
-        prior_mean=jnp.zeros(N),
-        prior_cov_op=_psd(B),
-        obs_cov_op=None,
-    )
-    out = model(stacked)
-    assert out.shape == (2, N)
-    assert jnp.allclose(out[0], model(points), atol=1e-6)
+    # float64: in float32 the batched and single runs differ by more than 1e-6
+    # on some CPUs, from rounding alone
+    with jax.enable_x64(True):
+        B, _ = _ops()
+        _, points, _ = _grid_and_points(jnp.ones(N, bool))
+        stacked = jax.tree.map(lambda a: jnp.stack([a, a]), points)
+        model = StrongFourDVar(
+            forward=IdentityForward(),
+            obs_op=GridPointObs((AXIS,)),
+            prior_mean=jnp.zeros(N),
+            # AXIS, and so B, are float32 from import time
+            prior_cov_op=_psd(B.astype(jnp.float64)),
+            obs_cov_op=None,
+        )
+        out = model(stacked)
+        assert out.shape == (2, N)
+        assert jnp.allclose(out[0], model(points), atol=1e-6)
 
 
 def test_point_batch_needs_point_operator():
@@ -582,46 +586,50 @@ def test_scattered_time_points_match_grid_batch(which):
     Three states of mixing dynamics, five observations at scattered
     (time, site) pairs, R = I. The point cost equals the masked grid cost
     term by term, so both runs minimise the same function from the same
-    start and follow the same iterates up to float32 summation order (the
-    reviewer's probe saw 6e-8). 1e-5 is 5x the solvers' step tolerance
-    (BFGS rtol = atol = 1e-6 on an O(1) state), covering a stop one
+    start and follow the same iterates up to summation order. In float32 that
+    order moved the BFGS stop by up to 2e-5 depending on the CPU's rounding, so
+    this runs in float64, where it is negligible. 1e-5 is 5x the solvers' step
+    tolerance (BFGS rtol = atol = 1e-6 on an O(1) state), covering a stop one
     iteration apart.
     """
-    T1 = 3
-    y = jax.random.normal(jax.random.PRNGKey(3), (T1, N))
-    mask = (
-        jnp.zeros((T1, N))
-        .at[0, 1]
-        .set(1)
-        .at[1, 3]
-        .set(1)
-        .at[2, 0]
-        .set(1)
-        .at[2, 5]
-        .set(1)
-        .at[1, 2]
-        .set(1)
-    )
-    grid = Batch1D(input=(y * mask)[None], mask=mask[None])
-    t, i = jnp.nonzero(mask)
-    points = _pad(
-        _batch(AXIS[i], y[t, i], time_index=t.astype(jnp.int32), n_times=T1), 2
-    )
-    eye = lx.IdentityLinearOperator(jax.ShapeDtypeStruct((N,), jnp.float32))
-    common = {
-        "forward": MixingForward(),
-        "prior_mean": jnp.linspace(-1.0, 1.0, N),
-        "prior_cov_op": eye,
-    }
-    cls, extra = {
-        "strong": (StrongFourDVar, {}),
-        "weak": (WeakFourDVar, {"model_err_cov_op": eye}),
-        "incremental": (ReducedBasisFourDVar, {}),
-        "incremental_gn": (IncrementalFourDVar, {}),
-    }[which]
-    xg = cls(obs_op=MaskedIdentity(), obs_cov_op=eye, **common, **extra)(grid)
-    xp = cls(obs_op=GridPointObs((AXIS,)), obs_cov_op=None, **common, **extra)(points)
-    if which == "weak":
-        (xg, eta_g), (xp, eta_p) = xg, xp
-        assert jnp.allclose(eta_g[0], eta_p, atol=1e-5)
-    assert jnp.allclose(xg[0], xp, atol=1e-5)
+    with jax.enable_x64(True):
+        T1 = 3
+        y = jax.random.normal(jax.random.PRNGKey(3), (T1, N))
+        mask = (
+            jnp.zeros((T1, N))
+            .at[0, 1]
+            .set(1)
+            .at[1, 3]
+            .set(1)
+            .at[2, 0]
+            .set(1)
+            .at[2, 5]
+            .set(1)
+            .at[1, 2]
+            .set(1)
+        )
+        grid = Batch1D(input=(y * mask)[None], mask=mask[None])
+        t, i = jnp.nonzero(mask)
+        points = _pad(
+            _batch(AXIS[i], y[t, i], time_index=t.astype(jnp.int32), n_times=T1), 2
+        )
+        eye = lx.IdentityLinearOperator(jax.ShapeDtypeStruct((N,), jnp.float64))
+        common = {
+            "forward": MixingForward(),
+            "prior_mean": jnp.linspace(-1.0, 1.0, N),
+            "prior_cov_op": eye,
+        }
+        cls, extra = {
+            "strong": (StrongFourDVar, {}),
+            "weak": (WeakFourDVar, {"model_err_cov_op": eye}),
+            "incremental": (ReducedBasisFourDVar, {}),
+            "incremental_gn": (IncrementalFourDVar, {}),
+        }[which]
+        xg = cls(obs_op=MaskedIdentity(), obs_cov_op=eye, **common, **extra)(grid)
+        xp = cls(obs_op=GridPointObs((AXIS,)), obs_cov_op=None, **common, **extra)(
+            points
+        )
+        if which == "weak":
+            (xg, eta_g), (xp, eta_p) = xg, xp
+            assert jnp.allclose(eta_g[0], eta_p, atol=1e-5)
+        assert jnp.allclose(xg[0], xp, atol=1e-5)
