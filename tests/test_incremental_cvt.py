@@ -26,6 +26,12 @@ import pytest
 import vardax as vdx
 
 N_STATE, N_STEPS = 20, 3
+# CG on B cannot beat ε κ(B) ≈ 1.5e-12 for the smooth B below (κ ≈ 7e3): asked for
+# 1e-12 it can stagnate, hit its step cap and raise, depending on the CPU's
+# rounding. PRIOR_TOL clears that bound, and the outer CG asks for less than the
+# nested solves deliver, as an outer CG tighter than them stagnates too.
+PRIOR_TOL = 1e-11
+OUTER_TOL = 1e-9
 
 
 class Shift:
@@ -105,9 +111,9 @@ def test_both_paths_reach_the_exact_analysis(x64, cvt):
         n_outer=1,
         n_inner=400,
         cvt=cvt,
-        cg_atol=1e-11,
-        cg_rtol=1e-11,
-        covariance_tol=1e-12,
+        cg_atol=OUTER_TOL,
+        cg_rtol=OUTER_TOL,
+        covariance_tol=PRIOR_TOL,
     )
     analysis = model(batch)[0]
     exact = _exact_analysis(prior_cov, batch)
@@ -119,7 +125,11 @@ def test_cvt_and_state_space_agree(x64):
     prior_cov = _smooth_background_cov()
     batch, B_op, R_op = _problem(prior_cov)
     tight = dict(
-        n_outer=2, n_inner=400, cg_atol=1e-11, cg_rtol=1e-11, covariance_tol=1e-12
+        n_outer=2,
+        n_inner=400,
+        cg_atol=OUTER_TOL,
+        cg_rtol=OUTER_TOL,
+        covariance_tol=PRIOR_TOL,
     )
     with_cvt = _model(B_op, R_op, cvt=True, **tight)(batch)
     without_cvt = _model(B_op, R_op, cvt=False, **tight)(batch)
@@ -137,7 +147,7 @@ def _iterations_to_converge(cvt, prior_cov, batch, B_op, R_op, budgets):
             cvt=cvt,
             cg_atol=0.0,
             cg_rtol=0.0,
-            covariance_tol=1e-12,
+            covariance_tol=PRIOR_TOL,
         )
         if _relative_error(model(batch)[0], exact) < 1e-4:
             return budget
