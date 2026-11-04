@@ -1,35 +1,8 @@
-r"""Runtime-checkable protocols used across vardax.
+"""Runtime-checkable protocols that vardax components satisfy structurally.
 
-vardax re-exports the three core ``pipekit_cycle`` protocols
-(`ForwardModel`, `ObservationOperator`, `AnalysisStep`) and adds eight
-vardax-specific protocols that ``pipekit-cycle`` doesn't name:
-
-- [`Prior`][vardax.Prior] — $\varphi: x \mapsto x_\text{prior}$
-- [`TemporalPrior`][vardax.TemporalPrior] —
-  $\varphi: (x, t_s) \mapsto x_\text{pred}$ (Decision D18)
-- [`GradModulator`][vardax.GradModulator] —
-  $\Phi: (\nabla J, h) \mapsto (\Delta x, h')$
-- [`CostFunction`][vardax.CostFunction] —
-  $J: (x, \text{batch}) \mapsto \text{scalar}$
-- [`PosteriorAdapter`][vardax.PosteriorAdapter] — analysis output →
-  [`Posterior`][vardax.Posterior]
-- [`Minimiser`][vardax.Minimiser] — minimises a cost over any pytree
-  control (``optimistix`` solvers or first-order ``optax`` optimisers)
-- [`ReducedBasis`][vardax.ReducedBasis] —
-  $X \mapsto \Phi(t) X$ reduced-basis control-vector operator
-- [`StateParameterization`][vardax.StateParameterization] —
-  $\theta \mapsto \psi(\theta)$, a (possibly nonlinear) control-to-state
-  map with its own penalty
-- [`SupportsForwardAdjoint`][vardax.SupportsForwardAdjoint] — a
-  ``ForwardModel`` that accepts a ``diffrax`` adjoint for its rollout
-
-All protocols are ``@runtime_checkable`` so ``isinstance(obj, Protocol)``
-works for structural conformance checking — used by
-``tests/test_pipekit_protocols.py``.
-
-The vardax-specific protocols are imported by Layer 1 components.
-``pipekit_cycle`` re-exports are imported by Layer 2 models that
-expose ``.as_analysis_step()``.
+Re-exports the core ``pipekit_cycle`` protocols (``ForwardModel``,
+``ObservationOperator``, ``AnalysisStep``) and adds the vardax-specific seams that
+``pipekit-cycle`` does not name; ``isinstance(obj, Protocol)`` checks conformance.
 """
 
 from __future__ import annotations
@@ -38,8 +11,8 @@ from typing import Any, Protocol, runtime_checkable
 
 from jaxtyping import Array, Float
 
-# Re-export pipekit-cycle protocols — vardax models satisfy them structurally
-# (Decision D8: no parallel Abstract* hierarchy).
+# vardax models satisfy these structurally, so there is no parallel Abstract*
+# hierarchy
 from pipekit_cycle import (
     AnalysisStep,
     ForwardModel,
@@ -49,15 +22,16 @@ from pipekit_cycle import (
 
 @runtime_checkable
 class Prior(Protocol):
-    r"""Prior model: maps state to its regularised reconstruction.
+    """Prior model: maps a state to its regularised reconstruction.
 
-    For an autoencoder prior $\varphi_\theta$, the variational
-    cost includes ``||x - φ(x)||^2``. For a dynamical prior wrapping a
-    `ForwardModel`, ``φ(x)`` is the forward integration. For the
-    identity prior, ``φ(x) = x``.
+        φ: x ↦ x_prior
+
+    For an autoencoder prior the variational cost includes ‖x − φ(x)‖². For a
+    dynamical prior wrapping a `ForwardModel`, φ(x) is the forward integration.
+    For the identity prior, φ(x) = x.
 
     Members:
-        ``__call__(x) -> x_prior`` — apply the prior model.
+        ``__call__(x) -> x_prior``: apply the prior model φ.
 
     Examples:
         A callable that shrinks the state towards zero conforms.
@@ -77,29 +51,37 @@ class Prior(Protocol):
         3.0
     """
 
-    def __call__(self, x: Float[Array, ...]) -> Float[Array, ...]: ...
+    def __call__(self, x: Float[Array, ...]) -> Float[Array, ...]:
+        """Apply the prior: x_prior = φ(x).
+
+        Args:
+            x: State x.
+
+        Returns:
+            The regularised reconstruction x_prior.
+        """
 
 
 @runtime_checkable
 class TemporalPrior(Protocol):
-    r"""Time-dependent prior: dynamics-aware regularisation over a window.
+    """Time-dependent prior: dynamics-aware regularisation over a window.
 
-    Unlike the static [`Prior`][vardax.Prior] seam
-    ($\varphi: x \mapsto x_\text{prior}$), a temporal prior needs the time
-    coordinates of the assimilation window,
-    $\varphi: (x, t_s) \mapsto x_\text{pred}$, with a
-    ``loss`` scoring dynamical consistency of a state sequence (Decision
-    D18). Implementations: [`DynIncrements`][vardax.DynIncrements],
+        φ: (x, t) ↦ x_pred
+
+    Unlike the static [`Prior`][vardax.Prior] seam, φ: x ↦ x_prior, a temporal
+    prior needs the time coordinates t of the assimilation window, with a
+    ``loss`` scoring the dynamical consistency of a state sequence.
+    Implementations: [`DynIncrements`][vardax.DynIncrements],
     [`DynTrajectory`][vardax.DynTrajectory].
 
-    A temporal prior is adapted to contexts expecting the one-argument
-    `Prior` seam by binding the time grid:
-    ``prior.bind(ts)`` returns a `Prior`-conforming callable.
+    A temporal prior is adapted to contexts expecting the one-argument `Prior`
+    seam by binding the time grid: ``prior.bind(ts)`` returns a `Prior`-conforming
+    callable.
 
     Members:
-        ``__call__(x, ts) -> x_pred`` — propagate through the dynamics.
-        ``loss(x, ts, x_gt=None, params=None) -> scalar`` — dynamical
-        residual of the sequence ``x`` against ``x_gt``.
+        ``__call__(x, ts) -> x_pred``: propagate through the dynamics.
+        ``loss(x, ts, x_gt=None, params=None) -> scalar``: dynamical residual of
+        the sequence ``x`` against ``x_gt``.
 
     Examples:
         >>> import jax.numpy as jnp, vardax
@@ -125,7 +107,16 @@ class TemporalPrior(Protocol):
         self,
         x: Float[Array, ...],
         ts: Float[Array, ...],
-    ) -> Float[Array, ...]: ...
+    ) -> Float[Array, ...]:
+        """Propagate through the dynamics: x_pred = φ(x, t).
+
+        Args:
+            x: State sequence x.
+            ts: Time coordinates t of the window.
+
+        Returns:
+            The propagated state x_pred.
+        """
 
     def loss(
         self,
@@ -133,16 +124,29 @@ class TemporalPrior(Protocol):
         ts: Float[Array, ...],
         x_gt: Float[Array, ...] | None = None,
         params: Any = None,
-    ) -> Float[Array, ""]: ...
+    ) -> Float[Array, ""]:
+        """Score the dynamical consistency of a state sequence.
+
+        Args:
+            x: State sequence x.
+            ts: Time coordinates t of the window.
+            x_gt: Optional ground-truth sequence x_gt to score against.
+            params: Optional parameters of the implementation.
+
+        Returns:
+            The dynamical residual of ``x`` against ``x_gt``, a scalar.
+        """
 
 
 @runtime_checkable
 class GradModulator(Protocol):
     """Learned gradient modulator for the FourDVarNet inner solver.
 
-    Takes the current variational-cost gradient and the modulator's
-    own carry state, returns a state update and the new carry. Used
-    only by `FourDVarNet`; the classical analysis methods use
+        g_mod: (∇ₓ𝒥, x, c) ↦ (Δx, c′)
+
+    Takes the current variational-cost gradient ∇ₓ𝒥, the state x and the
+    modulator's own carry c, and returns a state update Δx and the new carry c′.
+    Used only by `FourDVarNet`; the classical analysis methods use
     ``optimistix.AbstractMinimiser`` instead.
 
     Members:
@@ -167,16 +171,24 @@ class GradModulator(Protocol):
         grad: Float[Array, ...],
         state: Float[Array, ...],
         carry: Any,
-    ) -> tuple[Float[Array, ...], Any]: ...
+    ) -> tuple[Float[Array, ...], Any]:
+        """Turn a cost gradient into a state update: (Δx, c′) = g_mod(∇ₓ𝒥, x, c).
+
+        Args:
+            grad: Variational-cost gradient ∇ₓ𝒥.
+            state: Current state x.
+            carry: The modulator's carry c.
+
+        Returns:
+            The state update Δx and the new carry c′.
+        """
 
 
 @runtime_checkable
 class CostFunction(Protocol):
-    """Variational cost function ``J(x, batch, **kwargs) -> scalar``.
+    """Variational cost function over the state.
 
-    Implementations include `vardax.costs.ThreeDVarCost`,
-    `StrongConstraintCost`, `WeakConstraintCost`, `IncrementalCost`,
-    and `FourDVarNetCost`.
+        𝒥: (x, batch) ↦ ℝ
 
     Members:
         ``__call__(x, batch, **kwargs) -> scalar``
@@ -206,7 +218,17 @@ class CostFunction(Protocol):
         x: Float[Array, ...],
         batch: Any,
         **kwargs: Any,
-    ) -> Float[Array, ""]: ...
+    ) -> Float[Array, ""]:
+        """Evaluate the cost 𝒥(x; batch).
+
+        Args:
+            x: State x.
+            batch: Data the cost compares the state with.
+            **kwargs: Options of the implementation.
+
+        Returns:
+            The cost, a scalar.
+        """
 
 
 @runtime_checkable
@@ -214,7 +236,7 @@ class PosteriorAdapter(Protocol):
     """Turns an analysis output into a `Posterior` container.
 
     Implementations: `LaplaceCovariance`, `GaussNewtonHessian`,
-    `EnsembleCovariance`. Each computes the posterior covariance via a
+    `EnsembleCovariance`. Each computes the posterior covariance Σ_x|y via a
     different approximation; the contract returned is the same.
 
     Members:
@@ -239,20 +261,32 @@ class PosteriorAdapter(Protocol):
         analysis: Float[Array, ...],
         model: AnalysisStep,
         batch: Any,
-    ) -> Any: ...
+    ) -> Any:
+        """Build the posterior around an analysis x⋆.
+
+        Args:
+            analysis: The analysis x⋆.
+            model: The model that produced it.
+            batch: The batch it was analysed from.
+
+        Returns:
+            The [`Posterior`][vardax.Posterior], with mean and covariance Σ_x|y.
+        """
 
 
 @runtime_checkable
 class Minimiser(Protocol):
     """Minimises a cost ``cost_fn(x, batch)`` from an initial guess.
 
-    A `Minimiser` knows how to minimise a `CostFunction` from an
-    initial guess ``x0`` (any pytree) against a batch. Implementations:
-    [`OptimistixMinimiser`][vardax.OptimistixMinimiser] (optimistix
-    solvers such as BFGS, GaussNewton, NonlinearCG) and
-    [`OptaxMinimiser`][vardax.OptaxMinimiser] (first-order optax
-    optimisers with early stopping, for large controls). The classical
-    models accept either as ``minimiser=``.
+        x⋆ = argmin_x 𝒥(x; batch)
+
+    A `Minimiser` knows how to minimise a `CostFunction` from an initial guess
+    ``x0`` (any pytree) against a batch. Implementations:
+    [`OptimistixMinimiser`][vardax.OptimistixMinimiser] (optimistix solvers such
+    as BFGS, GaussNewton, NonlinearCG) and
+    [`OptaxMinimiser`][vardax.OptaxMinimiser] (first-order optax optimisers with
+    early stopping, for large controls). The classical models accept either as
+    ``minimiser=``.
 
     Members:
         ``__call__(cost_fn, x0, batch) -> x_star``
@@ -282,31 +316,41 @@ class Minimiser(Protocol):
         cost_fn: CostFunction,
         x0: Float[Array, ...],
         batch: Any,
-    ) -> Float[Array, ...]: ...
+    ) -> Float[Array, ...]:
+        """Minimise ``cost_fn`` from ``x0``: x⋆ = argmin_x 𝒥(x; batch).
+
+        Args:
+            cost_fn: The cost 𝒥.
+            x0: Initial guess, any pytree.
+            batch: Data passed through to ``cost_fn``.
+
+        Returns:
+            The minimiser x⋆.
+        """
 
 
 @runtime_checkable
 class ReducedBasis(Protocol):
-    r"""Reduced-basis control-vector operator.
+    """Reduced-basis control-vector operator.
 
-    Maps a coefficient vector $X \in \mathbb{R}^M$ to a state increment
-    $\Phi(t) X$ on the grid, with a separable Gaussian background term
-    $\tfrac{1}{2} X^\top Q^{-1} X$.
+        δx = Φ(t) z,   𝒥_b(z) = ½ zᵀ Σ_z⁻¹ z
 
-    Implementations: `LinearBasis` (any linear family — built via the
-    `rbf_basis` / `fourier_basis` / `wavelet_basis` / `eof_basis` /
-    `linear_basis` constructors) and `CompositeBasis`. Used by
-    variational analysis steps to parameterise the increment in a
-    low-dimensional space.
+    Maps a coefficient vector z to a state increment δx on the grid, with a
+    separable Gaussian background term of covariance Σ_z over the coefficients.
 
-    This protocol is defined in vardax for now; the plan is to upstream
-    it into ``pipekit_cycle.protocols`` so other algorithm libraries
-    can satisfy the same contract.
+    Implementations: `LinearBasis` (any linear family, built via the `rbf_basis`,
+    `fourier_basis`, `wavelet_basis`, `eof_basis` or `linear_basis` constructors)
+    and `CompositeBasis`. Used by variational analysis steps to parameterise the
+    increment in a low-dimensional space.
+
+    This protocol is defined in vardax for now; the plan is to upstream it into
+    ``pipekit_cycle.protocols`` so other algorithm libraries can satisfy the same
+    contract.
 
     Members:
-        ``operg(t, coefficients, state=None) -> increment``
-        ``prior_inv(coefficients) -> Q⁻¹ coefficients``
-        ``nbasis: int`` property
+        ``operg(t, coefficients, state=None) -> increment``: the increment Φ(t) z.
+        ``prior_inv(coefficients) -> Σ_z⁻¹ coefficients``: the prior precision.
+        ``nbasis: int`` property: the number of coefficients.
 
     Examples:
         The basis built by ``linear_basis`` conforms.
@@ -318,42 +362,61 @@ class ReducedBasis(Protocol):
         >>> basis.nbasis
         2
 
-        ``prior_inv`` applies $Q^{-1}$ to a coefficient vector.
+        ``prior_inv`` applies Σ_z⁻¹ to a coefficient vector.
 
         >>> basis.prior_inv(jnp.ones(2)).shape
         (2,)
     """
 
-    def operg(self, t: float, coefficients: Any, state: Any = None) -> Any: ...
+    def operg(self, t: float, coefficients: Any, state: Any = None) -> Any:
+        """Map coefficients to a state increment: δx = Φ(t) z.
 
-    def prior_inv(self, coefficients: Any) -> Any: ...
+        Args:
+            t: Time t.
+            coefficients: Coefficient vector z.
+            state: Optional state, for a basis that depends on it.
+
+        Returns:
+            The state increment δx.
+        """
+
+    def prior_inv(self, coefficients: Any) -> Any:
+        """Apply the prior precision: Σ_z⁻¹ z.
+
+        Args:
+            coefficients: Coefficient vector z.
+
+        Returns:
+            Σ_z⁻¹ z.
+        """
 
     @property
-    def nbasis(self) -> int: ...
+    def nbasis(self) -> int:
+        """Number of coefficients, the length of z."""
 
 
 @runtime_checkable
 class StateParameterization(Protocol):
-    r"""Control-to-state map with its own penalty.
+    """Control-to-state map with its own penalty.
+
+        x = g_dec(θ),   𝒥(θ) = ℛ(θ) + 𝒥_o(g_dec(θ))
 
     Generalises [`ReducedBasis`][vardax.ReducedBasis] from a linear
-    $x = x_b + \Phi X$ to any $x = \psi(\theta)$ with $\theta$ a pytree.
-    A model given ``parameterization=`` minimises over $\theta$, with
-    $\mathrm{pen}(\theta)$ in place of the background term:
-    $J(\theta) = \mathrm{pen}(\theta) + J_o(\psi(\theta))$.
+    x = μ_x + Φ z to any x = g_dec(θ) with θ a pytree. A model given
+    ``parameterization=`` minimises over θ, with the penalty ℛ(θ) in place of the
+    background term.
 
     Implementations: [`LinearParameterization`][vardax.LinearParameterization]
     (adapts any `ReducedBasis`) and
-    [`NeuralFieldParameterization`][vardax.NeuralFieldParameterization]
-    (a coordinate network on the grid).
+    [`NeuralFieldParameterization`][vardax.NeuralFieldParameterization] (a
+    coordinate network on the grid).
 
     Members:
-        ``decode(theta, t=None) -> state`` — the state $\psi(\theta)$, at
-        time ``t`` for a time-dependent parameterization.
-        ``penalty(theta) -> scalar`` — $\mathrm{pen}(\theta)$, e.g.
-        $\tfrac12 X^\top Q^{-1} X$.
-        ``init_control(*, key=None) -> theta`` — the starting control;
-        ``key`` is for parameterizations whose start is random.
+        ``decode(theta, t=None) -> state``: the state g_dec(θ), at time ``t`` for a
+        time-dependent parameterization.
+        ``penalty(theta) -> scalar``: ℛ(θ), e.g. ½ zᵀ Σ_z⁻¹ z.
+        ``init_control(*, key=None) -> theta``: the starting control; ``key`` is
+        for parameterizations whose start is random.
 
     Examples:
         >>> import jax.numpy as jnp, vardax
@@ -380,11 +443,36 @@ class StateParameterization(Protocol):
         True
     """
 
-    def decode(self, theta: Any, t: float | None = None) -> Float[Array, ...]: ...
+    def decode(self, theta: Any, t: float | None = None) -> Float[Array, ...]:
+        """Decode the control into a state: x = g_dec(θ).
 
-    def penalty(self, theta: Any) -> Float[Array, ""]: ...
+        Args:
+            theta: Control θ.
+            t: Time, for a time-dependent parameterization.
 
-    def init_control(self, *, key: Any = None) -> Any: ...
+        Returns:
+            The state x.
+        """
+
+    def penalty(self, theta: Any) -> Float[Array, ""]:
+        """Evaluate the penalty ℛ(θ).
+
+        Args:
+            theta: Control θ.
+
+        Returns:
+            The penalty, a scalar.
+        """
+
+    def init_control(self, *, key: Any = None) -> Any:
+        """Return the starting control θ.
+
+        Args:
+            key: PRNG key, for a parameterization whose start is random.
+
+        Returns:
+            The starting control θ.
+        """
 
 
 __all__ = [
@@ -406,7 +494,7 @@ __all__ = [
 
 @runtime_checkable
 class SupportsForwardAdjoint(Protocol):
-    r"""A ``ForwardModel`` whose integrator can take a ``diffrax`` adjoint.
+    """A ``ForwardModel`` whose integrator can take a ``diffrax`` adjoint.
 
     The 4DVar models' ``forward_adjoint=`` slot calls
     ``forward.with_adjoint(adjoint)`` and rolls out the returned forward.
@@ -418,9 +506,9 @@ class SupportsForwardAdjoint(Protocol):
     memory with ``checkpoint=`` instead.
 
     Members:
-        ``dt`` — step length.
-        ``step(state, dt) -> state`` — the ``ForwardModel`` contract.
-        ``with_adjoint(adjoint) -> forward`` — a copy that integrates with
+        ``dt``: step length.
+        ``step(state, dt) -> state``: the ``ForwardModel`` contract.
+        ``with_adjoint(adjoint) -> forward``: a copy that integrates with
         ``adjoint``.
 
     Examples:
@@ -444,6 +532,23 @@ class SupportsForwardAdjoint(Protocol):
 
     dt: float
 
-    def step(self, state: Any, dt: float) -> Any: ...
+    def step(self, state: Any, dt: float) -> Any:
+        """Advance the state one step: xₜ = f(xₜ₋₁).
 
-    def with_adjoint(self, adjoint: Any) -> Any: ...
+        Args:
+            state: State xₜ₋₁.
+            dt: Step length.
+
+        Returns:
+            The state xₜ.
+        """
+
+    def with_adjoint(self, adjoint: Any) -> Any:
+        """Return a copy of the forward that integrates with ``adjoint``.
+
+        Args:
+            adjoint: A ``diffrax.AbstractAdjoint``.
+
+        Returns:
+            The forward model f with that adjoint.
+        """

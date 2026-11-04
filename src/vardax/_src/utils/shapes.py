@@ -7,6 +7,12 @@ from jaxtyping import Array, Float
 def flatten(values: Float[Array, "*shape"]) -> Float[Array, " size"]:
     """Flatten ``values`` to one axis, in row-major order.
 
+    Args:
+        values: Array of any shape.
+
+    Returns:
+        The same values on one axis.
+
     Examples:
         >>> import jax.numpy as jnp
         >>> flatten(jnp.ones((2, 3))).shape
@@ -23,9 +29,15 @@ def flatten(values: Float[Array, "*shape"]) -> Float[Array, " size"]:
 def as_shape(values: Float[Array, "*any"], shape: tuple[int, ...]) -> Array:
     """Lay ``values`` out on ``shape``; the element count must match.
 
-    Parameterisations and bases may return a flat vector or any shape with
-    the state's size, so models put their output onto the background's
-    shape with this.
+    Parameterisations and bases may return a flat vector or any shape with the
+    state's size, so models put their output onto the background's shape with this.
+
+    Args:
+        values: Array with as many elements as ``shape`` holds.
+        shape: The target shape.
+
+    Returns:
+        The values on ``shape``, in row-major order.
 
     Examples:
         >>> import jax.numpy as jnp

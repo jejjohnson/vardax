@@ -1,14 +1,8 @@
-r"""Reference PDE residuals for [`ResidualPenalty`][vardax.ResidualPenalty].
+"""Reference PDE residuals for [`ResidualPenalty`][vardax.ResidualPenalty].
 
-Each constructor returns a residual ``residual_fn(field, s) -> (R,)`` that
-evaluates a PDE operator $\mathcal N[f](s)$ of a continuous field $f$ at one
-space-time point $s = (t, x, y)$. Derivatives come from automatic
-differentiation through `geonnax.diffops`, so any differentiable callable
-``field: (3,) -> (K,)`` works: a neural field, a closed-form solution, or an
-interpolant of a gridded state.
-
-The residuals are callables because vardax may not import a dynamical-model
-library (somax sits above it in the stack); bring your own PDE the same way.
+Each constructor returns ``residual_fn(field, s)``, a PDE operator 𝒩 of a continuous
+field at one space-time point s = (t, x, y), with x, y Cartesian coordinates, q a
+tracer, v = (u, v) velocity, ψ streamfunction and ζ relative vorticity.
 """
 
 from __future__ import annotations
@@ -22,6 +16,9 @@ from jaxtyping import Array, Float
 
 from vardax._src.errors import ConfigurationError, ShapeError
 
+# Callables, because vardax may not import a dynamical-model library (somax sits
+# above it in the stack); bring your own PDE the same way. Any differentiable field
+# works: a neural field, a closed-form solution or an interpolant of a gridded state.
 Field = Callable[[Float[Array, " D"]], Float[Array, " K"]]
 Residual = Callable[[Field, Float[Array, " D"]], Float[Array, " R"]]
 
@@ -29,45 +26,46 @@ Residual = Callable[[Field, Float[Array, " D"]], Float[Array, " R"]]
 def _at_time(
     field: Callable[[Float[Array, " 3"]], Float[Array, ""]], time: Float[Array, ""]
 ) -> Callable[[Float[Array, " 2"]], Float[Array, ""]]:
-    """Restrict a field of $(t, x, y)$ to a field of $(x, y)$ at time ``t``."""
-    return lambda space_point: field(einx.id(", d -> (1 + d)", time, space_point))
+    """Restrict a field of (t, x, y) to a field of (x, y) at time ``time``."""
+
+    def field_at_time(space_point: Float[Array, " 2"]) -> Float[Array, ""]:
+        # s = (t, x, y)
+        space_time_point = einx.id(", d -> (1 + d)", time, space_point)
+        return field(space_time_point)
+
+    return field_at_time
 
 
 def advection_diffusion_2d(
     velocity: tuple[float, float] | Float[Array, " 2"],
     diffusivity: float,
 ) -> Residual:
-    r"""Residual of 2-D advection–diffusion with constant coefficients.
+    """Residual of 2-D advection–diffusion with constant coefficients.
 
-    For a scalar tracer $u(t, x, y)$ advected by a constant velocity
-    $c = (c_x, c_y)$ and diffused with diffusivity $\kappa \ge 0$,
+        𝒩[q] = ∂ₜq + v · ∇q − κ Δq
 
-    $$
-    \mathcal N[u] = \partial_t u + c \cdot \nabla u - \kappa\, \Delta u ,
-    $$
+    For a scalar tracer q(t, x, y) advected by a constant velocity v = (u, v) and
+    diffused with diffusivity κ ≥ 0, with ∇ and Δ acting on (x, y) only.
 
-    with $\nabla$ and $\Delta$ acting on $(x, y)$ only.
+    The field must be twice differentiable in (x, y) and once in t at every
+    collocation point; a raw `jnp.sqrt` or `jnp.linalg.norm` that vanishes there
+    gives NaN derivatives, so guard it with the double-`where` idiom.
 
     Args:
-        velocity: Constant advecting velocity $(c_x, c_y)$.
-        diffusivity: Diffusivity $\kappa \ge 0$.
-
-    The field must be twice differentiable in $(x, y)$ and once in $t$ at
-    every collocation point; a raw `jnp.sqrt` or `jnp.linalg.norm` that
-    vanishes there gives NaN derivatives, so guard it with the double-`where`
-    idiom.
+        velocity: Constant advecting velocity v = (u, v).
+        diffusivity: Diffusivity κ ≥ 0.
 
     Returns:
-        ``residual_fn(field, s) -> (1,)``, where ``s = (t, x, y)`` and the
-        tracer is ``field(s)[0]``.
+        ``residual_fn(field, s)`` returning one component, where ``s = (t, x, y)``
+        and the tracer is ``field(s)[0]``.
 
     Raises:
-        ValueError: If ``velocity`` does not have two components or
-            ``diffusivity`` is negative.
+        ShapeError: If ``velocity`` does not have two components.
+        ConfigurationError: If ``diffusivity`` is negative.
 
     Examples:
-        A Gaussian bump translated by $c$ and spread by diffusion solves the
-        equation exactly:
+        A Gaussian bump translated by v and spread by diffusion solves the equation
+        exactly:
 
         >>> import jax.numpy as jnp
         >>> from vardax.examples import advection_diffusion_2d
@@ -80,6 +78,22 @@ def advection_diffusion_2d(
         >>> r = res(bump, jnp.array([0.3, 0.25, 0.2]))
         >>> r.shape, bool(jnp.abs(r[0]) < 1e-4)
         ((1,), True)
+
+        A steady uniform tracer has zero residual, whatever the flow:
+
+        >>> uniform = lambda s: jnp.ones(1)
+        >>> r = advection_diffusion_2d((2.0, -1.0), 0.5)(uniform, jnp.zeros(3))
+        >>> bool(jnp.allclose(r, 0.0))
+        True
+
+        A negative diffusivity is rejected:
+
+        >>> advection_diffusion_2d(
+        ...     (1.0, 0.0), -0.1
+        ... )  # doctest: +IGNORE_EXCEPTION_DETAIL
+        Traceback (most recent call last):
+        ...
+        ConfigurationError: diffusivity must be non-negative; got -0.1.
     """
     advection_velocity = jnp.asarray(velocity)
     if advection_velocity.shape != (2,):
@@ -95,18 +109,18 @@ def advection_diffusion_2d(
         def tracer(space_time_point: Float[Array, " 3"]) -> Float[Array, ""]:
             return field(space_time_point)[0]
 
-        # ∇ₛu = (∂ₜu, ∂ₓu, ∂ᵧu): (3,)
+        # (∂ₜq, ∂ₓq, ∂_y q)
         tracer_gradient = diffops.grad(tracer)(point)
-        # Δu = ∂ₓₓu + ∂ᵧᵧu at fixed t: ()
+        # Δq = ∂ₓₓq + ∂_yy q at fixed t
         tracer_laplacian = diffops.laplacian(_at_time(tracer, point[0]))(point[1:])
-        # N[u] = ∂ₜu + c·∇u - κΔu: ()
-        pde_residual = (
-            tracer_gradient[0]
-            + jnp.dot(
-                advection_velocity.astype(tracer_gradient.dtype), tracer_gradient[1:]
-            )
-            - diffusivity * tracer_laplacian
+        # v · ∇q
+        advection = einx.dot(
+            "d, d ->",
+            advection_velocity.astype(tracer_gradient.dtype),
+            tracer_gradient[1:],
         )
+        # 𝒩[q] = ∂ₜq + v · ∇q − κ Δq
+        pde_residual = tracer_gradient[0] + advection - diffusivity * tracer_laplacian
         return einx.id(" -> 1", pde_residual)
 
     return residual
@@ -116,52 +130,38 @@ def navier_stokes_vorticity_2d(
     viscosity: float,
     forcing: Callable[[Float[Array, " 3"]], Float[Array, ""]] | None = None,
 ) -> Residual:
-    r"""Residual of 2-D incompressible Navier–Stokes in vorticity form.
+    """Residual of 2-D incompressible Navier–Stokes in vorticity form.
 
-    The field provides the **streamfunction** $\psi(t, x, y)$ (its first
-    output); velocity and vorticity are derived from it,
+        𝒩[ψ] = ∂ₜζ + v · ∇ζ − ν Δζ − F(t, x, y)
+        v = (u, v) = (−∂_y ψ, ∂ₓψ),   ζ = ∂ₓv − ∂_y u = Δψ
 
-    $$
-    u = \nabla^\perp \psi = (-\partial_y \psi,\ \partial_x \psi),
-    \qquad \omega = \partial_x u_y - \partial_y u_x = \Delta \psi ,
-    $$
+    The field provides the streamfunction ψ(t, x, y) as its first output; velocity
+    and vorticity are derived from it. Deriving v from ψ makes the flow
+    divergence-free and the Poisson relation Δψ = ζ hold exactly, so one residual
+    component is enough. The price is fourth derivatives of the field
+    (Δζ = Δ²ψ), computed by nested automatic differentiation; for a field that
+    returns (ζ, ψ) separately, add Δψ − ζ as a second residual instead.
 
-    and the residual is the vorticity equation
-
-    $$
-    \mathcal N[\psi] = \partial_t \omega + u \cdot \nabla \omega
-        - \nu\, \Delta \omega - F(t, x, y) .
-    $$
-
-    Deriving $u$ from $\psi$ makes the flow divergence-free and the Poisson
-    relation $\Delta\psi = \omega$ hold exactly, so one residual component
-    is enough. The price is fourth derivatives of the field ($\Delta\omega =
-    \Delta^2\psi$), computed by nested automatic differentiation; for a field
-    that returns $(\omega, \psi)$ separately, add $\Delta\psi - \omega$ as a
-    second residual instead.
-
-    The streamfunction must be four times differentiable in $(x, y)$ (and
-    $\Delta\psi$ once in $t$) at every collocation point; a raw `jnp.sqrt`
-    or `jnp.linalg.norm` that vanishes there gives NaN derivatives, so guard
-    it with the double-`where` idiom.
+    The streamfunction must be four times differentiable in (x, y) (and Δψ once in
+    t) at every collocation point; a raw `jnp.sqrt` or `jnp.linalg.norm` that
+    vanishes there gives NaN derivatives, so guard it with the double-`where` idiom.
 
     Args:
-        viscosity: Kinematic viscosity $\nu \ge 0$.
-        forcing: Optional vorticity forcing $F(s)$, a scalar function of
-            ``s = (t, x, y)`` (for Kolmogorov flow,
-            $F = -n f_0 \cos(n y)$ for the body force $f_0 \sin(n y)\,\hat x$).
-            ``None`` means unforced.
+        viscosity: Kinematic viscosity ν ≥ 0.
+        forcing: Optional vorticity forcing F(s), a scalar function of
+            ``s = (t, x, y)`` (for Kolmogorov flow, F = −n f₀ cos(n y) for the body
+            force f₀ sin(n y) x̂). ``None`` means unforced.
 
     Returns:
-        ``residual_fn(field, s) -> (1,)``, where ``s = (t, x, y)`` and the
-        streamfunction is ``field(s)[0]``.
+        ``residual_fn(field, s)`` returning one component, where ``s = (t, x, y)``
+        and the streamfunction is ``field(s)[0]``.
 
     Raises:
-        ValueError: If ``viscosity`` is negative.
+        ConfigurationError: If ``viscosity`` is negative.
 
     Examples:
-        The decaying Taylor–Green vortex $\psi = \sin x \sin y\,
-        e^{-2\nu t}$ solves the unforced equation exactly:
+        The decaying Taylor–Green vortex ψ = sin x sin y e^(−2νt) solves the unforced
+        equation exactly:
 
         >>> import jax.numpy as jnp
         >>> from vardax.examples import navier_stokes_vorticity_2d
@@ -174,6 +174,20 @@ def navier_stokes_vorticity_2d(
         >>> r = res(tg, jnp.array([0.5, 0.3, 1.1]))
         >>> r.shape, bool(jnp.abs(r[0]) < 1e-5)
         ((1,), True)
+
+        A forcing is subtracted from the residual:
+
+        >>> still = lambda s: jnp.zeros(1)
+        >>> forced = navier_stokes_vorticity_2d(nu, forcing=lambda s: jnp.ones(()))
+        >>> bool(jnp.allclose(forced(still, jnp.zeros(3)), -1.0))
+        True
+
+        A negative viscosity is rejected:
+
+        >>> navier_stokes_vorticity_2d(-1.0)  # doctest: +IGNORE_EXCEPTION_DETAIL
+        Traceback (most recent call last):
+        ...
+        ConfigurationError: viscosity must be non-negative; got -1.0.
     """
     if viscosity < 0:
         raise ConfigurationError(f"viscosity must be non-negative; got {viscosity}.")
@@ -183,28 +197,29 @@ def navier_stokes_vorticity_2d(
             return field(space_time_point)[0]
 
         def vorticity(space_time_point: Float[Array, " 3"]) -> Float[Array, ""]:
-            # ω = Δψ at fixed t: ()
+            # ζ = Δψ at fixed t
             return diffops.laplacian(_at_time(streamfunction, space_time_point[0]))(
                 space_time_point[1:]
             )
 
-        # ∇ₛψ = (∂ₜψ, ∂ₓψ, ∂ᵧψ): (3,)
+        # (∂ₜψ, ∂ₓψ, ∂_y ψ)
         streamfunction_gradient = diffops.grad(streamfunction)(point)
-        # u = ∇^⊥ψ = (-∂ᵧψ, ∂ₓψ): (2,)
+        # v = (−∂_y ψ, ∂ₓψ)
         velocity = jnp.stack([-streamfunction_gradient[2], streamfunction_gradient[1]])
-        # ∇ₛω = (∂ₜω, ∂ₓω, ∂ᵧω): (3,)
+        # (∂ₜζ, ∂ₓζ, ∂_y ζ)
         vorticity_gradient = diffops.grad(vorticity)(point)
-        # Δω at fixed t: ()
+        # Δζ at fixed t
         vorticity_laplacian = diffops.laplacian(_at_time(vorticity, point[0]))(
             point[1:]
         )
-        # N[ψ] = ∂ₜω + u·∇ω - nu Δω - F: ()
+        # v · ∇ζ
+        advection = einx.dot("d, d ->", velocity, vorticity_gradient[1:])
+        # ∂ₜζ + v · ∇ζ − ν Δζ
         pde_residual = (
-            vorticity_gradient[0]
-            + jnp.dot(velocity, vorticity_gradient[1:])
-            - viscosity * vorticity_laplacian
+            vorticity_gradient[0] + advection - viscosity * vorticity_laplacian
         )
         if forcing is not None:
+            # 𝒩[ψ] = ∂ₜζ + v · ∇ζ − ν Δζ − F
             pde_residual = pde_residual - forcing(point)
         return einx.id(" -> 1", pde_residual)
 

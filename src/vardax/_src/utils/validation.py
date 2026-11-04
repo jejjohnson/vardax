@@ -1,23 +1,7 @@
-r"""Six-step cycle validation gates (Decision D12 / Epic 8).
+"""Validation gates for an amortized head: posterior agreement, adjoint and SBC.
 
-Amortized inference is dangerous when miscalibrated — a tight
-$q_\phi$ centred wrong gives confident wrong answers. Decision
-D12 (chapter 14 of the math reference) requires three gates before any
-amortized head is promoted to operational use:
-
-1. **Posterior agreement** — the fast model's MAP lies within
-   $\sigma_\text{post}$ of an oracle MAP from a slower method.
-2. **Adjoint calibration** — the fast model's sensitivity to
-   observations matches the physics-based sensitivity, measured by
-   random-vector probing of the Jacobian.
-3. **Simulation-based calibration (SBC)** — per Talts et al. 2018,
-   rank histograms of true draws within posterior samples are uniform
-   for a well-calibrated head.
-
-These utilities are deliberately framework-agnostic: they accept the
-fast and oracle models as plain callables / vardax ``Posterior``
-objects and return / assert numeric results. They do not depend on the
-specific Layer 2 method.
+A tight posterior centred wrong gives confident wrong answers, so these gates check
+the fast model, taken as a plain callable or ``Posterior``, before it is promoted.
 """
 
 from __future__ import annotations
@@ -42,34 +26,26 @@ def assert_posterior_agreement(
     *,
     tolerance_sigma: float = 1.0,
 ) -> None:
-    r"""Check that ``p_fast.mean`` lies within ``tolerance_sigma`` standard
-    deviations of ``p_oracle.mean``.
+    """Check that the fast posterior mean lies near the oracle's, per component.
 
-    Marginal-only test: each component of the mean must satisfy
+        zᵢ = |μ_fast,i − μ_oracle,i| / σᵢ ≤ ``tolerance_sigma``,   σᵢ² = [Σ_x|y]ᵢᵢ
 
-    $$
-    \frac{|x^*_\text{fast} - x^*_\text{oracle}|}{\sigma_\text{post, oracle}}
-    \le \text{tolerance\_sigma}.
-    $$
-
-    The oracle marginal $\sigma_i$ is extracted from
-    ``p_oracle.cov`` by probing $e_i^T \Sigma e_i$ via one matvec per
-    component. Cheap for moderate state size; for very large state
-    sizes use Hutchinson estimation upstream and supply the diagonal
+    with Σ_x|y the oracle's posterior covariance. The test is marginal only. The
+    diagonal comes from ``gaussx.diag``, in closed form for a structured operator and
+    by materialising a generic one, which is cheap for moderate state size; for very
+    large state sizes use Hutchinson estimation upstream and supply the diagonal
     directly via ``Posterior.cov`` materialised as a diagonal operator.
 
     Algorithm:
-        1. Extract the oracle marginal standard deviations $\sigma_i$ from
-           ``p_oracle.cov``.
-        2. Form the mean difference $\Delta x^* = x^*_\text{fast} - x^*_\text{oracle}$.
-        3. Compute the z-scores $z_i = |\Delta x^*_i| / \sigma_i$.
-        4. Fail if any $z_i$ exceeds ``tolerance_sigma``.
+        1. Extract the oracle marginal standard deviations σᵢ from ``p_oracle.cov``.
+        2. Compute the z-scores zᵢ from the mean difference μ_fast − μ_oracle.
+        3. Fail if any zᵢ exceeds ``tolerance_sigma``.
 
     Args:
-        p_fast: Posterior produced by the amortized / fast model.
+        p_fast: Posterior produced by the amortized or fast model, with mean μ_fast.
         p_oracle: Posterior produced by the oracle (e.g. ``StrongFourDVar``
-            + [`LaplaceCovariance`][vardax.LaplaceCovariance]).
-        tolerance_sigma: Allowed deviation in units of $\sigma$.
+            + [`LaplaceCovariance`][vardax.LaplaceCovariance]), with mean μ_oracle.
+        tolerance_sigma: Allowed deviation in units of σᵢ.
 
     Raises:
         MissingInputError: If ``p_oracle.cov`` is ``None``.
@@ -118,7 +94,7 @@ def assert_posterior_agreement(
             f"{p_fast.mean.shape} vs {p_oracle.mean.shape}."
         )
     oracle_std = _marginal_std(p_oracle.cov, p_oracle.mean)
-    # z = |x*_fast − x*_oracle| / σ_oracle
+    # zᵢ = |μ_fast,i − μ_oracle,i| / σᵢ, floored so a zero variance cannot divide by 0
     z_score = jnp.abs(p_fast.mean - p_oracle.mean) / jnp.maximum(oracle_std, 1e-12)
     if jnp.any(z_score > tolerance_sigma):
         worst = float(jnp.max(z_score))
@@ -136,32 +112,26 @@ def assert_adjoint_calibrated(
     threshold: float = 0.05,
     n_probes: int = 10,
 ) -> None:
-    r"""Random-vector probe of the Jacobian agreement at ``y``.
+    """Random-vector probe of the Jacobian agreement at ``y``.
 
-    Tests
+        ‖J_fast v − J_oracle v‖ / ‖J_oracle v‖ ≤ ``threshold``
 
-    $$
-    \frac{\|J_\text{fast} v - J_\text{oracle} v\|}
-         {\|J_\text{oracle} v\|} < \text{threshold}
-    $$
-
-    for ``n_probes`` random unit vectors $v$. Avoids
-    materialising either Jacobian — uses ``jax.jvp`` to apply each as
-    needed. Cheaper than dense Jacobian comparison and is the
-    operational test used by the six-step cycle.
+    for ``n_probes`` random unit vectors v. It avoids materialising either Jacobian
+    by applying each with ``jax.jvp``, which is cheaper than a dense Jacobian
+    comparison and is the operational test used by the six-step cycle.
 
     Algorithm:
-        1. Draw a random unit vector $v$ of the shape of ``y``.
+        1. Draw a random unit vector v of the shape of ``y``.
         2. Apply both Jacobians to it with ``jax.jvp``.
         3. Compute the relative error of the two products.
         4. Repeat for ``n_probes`` vectors and fail if the worst error exceeds
            ``threshold``.
 
     Args:
-        fn_fast: Callable ``y → analysis`` (e.g.
+        fn_fast: Callable from y to the analysis, with Jacobian J_fast (e.g.
             ``lambda y_: amortized(Batch1D(input=y_, mask=mask, target=None))``).
-        fn_oracle: Same signature, but the oracle.
-        y: Observation tensor at which the Jacobians are probed.
+        fn_oracle: Same signature, but the oracle, with Jacobian J_oracle.
+        y: Observation y at which the Jacobians are probed.
         key: PRNG key for the probe vectors.
         threshold: Maximum allowed relative error.
         n_probes: Number of probe vectors.
@@ -193,19 +163,24 @@ def assert_adjoint_calibrated(
         AssertionError: adjoint calibration failed: ...
     """
     keys = jax.random.split(key, n_probes)
-    worst_rel = 0.0
+    worst_relative_error = 0.0
     for probe_key in keys:
+        # v = ξ / ‖ξ‖, ξ ~ 𝒩(0, I)
         probe = jax.random.normal(probe_key, y.shape)
         probe = probe / jnp.linalg.norm(probe)
+        # J_fast v
         _, jvp_fast = jax.jvp(fn_fast, (y,), (probe,))
+        # J_oracle v
         _, jvp_oracle = jax.jvp(fn_oracle, (y,), (probe,))
-        denom = jnp.linalg.norm(jvp_oracle) + 1e-12
+        # ‖J_oracle v‖, floored so a zero sensitivity cannot divide by 0
+        denominator = jnp.linalg.norm(jvp_oracle) + 1e-12
         # ‖J_fast v − J_oracle v‖ / ‖J_oracle v‖
-        relative_error = float(jnp.linalg.norm(jvp_fast - jvp_oracle) / denom)
-        worst_rel = max(worst_rel, relative_error)
-    if worst_rel > threshold:
+        relative_error = float(jnp.linalg.norm(jvp_fast - jvp_oracle) / denominator)
+        worst_relative_error = max(worst_relative_error, relative_error)
+    if worst_relative_error > threshold:
         raise AssertionError(
-            f"adjoint calibration failed: max relative error {worst_rel:.4f} > "
+            f"adjoint calibration failed: max relative error "
+            f"{worst_relative_error:.4f} > "
             f"{threshold:.4f} (over {n_probes} probes)."
         )
 
@@ -219,43 +194,30 @@ def simulation_based_calibration(
     n_runs: int = 200,
     n_samples: int = 200,
 ) -> Int[Array, " n_runs"]:
-    r"""Per Talts et al. 2018: rank histogram of true draws within
-    posterior samples.
+    """Rank histogram of true draws within posterior samples (Talts et al. 2018).
 
-    Procedure for each of ``n_runs`` independent draws:
+        rankₙ = |{e : ‖x⁽ᵉ⁾‖₂ < ‖xₙ‖₂}|,   x⁽ᵉ⁾ ~ q(x ∣ yₙ; ν),   xₙ ~ p(x)
 
-    1. Sample $x^{(j)} \sim p(x)$ from the prior.
-    2. Simulate $y^{(j)} = \mathrm{simulate\_obs}(x^{(j)})$.
-    3. Draw ``n_samples`` posterior samples from
-       $q_\phi(\cdot \mid y^{(j)})$.
-    4. Compute the rank of (a flattened scalar reduction of)
-       $x^{(j)}$ in the sample set.
-
-    A well-calibrated posterior produces uniformly distributed ranks
-    over ``[0, n_samples]``. Bumps near the edges → over-confident;
-    centre-mass bump → under-confident.
+    with n indexing the ``n_runs`` independent runs and e the ``n_samples`` posterior
+    samples. A well-calibrated posterior produces uniformly distributed ranks over
+    ``[0, n_samples]``; bumps near the edges mean over-confident, a bump at the centre
+    means under-confident.
 
     Algorithm:
         1. For each run, split the key into prior, observation and posterior keys.
-        2. Draw $x$, simulate $y$ and draw the posterior samples.
-        3. Reduce $x$ and every sample to its $\ell_2$ norm.
-        4. Record how many sample norms fall below the norm of $x$.
-
-    References:
-        Talts, Betancourt, Simpson, Vehtari & Gelman (2018). "Validating
-        Bayesian inference algorithms with simulation-based calibration."
+        2. Draw xₙ from the prior, simulate yₙ and draw the posterior samples x⁽ᵉ⁾.
+        3. Reduce xₙ and every sample to its ℓ₂ norm.
+        4. Record how many sample norms fall below the norm of xₙ.
 
     Args:
         sample_posterior: ``(y, key, n) -> Array`` of posterior samples with
-            ``n`` leading rows, conditioned on ``y``. For an
-            ``AmortizedPosterior``, the natural wrapper is
-            ``lambda y, k, n: model.sample(Batch(input=y[None], ...), k, n)[0]``.
-        sample_prior: ``key -> x``. Single prior draw.
-        simulate_obs: ``(x, key) -> y``. Forward + noise.
+            ``n`` leading rows, conditioned on ``y``. An ``AmortizedPosterior`` plugs
+            in through a one-element batch, as in the last example.
+        sample_prior: ``key -> x``. Single prior draw xₙ.
+        simulate_obs: ``(x, key) -> y``. Forward plus noise, yₙ.
         key: Top-level PRNG key.
         n_runs: Number of (prior, obs, posterior) triples.
-        n_samples: Posterior samples per run (defines the rank
-            histogram resolution).
+        n_samples: Posterior samples per run (defines the rank histogram resolution).
 
     Returns:
         Integer ranks in ``[0, n_samples]``, one per run.
@@ -305,8 +267,10 @@ def simulation_based_calibration(
         ...     head=vdx.RegressionHead(context_dim=4, state_shape=(2, 3), key=key),
         ...     config=vdx.AmortizedConfig(),
         ... )
+        >>> import einx
         >>> def sample_posterior(y, k, n):
-        ...     batch = vdx.Batch1D(input=y[None], mask=jnp.ones_like(y)[None])
+        ...     window = einx.id("s... -> 1 s...", y)
+        ...     batch = vdx.Batch1D(input=window, mask=jnp.ones_like(window))
         ...     return amortized.sample(batch, k, n)[0]
         >>> ranks = vdx.simulation_based_calibration(
         ...     sample_posterior,
@@ -318,33 +282,43 @@ def simulation_based_calibration(
         ... )
         >>> ranks.shape
         (4,)
+
+    References:
+        Talts, Betancourt, Simpson, Vehtari & Gelman (2018). "Validating Bayesian
+        inference algorithms with simulation-based calibration."
     """
     keys = jax.random.split(key, n_runs)
     ranks = []
     for run_key in keys:
-        key_prior, key_obs, key_post = jax.random.split(run_key, 3)
-        x_true = sample_prior(key_prior)
-        observation = simulate_obs(x_true, key_obs)
-        samples = sample_posterior(observation, key_post, n_samples)
-        # Flatten and use the L2 norm as the scalar reduction.
-        scalar_true = float(jnp.linalg.norm(x_true))
-        # ‖xᵢ‖₂ over every state dimension of each sample
-        squared_norms = einx.sum("n [s...]", samples**2)
-        scalar_samples = jnp.sqrt(squared_norms)
-        rank = int(jnp.sum(scalar_samples < scalar_true))
+        prior_key, obs_key, posterior_key = jax.random.split(run_key, 3)
+        # xₙ ~ p(x)
+        true_state = sample_prior(prior_key)
+        # yₙ = h(xₙ) + ε
+        observation = simulate_obs(true_state, obs_key)
+        # x⁽ᵉ⁾ ~ q(x ∣ yₙ; ν)
+        samples = sample_posterior(observation, posterior_key, n_samples)
+        # ‖xₙ‖₂ is the scalar reduction the rank compares
+        true_norm = float(jnp.linalg.norm(true_state))
+        # ‖x⁽ᵉ⁾‖₂² over every state dimension of each sample
+        squared_norms = einx.sum("member [s...]", samples**2)
+        # ‖x⁽ᵉ⁾‖₂
+        sample_norms = jnp.sqrt(squared_norms)
+        # rankₙ = |{e : ‖x⁽ᵉ⁾‖₂ < ‖xₙ‖₂}|
+        rank = int(jnp.sum(sample_norms < true_norm))
         ranks.append(rank)
     return jnp.asarray(ranks, dtype=jnp.int32)
 
 
 def _marginal_std(cov_op: Any, ref: Float[Array, ...]) -> Float[Array, ...]:
-    r"""Extract $\sqrt{\mathrm{diag}(\Sigma)}$ from the operator.
+    """Extract σᵢ = √[Σ]ᵢᵢ from the operator Σ, shaped like ``ref``.
 
-    Delegates to ``gaussx.diag``, which uses closed forms for
-    structured operators (diagonal, Kronecker, block-diagonal) and
-    falls back to materialisation only for generic operators — fine
-    for the moderate-N regime where this gate is meaningful.
+    Delegates to ``gaussx.diag``, which uses closed forms for structured operators
+    (diagonal, Kronecker, block-diagonal) and falls back to materialisation only for
+    generic operators, which is fine for the moderate-N regime where this gate is
+    meaningful.
     """
-    diag = gaussx.diag(cov_op)
-    # σ = √max(diag Σ, 0)
-    marginal_std = jnp.sqrt(jnp.maximum(diag, 0.0))
+    # diag(Σ)
+    diagonal = gaussx.diag(cov_op)
+    # σᵢ = √max([Σ]ᵢᵢ, 0): the floor absorbs small negative round-off
+    marginal_std = jnp.sqrt(jnp.maximum(diagonal, 0.0))
     return as_shape(marginal_std, ref.shape)

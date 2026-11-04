@@ -1,9 +1,6 @@
-"""Visualization utilities for vardax.
+"""Visualization helpers, which take an optional ``ax`` and return figure and axes.
 
-All public functions accept an optional ``ax`` argument for composability
-and return ``(fig, ax)`` or ``(fig, axes)`` tuples.  ``matplotlib`` is
-imported inside each function so that it remains a soft dependency at the
-module level.
+``matplotlib`` is imported inside each function, so it stays a soft dependency.
 """
 
 from __future__ import annotations
@@ -28,16 +25,33 @@ def plot_3d_attractor(
     """Plot a 3-D attractor trajectory.
 
     Args:
-        states: State array of shape ``(T, D)`` with ``D >= 3``.
-        dim_indices: Indices of the three dimensions to plot.
+        states: State trajectory, indexed ``[time, variable]``, with at least three
+            variables.
+        dim_indices: Indices of the three variables to plot.
         ax: Optional existing 3-D ``Axes`` to draw on.
 
     Returns:
-        ``(fig, ax)`` — Matplotlib figure and 3-D axes.
+        ``(fig, ax)``: the Matplotlib figure and 3-D axes.
+
+    Examples:
+        >>> import matplotlib
+        >>> matplotlib.use("Agg")
+        >>> import numpy as np
+        >>> states = np.random.default_rng(0).normal(size=(20, 4))
+        >>> fig, ax = plot_3d_attractor(states)
+        >>> type(ax).__name__, ax.get_xlabel()
+        ('Axes3D', 'x0')
+
+        Any three variables can be chosen:
+
+        >>> fig, ax = plot_3d_attractor(states, dim_indices=(3, 1, 0))
+        >>> ax.get_xlabel(), ax.get_zlabel()
+        ('x3', 'x0')
     """
+    # lazy: matplotlib is a soft dependency
     import matplotlib.pyplot as plt
 
-    i, j, k = dim_indices
+    x_index, y_index, z_index = dim_indices
     if ax is None:
         fig = plt.figure()
         ax = fig.add_subplot(111, projection="3d")
@@ -45,10 +59,11 @@ def plot_3d_attractor(
         fig = ax.get_figure()
         assert fig is not None
 
-    ax.plot(states[:, i], states[:, j], states[:, k], lw=0.5)
-    ax.set_xlabel(f"x{i}")
-    ax.set_ylabel(f"x{j}")
-    ax.set_zlabel(f"x{k}")  # type: ignore[union-attr]  # ty:ignore[unresolved-attribute]
+    ax.plot(states[:, x_index], states[:, y_index], states[:, z_index], lw=0.5)
+    ax.set_xlabel(f"x{x_index}")
+    ax.set_ylabel(f"x{y_index}")
+    z_name = f"x{z_index}"
+    ax.set_zlabel(z_name)  # type: ignore[union-attr]  # ty:ignore[unresolved-attribute]
     return fig, ax  # type: ignore[return-value]  # ty:ignore[invalid-return-type]
 
 
@@ -61,13 +76,31 @@ def plot_state_grid(
     """Hovmöller-style image of states over time.
 
     Args:
-        states: State array of shape ``(T, N)``.
-        time: Time coordinate array of shape ``(T,)``.
+        states: State trajectory, indexed ``[time, feature]``.
+        time: Time coordinate of each row of ``states``.
         ax: Optional existing ``Axes`` to draw on.
 
     Returns:
-        ``(fig, ax)`` — Matplotlib figure and axes.
+        ``(fig, ax)``: the Matplotlib figure and axes.
+
+    Examples:
+        >>> import matplotlib
+        >>> matplotlib.use("Agg")
+        >>> import numpy as np
+        >>> states = np.random.default_rng(0).normal(size=(20, 8))
+        >>> fig, ax = plot_state_grid(states, np.linspace(0.0, 1.0, 20))
+        >>> ax.get_xlabel(), ax.get_ylabel()
+        ('time', 'feature index')
+
+        Drawing onto an existing axes returns that axes:
+
+        >>> import matplotlib.pyplot as plt
+        >>> _, mine = plt.subplots()
+        >>> _, same = plot_state_grid(states, np.linspace(0.0, 1.0, 20), ax=mine)
+        >>> same is mine
+        True
     """
+    # lazy: matplotlib is a soft dependency
     import matplotlib.pyplot as plt
 
     if ax is None:
@@ -97,15 +130,32 @@ def plot_trajectories(
     """Overlay time-series of all state variables.
 
     Args:
-        states: State array of shape ``(T, N)``.
-        time: Time coordinate array of shape ``(T,)``.
+        states: State trajectory, indexed ``[time, feature]``.
+        time: Time coordinate of each row of ``states``.
         ax: Optional existing ``Axes`` to draw on.
-        orientation: ``"horizontal"`` plots time on the x-axis;
-            ``"vertical"`` rotates so that time is on the y-axis.
+        orientation: ``"horizontal"`` plots time on the x-axis; ``"vertical"`` rotates
+            so that time is on the y-axis.
 
     Returns:
-        ``(fig, ax)`` — Matplotlib figure and axes.
+        ``(fig, ax)``: the Matplotlib figure and axes.
+
+    Examples:
+        >>> import matplotlib
+        >>> matplotlib.use("Agg")
+        >>> import numpy as np
+        >>> states = np.random.default_rng(0).normal(size=(20, 3))
+        >>> time = np.linspace(0.0, 1.0, 20)
+        >>> fig, ax = plot_trajectories(states, time)
+        >>> len(ax.lines), ax.get_xlabel()
+        (3, 'time')
+
+        ``orientation="vertical"`` puts time on the y-axis:
+
+        >>> fig, ax = plot_trajectories(states, time, orientation="vertical")
+        >>> ax.get_ylabel()
+        'time'
     """
+    # lazy: matplotlib is a soft dependency
     import matplotlib.pyplot as plt
 
     if ax is None:
@@ -114,8 +164,8 @@ def plot_trajectories(
         fig = ax.get_figure()
         assert fig is not None
 
-    n_features = states.shape[1]
-    for i in range(n_features):
+    num_features = states.shape[1]
+    for i in range(num_features):
         if orientation == "vertical":
             ax.plot(states[:, i], time, label=f"x{i}")
             ax.set_xlabel("state")
@@ -168,6 +218,7 @@ def plot_reconstruction_comparison(
         >>> axes[1].get_title()
         'Masked input'
     """
+    # lazy: matplotlib is a soft dependency
     import matplotlib.pyplot as plt
 
     fig, axes = plt.subplots(1, 3, figsize=(12, 4))
@@ -176,8 +227,8 @@ def plot_reconstruction_comparison(
         (masked_input[sample_idx], "Masked input"),
         (reconstruction[sample_idx], "Reconstruction"),
     ]
-    for ax, (arr, title) in zip(axes, data, strict=False):
-        ax.imshow(arr.T, aspect="auto", origin="lower")
+    for ax, (panel, title) in zip(axes, data, strict=False):
+        ax.imshow(panel.T, aspect="auto", origin="lower")
         ax.set_title(title)
         ax.set_xlabel("time")
         ax.set_ylabel("feature")
@@ -219,6 +270,7 @@ def plot_l96_grid(
         >>> same is mine
         True
     """
+    # lazy: matplotlib is a soft dependency
     import matplotlib.pyplot as plt
 
     if ax is None:
@@ -291,6 +343,7 @@ def plot_l96_trajectories(
         ...
         ConfigurationError: n_vars must be a positive integer, got 0.
     """
+    # lazy: matplotlib is a soft dependency
     import matplotlib.pyplot as plt
 
     if ax is None:
@@ -299,11 +352,11 @@ def plot_l96_trajectories(
         fig = ax.get_figure()
         assert fig is not None
 
-    N = states.shape[1]
+    num_variables = states.shape[1]
     if n_vars <= 0:
         raise ConfigurationError(f"n_vars must be a positive integer, got {n_vars}.")
-    n_selected = min(n_vars, N)
-    indices = np.unique(np.linspace(0, N - 1, n_selected, dtype=int))
+    num_selected = min(n_vars, num_variables)
+    indices = np.unique(np.linspace(0, num_variables - 1, num_selected, dtype=int))
     for i in indices:
         ax.plot(time_coords, states[:, i], label=f"x{i}")
     ax.set_xlabel("time")

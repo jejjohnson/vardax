@@ -10,49 +10,42 @@ from jaxtyping import Array
 
 
 class SoftBoundedForward(eqx.Module):
-    r"""``ForwardModel`` adapter that softly confines states to a box.
+    """``ForwardModel`` adapter that softly confines states to a box.
+
+        xₜ = s(f(s(xₜ₋₁)))
+        s(x) = x                             for |x| ≤ b
+        s(x) = sign(x) (b + b u / (1 + u))   for |x| > b,   u = (|x| − b) / b
 
     Explicit Runge–Kutta steps of dynamics with quadratic terms (Lorenz-63,
-    Lorenz-96, …) overflow, or drive an adaptive step-size controller past
-    its step cap, when the state is far outside the attractor. A
-    line-search minimiser such as the BFGS inside
-    [`StrongFourDVar`][vardax.StrongFourDVar] will try such states, and one
-    non-finite cost is enough to poison the whole solve. This adapter maps
-    the state through
+    Lorenz-96, …) overflow, or drive an adaptive step-size controller past its step
+    cap, when the state is far outside the attractor. A line-search minimiser such
+    as the BFGS inside [`StrongFourDVar`][vardax.StrongFourDVar] will try such
+    states, and one non-finite cost is enough to poison the whole solve. This
+    adapter maps the state through s on the way into and out of every step, so that
 
-    $$
-    s(x) = \operatorname{sign}(x)\,\begin{cases}
-      |x| & |x| \le b \\
-      b + b\,\dfrac{u}{1 + u}, \quad u = (|x| - b)/b & |x| > b
-    \end{cases}
-    $$
-
-    on the way into and out of every step, so that
-
-    - states inside the box $|x_i| \le b$ are untouched (choose ``bound``
-      so the attractor sits well inside it — the adapter is then exactly
-      the wrapped model wherever the analysis can end up);
-    - states outside are confined to $|x_i| < 2b$, keeping every trial
-      cost finite;
-    - the map is continuously differentiable (slope one at the box edge
-      from both sides) and its gradient outside, $1/(1+u)^2$, stays
-      representable in single precision for trial states up to about
-      $10^{19}$ times the bound, unlike a hard clip (zero gradient) or a
-      ``tanh`` saturation (gradient underflows to zero a few bounds out);
-      a rejected trial therefore still carries curvature information if
-      the minimiser asks for it.
+    - states inside the box |xᵢ| ≤ b are untouched (choose ``bound`` so the attractor
+      sits well inside it; the adapter is then exactly the wrapped model wherever
+      the analysis can end up);
+    - states outside are confined to |xᵢ| < 2b, keeping every trial cost finite;
+    - the map is continuously differentiable (slope one at the box edge from both
+      sides) and its gradient outside, 1 / (1 + u)², stays representable in single
+      precision for trial states up to about 10¹⁹ times the bound, unlike a hard clip
+      (zero gradient) or a ``tanh`` saturation (gradient underflows to zero a few
+      bounds out); a rejected trial therefore still carries curvature information
+      if the minimiser asks for it.
 
     Algorithm:
-        1. Confine the incoming state with $s$.
-        2. Advance it with the wrapped model's ``step``.
-        3. Confine the result with $s$ again.
+        1. Confine the incoming state with s.
+        2. Advance it with the wrapped model's ``step``, f.
+        3. Confine the result with s again.
 
     Attributes:
-        forward: The wrapped ``pipekit_cycle.ForwardModel``.
-        bound: Half-width $b$ of the box on which the adapter is the
-            identity.
+        forward: The wrapped ``pipekit_cycle.ForwardModel``, f.
+        bound: Half-width b of the box on which the adapter is the identity.
 
     Examples:
+        Inside the box the state is untouched, and far outside it is confined:
+
         >>> import jax.numpy as jnp
         >>> import vardax
         >>> class Double:
@@ -62,8 +55,9 @@ class SoftBoundedForward(eqx.Module):
         ...     def step(self, x, dt):
         ...         return 2.0 * x
         >>> fwd = vardax.SoftBoundedForward(Double(), bound=10.0)
-        >>> fwd.step(jnp.array([1.0, -3.0]), 1.0)  # inside the box: untouched
-        Array([ 2., -6.], dtype=float32)
+        >>> stepped = fwd.step(jnp.array([1.0, -3.0]), 1.0)
+        >>> bool(jnp.allclose(stepped, jnp.array([2.0, -6.0])))
+        True
         >>> bool(jnp.all(jnp.abs(fwd.step(jnp.array([1e6, -1e6]), 1.0)) < 20.0))
         True
 
@@ -87,35 +81,45 @@ class SoftBoundedForward(eqx.Module):
 
     @property
     def dt(self) -> float:
+        """Step length of the wrapped model."""
         return self.forward.dt
 
     @property
     def state_signature(self) -> Any:
+        """State signature of the wrapped model, or ``None`` if it has none."""
         return getattr(self.forward, "state_signature", None)
 
     def _confine(self, state: Array) -> Array:
+        """Apply the confinement map s elementwise."""
         half_width = self.bound
+        # |x|
         abs_state = jnp.abs(state)
         # The in-box branch returns ``state`` itself (not ``sign * abs``) so the
         # gradient is exactly one everywhere inside, including at zero, where
         # ``jnp.sign`` would otherwise zero it. Outside, the algebraic
-        # saturation u / (1 + u) keeps the derivative 1 / (1 + u)^2 finite and
+        # saturation u / (1 + u) keeps the derivative 1 / (1 + u)² finite and
         # non-zero far beyond any state a line search will try (tanh would
         # underflow to a zero gradient a few bounds out).
         # u = max(|x| − b, 0) / b
         excess = jnp.maximum(abs_state - half_width, 0.0) / half_width
         # s(x) = sign(x) (b + b u / (1 + u))
         outside = jnp.sign(state) * (half_width + half_width * excess / (1.0 + excess))
+        # s(x) = x where |x| ≤ b
         return jnp.where(abs_state <= half_width, state, outside)
 
     def step(self, state: Array, dt: float) -> Array:
-        r"""Advance ``state`` by ``dt`` with confinement before and after.
+        """Advance ``state`` by ``dt`` with confinement before and after.
 
         Args:
-            state: State $x$ to advance.
-            dt: Step length $\Delta t$.
+            state: State xₜ₋₁ to advance.
+            dt: Step length Δt.
 
         Returns:
-            $s(\Phi_{\Delta t}(s(x)))$, with $\Phi$ the wrapped model's step.
+            xₜ = s(f(s(xₜ₋₁))), with f the wrapped model's step.
         """
-        return self._confine(self.forward.step(self._confine(state), dt))
+        # s(xₜ₋₁)
+        confined_state = self._confine(state)
+        # f(s(xₜ₋₁))
+        stepped_state = self.forward.step(confined_state, dt)
+        # xₜ = s(f(s(xₜ₋₁)))
+        return self._confine(stepped_state)
