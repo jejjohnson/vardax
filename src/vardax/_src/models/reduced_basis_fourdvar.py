@@ -73,7 +73,11 @@ from vardax._src.obs_operators.point import (
     window_steps,
 )
 from vardax._src.protocols import Minimiser, StateParameterization
-from vardax._src.utils.covariance import as_covariance, masked_obs_cov
+from vardax._src.utils.covariance import (
+    as_covariance,
+    half_weighted_norm,
+    masked_obs_cov,
+)
 from vardax._src.utils.shapes import as_shape
 
 
@@ -314,15 +318,13 @@ class ReducedBasisFourDVar(eqx.Module):
                     )
                     # r = m ⊙ (y − H(x))
                     residual = step_mask * (observation - predicted_obs)
-                    # R̃⁻¹r with R̃ = M R M + (I − M), so masked entries
-                    # drop out of the likelihood
-                    weighted_residual = lx.linear_solve(
+                    # J_o,t = ½ rᵀ R̃⁻¹ r with R̃ = M R M + (I − M), so masked
+                    # entries drop out of the likelihood
+                    return half_weighted_norm(
                         masked_obs_cov(obs_cov_op, step_mask),
                         residual,
-                        solver=self.cov_solver,
-                    ).value
-                    # J_o,t = ½ rᵀ R̃⁻¹ r
-                    return 0.5 * jnp.sum(residual * weighted_residual)
+                        self.cov_solver,
+                    )
 
                 per_step_costs = jax.vmap(_per_step)(
                     trajectory, window_obs, window_mask
@@ -372,14 +374,10 @@ class ReducedBasisFourDVar(eqx.Module):
             def cost(initial_state: Float[Array, " N"], _args: Any) -> Float[Array, ""]:
                 # δx = x₀ − x_b
                 increment = initial_state - self.prior_mean
-                # B⁻¹δx
-                weighted_increment = lx.linear_solve(
-                    self.prior_cov_op,
-                    increment,
-                    solver=self.cov_solver,
-                ).value
                 # J_b = ½ δxᵀ B⁻¹ δx
-                background_cost = 0.5 * jnp.sum(increment * weighted_increment)
+                background_cost = half_weighted_norm(
+                    self.prior_cov_op, increment, self.cov_solver
+                )
                 return background_cost + _obs_cost(
                     self._rollout(initial_state, n_steps=n_steps)
                 )

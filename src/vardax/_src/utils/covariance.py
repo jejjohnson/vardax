@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import jax.numpy as jnp
-from jaxtyping import Array, Float
+from jaxtyping import Array, Bool, Float
 import lineax as lx
 
 
@@ -24,6 +24,59 @@ def as_covariance(operator: lx.AbstractLinearOperator) -> lx.AbstractLinearOpera
     if lx.is_positive_semidefinite(operator):
         return operator
     return lx.TaggedLinearOperator(operator, lx.positive_semidefinite_tag)
+
+
+def guarded_solve(
+    cov_op: lx.AbstractLinearOperator,
+    vector: Float[Array, "*shape"],
+    solver: lx.AbstractLinearSolver,
+) -> tuple[Float[Array, "*shape"], Bool[Array, ""]]:
+    r"""$C^{-1} v$, without raising on a vector no solver can handle.
+
+    A line search tries points whose rollout has blown up, and it can only
+    reject a trial that returns. ``lx.linear_solve`` raises on such a vector,
+    and ``throw=False`` is not enough: its JVP and transpose rules solve with
+    ``throw=True``, and a minimiser evaluates trial points through them. So a
+    non-finite or overflowing vector never reaches the solver.
+
+    Args:
+        cov_op: The covariance $C$.
+        vector: The vector $v$.
+        solver: The solver for $C$.
+
+    Returns:
+        $C^{-1} v$, NaN throughout when $v$ was unusable, and whether it was
+        usable. The tangent of the unusable branch is zero.
+    """
+    # |v| ≤ max^¼ keeps vᵀ v and vᵀ C⁻¹ v representable for a reasonable C
+    limit = jnp.finfo(vector.dtype).max ** 0.25
+    usable = jnp.all(jnp.abs(vector) <= limit)
+    safe_vector = jnp.where(usable, vector, jnp.zeros_like(vector))
+    solved = lx.linear_solve(cov_op, safe_vector, solver=solver, throw=False).value
+    return jnp.where(usable, solved, jnp.full_like(solved, jnp.nan)), usable
+
+
+def half_weighted_norm(
+    cov_op: lx.AbstractLinearOperator,
+    vector: Float[Array, "*shape"],
+    solver: lx.AbstractLinearSolver,
+) -> Float[Array, ""]:
+    r"""$\tfrac12 v^\top C^{-1} v$, and $+\infty$ at an unusable trial point.
+
+    Args:
+        cov_op: The covariance $C$.
+        vector: The vector $v$.
+        solver: The solver for $C$.
+
+    Returns:
+        The weighted norm. A line search rejects $+\infty$ and backtracks.
+    """
+    solved, usable = guarded_solve(cov_op, vector, solver)
+    safe_vector = jnp.where(usable, vector, jnp.zeros_like(vector))
+    safe_solved = jnp.where(usable, solved, jnp.zeros_like(solved))
+    # ½ vᵀ C⁻¹ v
+    norm = 0.5 * jnp.sum(safe_vector * safe_solved)
+    return jnp.where(usable, norm, jnp.full_like(norm, jnp.inf))
 
 
 def masked_obs_cov(

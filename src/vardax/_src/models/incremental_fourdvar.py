@@ -58,7 +58,11 @@ from vardax._src.obs_operators.point import (
     whitened_residual,
     window_steps,
 )
-from vardax._src.utils.covariance import as_covariance, masked_obs_cov
+from vardax._src.utils.covariance import (
+    as_covariance,
+    guarded_solve,
+    masked_obs_cov,
+)
 
 
 class IncrementalConfig(eqx.Module):
@@ -326,7 +330,9 @@ class IncrementalFourDVar(eqx.Module):
                 [`PointObsBatch`][vardax.PointObsBatch].
 
         Returns:
-            The analysed initial state $x_0^*$ of every window.
+            The analysed initial state $x_0^*$ of every window. Gauss-Newton
+            has no line search, so a window whose iteration blows up comes
+            back as NaN instead of raising.
 
         Raises:
             ObservationError: For a point batch with a non-trivial
@@ -360,9 +366,10 @@ class IncrementalFourDVar(eqx.Module):
                     step_residual: Float[Array, " M"], step_mask: Float[Array, " M"]
                 ) -> Float[Array, " M"]:
                     solver = lx.CG(atol=tol, rtol=tol)
-                    return lx.linear_solve(
-                        masked_obs_cov(obs_cov, step_mask), step_residual, solver=solver
-                    ).value
+                    solved, _ = guarded_solve(
+                        masked_obs_cov(obs_cov, step_mask), step_residual, solver
+                    )
+                    return solved
 
                 return jax.vmap(solve_one)(residuals, window_mask)
 
@@ -460,7 +467,8 @@ class IncrementalFourDVar(eqx.Module):
             def apply_prior_precision(direction: Float[Array, " C"]):
                 # B⁻¹ v
                 solver = lx.CG(atol=tol, rtol=tol)
-                return lx.linear_solve(prior_cov, direction, solver=solver).value
+                solved, _ = guarded_solve(prior_cov, direction, solver)
+                return solved
 
             def background_cost(control: Float[Array, " C"]) -> Float[Array, ""]:
                 # ½ (x₀ - x_b)ᵀ B⁻¹ (x₀ - x_b)
