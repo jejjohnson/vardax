@@ -11,11 +11,9 @@ from collections.abc import Callable
 import inspect
 from typing import Any
 
-import gaussx
 import jax
 import jax.numpy as jnp
 from jaxtyping import Array, Float
-import lineax as lx
 
 from vardax._src.errors import ConfigurationError, UnsupportedInputError
 
@@ -254,49 +252,3 @@ def observed_trajectory(
         return jax.vmap(observe)(trajectory, mask)
 
     return observed
-
-
-def gauss_newton_hessian(
-    residual_fn: Callable[[Any], Array],
-    point: Any,
-    noise_precision: Callable[[Array], Array],
-    prior_precision: Callable[[Any], Any],
-    jac: str = "fwd",
-) -> lx.AbstractLinearOperator:
-    """P + r'ᵀ W r' at ``point``, by ``gaussx.gauss_newton_operator``.
-
-    ``jac="fwd"`` is matrix-free. ``jac="bwd"`` forms the Jacobian with
-    ``jax.jacrev`` (one VJP per output), for maps that define only a
-    reverse-mode rule (a ``jax.custom_vjp``, such as a diffrax solve under
-    ``RecursiveCheckpointAdjoint``); ``point`` must then be one array. gaussx's
-    own ``jac="bwd"`` gets J v by transposing the VJP, which cannot pass through
-    that solve's ``while_loop``, so it receives the dense J as a linear map.
-
-    Args:
-        residual_fn: The residual r.
-        point: Where to linearise.
-        noise_precision: r ↦ W r.
-        prior_precision: v ↦ P v.
-        jac: ``"fwd"`` or ``"bwd"``.
-
-    Returns:
-        The lazy PSD operator.
-    """
-    if jac == "fwd":
-        tangent_fn, base_point = residual_fn, point
-    else:
-        # J = ∂r/∂p, shape (*out, *in)
-        jacobian = jax.jacrev(residual_fn)(point)
-
-        def tangent_fn(direction: Array) -> Array:
-            # J v
-            return jnp.tensordot(jacobian, direction, axes=direction.ndim)
-
-        base_point = jnp.zeros_like(point)
-    return gaussx.gauss_newton_operator(
-        tangent_fn,
-        base_point,
-        noise_precision=noise_precision,
-        prior_precision=prior_precision,
-        jac="fwd",
-    )
