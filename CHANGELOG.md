@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.3.1](https://github.com/jejjohnson/vardax/compare/v0.3.0...v0.3.1) (2026-11-04)
+
+
+### Features
+
+* **obs_operators:** build LinearObs and CallableObs on pipekit-cycle, and accept its primitives everywhere ([#221](https://github.com/jejjohnson/vardax/issues/221)) ([eec8434](https://github.com/jejjohnson/vardax/commit/eec843445525b24a00c017a5c7a1d85454130dc2)), closes [#217](https://github.com/jejjohnson/vardax/issues/217)
+* **posterior:** marginal variances from the stored precision via gaussx.diag_inv ([#214](https://github.com/jejjohnson/vardax/issues/214)) ([38b47aa](https://github.com/jejjohnson/vardax/commit/38b47aa5360928d4d5e871ee692edc2bf47aaa96)), closes [#195](https://github.com/jejjohnson/vardax/issues/195)
+
+
+### Bug Fixes
+
+* **deps:** pin gaussx v0.6.6, which fixes the posterior for a multi-time diagonal R ([#212](https://github.com/jejjohnson/vardax/issues/212)) ([73a07f5](https://github.com/jejjohnson/vardax/commit/73a07f5b86d14c9a3c5c8a56089b5dfabbd9e78e)), closes [#149](https://github.com/jejjohnson/vardax/issues/149)
+* **models:** reject a trial step that blows up, instead of raising from the cost ([#211](https://github.com/jejjohnson/vardax/issues/211)) ([edcaa4c](https://github.com/jejjohnson/vardax/commit/edcaa4cc1c65825d637858759923a23209056731)), closes [#209](https://github.com/jejjohnson/vardax/issues/209)
+
 ## [0.3.0](https://github.com/jejjohnson/vardax/compare/v0.2.1...v0.3.0) (2026-11-04)
 
 
