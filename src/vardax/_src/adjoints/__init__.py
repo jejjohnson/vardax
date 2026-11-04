@@ -1,43 +1,12 @@
-"""Adjoint composition for the FourDVarNet inner solver (Decision D15).
+"""Adjoint composition for the FourDVarNet inner solver.
 
-vardax does not own adjoint code. Gradients through the inner learned
-solver are composed by selecting an ``optimistix.AbstractAdjoint`` on
-the model:
-
-```python
-import optimistix as optx
-from vardax.adjoints import OneStepAdjoint
-
-model = FourDVarNet1D(
-    ...,
-    solver_adjoint=OneStepAdjoint(),  # O(1) memory, Bolte 2023
-)
-model = FourDVarNet1D(
-    ...,
-    solver_adjoint=optx.RecursiveCheckpointAdjoint(),  # default
-)
-model = FourDVarNet1D(
-    ...,
-    solver_adjoint=optx.ImplicitAdjoint(),  # IFT at fixed point
-)
-```
-
-The choice replaces the v0.3 ``grad_mode: Literal["unrolled",
-"one_step", "implicit"]`` enum (dropped in this epic, Decision D15).
-
-This module ships:
-
-- [`KStepAdjoint`][vardax.adjoints.KStepAdjoint] — warmup under
-  ``stop_gradient``, then ``k`` differentiable steps (Bolte, Pauwels &
-  Vaiter, NeurIPS 2023, generalised). The vardax-owned adjoint;
-  targets upstream contribution.
-- [`OneStepAdjoint`][vardax.OneStepAdjoint] — the ``k=1`` alias.
-- [`to_optimistix_adjoint`][vardax.adjoints.to_optimistix_adjoint] —
-  interpreter for the shared ``pipekit_cycle.adjoints`` spec
-  vocabulary (``TruncatedAdjoint(k)`` maps here; the dynamics-layer
-  counterpart is ``pipekit_jax.to_diffrax_adjoint``).
-- Re-exports ``optimistix.RecursiveCheckpointAdjoint`` and
-  ``optimistix.ImplicitAdjoint`` for one-stop import.
+vardax does not own adjoint code: gradients through the learned inner solver are
+composed by choosing an ``optimistix.AbstractAdjoint`` for the model's
+``solver_adjoint``, and this package adds
+[`KStepAdjoint`][vardax.adjoints.KStepAdjoint],
+[`OneStepAdjoint`][vardax.OneStepAdjoint] and
+[`to_optimistix_adjoint`][vardax.adjoints.to_optimistix_adjoint], and re-exports the
+optimistix adjoints for one-stop import.
 """
 
 from __future__ import annotations

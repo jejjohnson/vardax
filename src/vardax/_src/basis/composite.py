@@ -1,8 +1,6 @@
-r"""Concatenated reduced basis.
+"""Concatenated reduced basis: several bases stacked into one control vector z.
 
-Stacks several `ReducedBasis` components into a single control vector
-$X = [X_1, \ldots, X_C]$; ``operg`` sums the per-component increments,
-``prior_inv`` is block-diagonal.
+``operg`` sums the per-component increments and ``prior_inv`` is block-diagonal.
 """
 
 from __future__ import annotations
@@ -17,25 +15,26 @@ from vardax._src.errors import ConfigurationError
 
 
 class CompositeBasis(eqx.Module):
-    r"""Concatenate several reduced bases into one control vector.
+    """Concatenate several reduced bases into one control vector.
 
-    Satisfies `vardax.protocols.ReducedBasis`. ``nbasis`` is the sum of
-    component sizes; ``operg`` slices ``coefficients``, applies each component,
-    sums the per-grid increments; ``prior_inv`` slices ``coefficients`` and
-    concatenates the per-component blocks. Components may mix families
-    (e.g. a broad `rbf_basis` layer plus a `wavelet_basis` detail
-    layer), provided their ``operg`` outputs share one grid shape.
+        z = [z_1, …, z_C]
+        δx = ∑_c Φ_c z_c
+        Σ_z⁻¹ = blockdiag(Σ_z,1⁻¹, …, Σ_z,C⁻¹)
 
-    $$\delta x = \sum_c \Phi_c X_c$$
-
-    $$Q^{-1} = \mathrm{blockdiag}(Q_1^{-1}, \ldots, Q_C^{-1})$$
+    Satisfies [`ReducedBasis`][vardax.ReducedBasis], with ``nbasis`` the sum of the
+    component sizes. Components may mix families (e.g. a broad `rbf_basis` layer
+    plus a `wavelet_basis` detail layer), provided their ``operg`` outputs share one
+    grid shape.
 
     Algorithm:
-        1. Split $X$ at the cumulative component sizes (``splits``).
-        2. ``operg``: apply each component to its slice and sum the grid
-           increments.
-        3. ``prior_inv``: apply each component's ``prior_inv`` to its slice
-           and concatenate the blocks.
+        1. Split z at the cumulative component sizes (``splits``).
+        2. ``operg``: apply each component to its slice and sum the grid increments.
+        3. ``prior_inv``: apply each component's ``prior_inv`` to its slice and
+           concatenate the blocks.
+
+    Attributes:
+        components: The reduced bases, in control-vector order.
+        splits: Cumulative sizes at which z is cut between the components.
 
     Examples:
         Two linear bases on a 3-point grid, stacked into one control vector:
@@ -50,10 +49,17 @@ class CompositeBasis(eqx.Module):
         >>> basis.operg(0.0, jnp.array([1.0, 2.0, 3.0])).shape
         (3,)
 
-        The prior is block-diagonal, so ``prior_inv`` divides each block by
-        its own variance:
+        The prior is block-diagonal, so ``prior_inv`` divides each block by its own
+        variance:
 
         >>> bool(jnp.allclose(basis.prior_inv(jnp.ones(3)), jnp.array([0.5, 0.5, 2.0])))
+        True
+
+        A single component is the component itself:
+
+        >>> alone = vdx.composite_basis(b1)
+        >>> z = jnp.array([1.0, 2.0])
+        >>> bool(jnp.allclose(alone.operg(0.0, z), b1.operg(0.0, z)))
         True
     """
 
@@ -66,22 +72,49 @@ class CompositeBasis(eqx.Module):
         coefficients: Float[Array, " M"],
         state: Float[Array, ...] | None = None,
     ) -> Float[Array, ...]:
+        """Map coefficients to the summed increment: δx = ∑_c Φ_c z_c.
+
+        Args:
+            t: Time t, passed to each component.
+            coefficients: Coefficient vector z.
+            state: Current state x, passed to each component.
+
+        Returns:
+            The state increment δx on the components' grid.
+        """
         parts = self._split(coefficients)
-        out = self.components[0].operg(t, parts[0], state)
-        for comp, part in zip(self.components[1:], parts[1:], strict=True):
-            out = out + comp.operg(t, part, state)
-        return out
+        # Φ_1 z_1
+        increment = self.components[0].operg(t, parts[0], state)
+        for component, part in zip(self.components[1:], parts[1:], strict=True):
+            # δx ← δx + Φ_c z_c
+            increment = increment + component.operg(t, part, state)
+        return increment
 
     def prior_inv(self, coefficients: Float[Array, " M"]) -> Float[Array, " M"]:
+        """Apply the block-diagonal prior precision: Σ_z⁻¹ z.
+
+        Args:
+            coefficients: Coefficient vector z.
+
+        Returns:
+            The vector Σ_z⁻¹ z.
+        """
         parts = self._split(coefficients)
-        blocks = [c.prior_inv(p) for c, p in zip(self.components, parts, strict=True)]
+        # Σ_z,c⁻¹ z_c
+        blocks = [
+            component.prior_inv(part)
+            for component, part in zip(self.components, parts, strict=True)
+        ]
+        # Σ_z⁻¹ z = [Σ_z,1⁻¹ z_1, …, Σ_z,C⁻¹ z_C]
         return jnp.concatenate(blocks)
 
     @property
     def nbasis(self) -> int:
-        return int(sum(c.nbasis for c in self.components))
+        """Number of coefficients, the sum of the component sizes."""
+        return int(sum(component.nbasis for component in self.components))
 
     def _split(self, coefficients: Float[Array, " M"]) -> list[Float[Array, ...]]:
+        """Cut z into the per-component slices z_c."""
         parts, start = [], 0
         for cut in self.splits:
             parts.append(coefficients[start:cut])
@@ -93,12 +126,14 @@ class CompositeBasis(eqx.Module):
 def composite_basis(*components: Any) -> CompositeBasis:
     """Build a `CompositeBasis` from a sequence of `ReducedBasis` components.
 
+        δx = ∑_c Φ_c z_c
+
     Args:
-        *components: Reduced bases to concatenate, in control-vector order.
-            Their ``operg`` outputs must share one grid shape.
+        *components: Reduced bases to concatenate, in control-vector order. Their
+            ``operg`` outputs must share one grid shape.
 
     Returns:
-        The composite basis, with ``nbasis`` the sum of component sizes.
+        The composite basis, with ``nbasis`` the sum of the component sizes.
 
     Raises:
         ConfigurationError: If no component is given.
@@ -113,6 +148,11 @@ def composite_basis(*components: Any) -> CompositeBasis:
         >>> vdx.composite_basis(a, b).nbasis
         3
 
+        The cuts are the cumulative sizes of all but the last component:
+
+        >>> vdx.composite_basis(a, b, b).splits
+        (2, 3)
+
         An empty call is rejected:
 
         >>> vdx.composite_basis()  # doctest: +IGNORE_EXCEPTION_DETAIL
@@ -123,7 +163,7 @@ def composite_basis(*components: Any) -> CompositeBasis:
     if not components:
         raise ConfigurationError("composite_basis requires at least one component.")
     cuts, total = [], 0
-    for c in components[:-1]:
-        total += c.nbasis
+    for component in components[:-1]:
+        total += component.nbasis
         cuts.append(total)
     return CompositeBasis(components=tuple(components), splits=tuple(cuts))
