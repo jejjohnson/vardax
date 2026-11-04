@@ -479,8 +479,13 @@ class IncrementalFourDVar(eqx.Module):
             return background_cost(control) + 0.5 * jnp.sum(misfit * weighted)
 
         structure = jax.ShapeDtypeStruct(control.shape, control.dtype)
-        inner_solver = lx.CG(
-            atol=config.cg_atol, rtol=config.cg_rtol, max_steps=config.n_inner
+        # truncated CG: throw=False stops at n_inner whether or not it has
+        # converged
+        inner_solver = gaussx.CGSolver(
+            rtol=config.cg_rtol,
+            atol=config.cg_atol,
+            max_steps=config.n_inner,
+            throw=False,
         )
         for _ in range(config.n_outer):
             # --- linearise at c⁽ᵏ⁾ ---
@@ -498,18 +503,15 @@ class IncrementalFourDVar(eqx.Module):
                 (data_term,) = adjoint(weighted)
                 return apply_prior_precision(direction) + data_term
 
-            hessian = lx.FunctionLinearOperator(
-                hessian_mv, structure, lx.positive_semidefinite_tag
+            hessian = gaussx.as_linear_operator(
+                hessian_mv, in_structure=structure, positive_semidefinite=True
             )
 
             # --- inner solve: (P + r'ᵀ W r') δc = -∇J(c⁽ᵏ⁾) ---
             negative_gradient = -jax.grad(cost)(control)
-            # truncated CG: stop at n_inner whether or not it has converged
-            solution = lx.linear_solve(
-                hessian, negative_gradient, solver=inner_solver, throw=False
-            )
+            increment = inner_solver.solve(hessian, negative_gradient)
             # c⁽ᵏ⁺¹⁾ = c⁽ᵏ⁾ + δc
-            control = control + solution.value
+            control = control + increment
 
         return to_state(control)
 

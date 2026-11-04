@@ -496,3 +496,30 @@ def test_reduced_jit_and_vmap_match_a_loop(x64):
     for i in range(2):
         one = jax.tree.map(lambda a, i=i: a[i : i + 1], stacked)
         np.testing.assert_allclose(batched[i], model(one)[0], rtol=1e-10)
+
+
+def test_one_inner_iteration_is_one_cg_step(x64):
+    """n_inner = 1 stops after one CG step without raising (#193).
+
+    From δc = 0, one CG step on H δc = g is δc = (gᵀg / gᵀHg) g, here with
+    B = I so that H = I + GᵀR⁻¹G and g = GᵀR⁻¹y at x_b = 0.
+    """
+    identity = np.eye(N_STATE)
+    batch, B_op, R_op = _problem(jnp.asarray(identity))
+    analysis = _model(B_op, R_op, n_outer=1, n_inner=1, cvt=False)(batch)[0]
+
+    transition = 0.9 * np.roll(identity, 1, axis=0)
+    mask = np.asarray(batch.mask[0])
+    G = np.concatenate(
+        [
+            np.diag(mask[t]) @ np.linalg.matrix_power(transition, t)
+            for t in range(N_STEPS + 1)
+        ]
+    )
+    y = np.asarray(batch.input[0]).reshape(-1)
+    hessian = identity + G.T @ G / 0.25
+    gradient = G.T @ y / 0.25
+    one_step = (gradient @ gradient) / (gradient @ hessian @ gradient) * gradient
+    np.testing.assert_allclose(analysis, one_step, rtol=1e-10)
+    # and it is not the converged analysis
+    assert _relative_error(analysis, _exact_analysis(identity, batch)) > 1e-3
