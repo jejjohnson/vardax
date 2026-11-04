@@ -127,7 +127,7 @@ class GaussNewtonHessian(eqx.Module):
                 a covariance operator.
         """
         solver = lx.CG(atol=self.tol, rtol=self.tol, max_steps=self.n_krylov)
-        mean, covariance, structure, coefficients = gauss_newton_covariance(
+        mean, covariance, structure, coefficients, precision = gauss_newton_covariance(
             analysis,
             model,
             batch,
@@ -142,6 +142,7 @@ class GaussNewtonHessian(eqx.Module):
             samples=None,
             basis=basis,
             coefficient_cov=coefficient_cov,
+            precision=precision,
             provenance={
                 "adapter": "GaussNewtonHessian",
                 "n_krylov": self.n_krylov,

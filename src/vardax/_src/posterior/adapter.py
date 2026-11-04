@@ -12,9 +12,22 @@ from typing import Any
 
 import equinox as eqx
 import gaussx
+import lineax as lx
 import numpy as np
 
 from .container import Posterior
+
+# gaussx.diag_inv: a dense Cholesky up to this size, then Hutchinson
+_DIAG_INV_DENSE_LIMIT = 2048
+# its exact structured paths at any size
+_DIAG_INV_STRUCTURED = (
+    lx.DiagonalLinearOperator,
+    gaussx.BlockDiag,
+    gaussx.BlockTriDiag,
+    gaussx.Kronecker,
+    gaussx.KroneckerSum,
+    gaussx.LowRankUpdate,
+)
 
 
 class GaussianMarkLikelihood(eqx.Module):
@@ -96,12 +109,30 @@ class GaussianMarkLikelihood(eqx.Module):
         cov = self.posterior.cov
         if cov is None:
             return None
+        precision = self.posterior.precision
         try:
+            if precision is not None and _has_exact_diag_inv(precision):
+                # diag(P) = diag(A⁻¹)
+                return gaussx.diag_inv(precision)
             return gaussx.diag(cov)
         except (AttributeError, NotImplementedError):
             # Lazy operators don't always materialise; just emit a
             # null marker.
             return None
+
+
+def _has_exact_diag_inv(precision: lx.AbstractLinearOperator) -> bool:
+    """Whether ``gaussx.diag_inv`` is exact here: structured, or small enough.
+
+    Above ``_DIAG_INV_DENSE_LIMIT`` an unstructured operator would get a
+    stochastic estimate, which an adapter must not switch to silently.
+    """
+    while isinstance(precision, lx.TaggedLinearOperator):
+        precision = precision.operator
+    return (
+        isinstance(precision, _DIAG_INV_STRUCTURED)
+        or precision.in_size() <= _DIAG_INV_DENSE_LIMIT
+    )
 
 
 def _to_list(arr: Any) -> Any:

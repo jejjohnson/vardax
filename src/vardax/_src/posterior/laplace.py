@@ -149,7 +149,7 @@ class LaplaceCovariance(eqx.Module):
             MissingInputError: If neither the adapter nor the model has
                 a covariance operator.
         """
-        mean, covariance, structure, coefficients = gauss_newton_covariance(
+        mean, covariance, structure, coefficients, precision = gauss_newton_covariance(
             analysis,
             model,
             batch,
@@ -164,5 +164,6 @@ class LaplaceCovariance(eqx.Module):
             samples=None,
             basis=basis,
             coefficient_cov=coefficient_cov,
+            precision=precision,
             provenance={"adapter": "LaplaceCovariance", "structure": structure},
         )
