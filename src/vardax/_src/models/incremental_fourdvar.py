@@ -30,7 +30,7 @@ use
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any
+from typing import Any, Literal, cast
 
 import equinox as eqx
 import gaussx
@@ -45,7 +45,6 @@ from vardax._src.models._analysis_step import analyse_window, rollout_end
 from vardax._src.models._observations import fill_gaps
 from vardax._src.models._rollout import (
     checkpoint_every,
-    gauss_newton_hessian,
     observed_trajectory,
     resolve_forward,
     rollout,
@@ -497,12 +496,13 @@ class IncrementalFourDVar(eqx.Module):
         )
         for _ in range(config.n_outer):
             # (P + r'ᵀ W r'), linearised at c⁽ᵏ⁾
-            hessian = gauss_newton_hessian(
+            hessian = gaussx.gauss_newton_operator(
                 control_residual,
                 control,
-                apply_obs_precision,
-                apply_prior_precision,
-                config.jac,
+                noise_precision=apply_obs_precision,
+                prior_precision=apply_prior_precision,
+                # IncrementalConfig validates jac on construction
+                jac=cast(Literal["fwd", "bwd"], config.jac),
             )
 
             # --- inner solve: (P + r'ᵀ W r') δc = -∇J(c⁽ᵏ⁾) ---

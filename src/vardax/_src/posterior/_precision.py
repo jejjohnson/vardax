@@ -23,7 +23,7 @@ depend on the control:
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any
+from typing import Any, Literal
 
 import gaussx
 import jax
@@ -36,7 +36,6 @@ from vardax._src._types import Batch1D, PointObsBatch
 from vardax._src.errors import MissingInputError, ShapeError, UnsupportedInputError
 from vardax._src.models._rollout import (
     accepts_mask,
-    gauss_newton_hessian,
     observed_trajectory,
 )
 from vardax._src.obs_operators.tangent import obs_tangent
@@ -271,7 +270,7 @@ def _whitened_control(model: Any) -> bool:
     return isinstance(model, IncrementalFourDVar) and model.config.cvt
 
 
-def _jac_mode(model: Any) -> str:
+def _jac_mode(model: Any) -> Literal["fwd", "bwd"]:
     """``config.jac`` of an ``IncrementalFourDVar``, else ``"fwd"``."""
     config = getattr(model, "config", None)
     return getattr(config, "jac", "fwd")
@@ -462,12 +461,12 @@ def gauss_newton_covariance(
         )
         covariance = _state_covariance(basis_op, coefficient_cov)
         return analysis, covariance, "strong_4dvar", (basis_op, coefficient_cov), None
-    precision = gauss_newton_hessian(
+    precision = gaussx.gauss_newton_operator(
         observed,
         analysis,
-        apply_obs_precision,
-        prior_precision.mv,
-        _jac_mode(underlying),
+        noise_precision=apply_obs_precision,
+        prior_precision=prior_precision.mv,
+        jac=_jac_mode(underlying),
     )
     return (
         analysis,
@@ -484,11 +483,15 @@ def _strong_covariance(
     prior_precision: lx.AbstractLinearOperator,
     apply_obs_precision: Callable[[Array], Array],
     solver: lx.AbstractLinearSolver,
-    jac: str = "fwd",
+    jac: Literal["fwd", "bwd"] = "fwd",
 ) -> lx.AbstractLinearOperator:
     """(B⁻¹ + G'ᵀ R⁻¹ G')⁻¹ at x₀*, lazily."""
-    precision = gauss_newton_hessian(
-        observed, initial_state, apply_obs_precision, prior_precision.mv, jac
+    precision = gaussx.gauss_newton_operator(
+        observed,
+        initial_state,
+        noise_precision=apply_obs_precision,
+        prior_precision=prior_precision.mv,
+        jac=jac,
     )
     return gaussx.inv(precision, solver=solver)
 
@@ -541,7 +544,12 @@ def _weak_covariance(
         return prior_state, prior_error
 
     control = (initial_state, model_error)
-    precision = gauss_newton_hessian(observed, control, apply_obs_precision, prior_mv)
+    precision = gaussx.gauss_newton_operator(
+        observed,
+        control,
+        noise_precision=apply_obs_precision,
+        prior_precision=prior_mv,
+    )
 
     def covariance_mv(direction: Float[Array, " N"]) -> Float[Array, " N"]:
         # solve P_z u = (v, 0); Cov(x₀) v = u_{x₀}
