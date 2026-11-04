@@ -21,7 +21,7 @@ ROOT = Path(__file__).resolve().parents[1]
 CEILINGS = {
     "src/vardax": {
         "method .reshape/.ravel": 10,
-        "axis= keyword": 6,
+        "axis= keyword": 5,
         "None-index broadcast": 2,
         "jnp shape functions": 8,
     },

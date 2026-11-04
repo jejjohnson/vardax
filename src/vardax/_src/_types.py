@@ -1,8 +1,8 @@
-"""Batch and LSTM state type definitions for vardax.
+"""Batch containers and ConvLSTM states, the data types shared across vardax.
 
-All containers are ``eqx.Module``s (not ``NamedTuple``) so they are proper
-JAX pytrees with method support and compose cleanly with
-``eqx.filter_jit`` / ``eqx.filter_vmap`` / ``eqx.filter_value_and_grad``.
+They are ``eqx.Module``s rather than ``NamedTuple``s, so they carry methods and
+compose with ``eqx.filter_jit``, ``eqx.filter_vmap`` and
+``eqx.filter_value_and_grad``.
 """
 
 from __future__ import annotations
@@ -13,16 +13,16 @@ from jaxtyping import Array, Bool, Float, Int
 
 
 class Batch1D(eqx.Module):
-    r"""Batch of 1-D spatiotemporal data.
+    """Batch of 1-D spatiotemporal data.
 
-    Holds the observed field $y$, the observation mask $m$ and, optionally,
-    the ground truth $x^\mathrm{gt}$, for samples of a 1-D state over time.
+    Holds the observed field y, the observation mask m and, optionally, the
+    ground truth x_gt, for samples of a 1-D state over time.
 
     Attributes:
-        input: Observed (masked) input field $y$.
-        mask: Binary observation mask $m$.
-        target: Ground-truth field $x^\mathrm{gt}$. Optional; absent in
-            operational use where only observations are available.
+        input: Observed (masked) field y.
+        mask: Binary observation mask m.
+        target: Ground-truth field x_gt. Optional; absent in operational use,
+            where only observations are available.
 
     Examples:
         >>> import jax.numpy as jnp, vardax
@@ -50,15 +50,15 @@ class Batch1D(eqx.Module):
 
 
 class Batch2D(eqx.Module):
-    r"""Batch of 2-D spatiotemporal data.
+    """Batch of 2-D spatiotemporal data.
 
-    Holds the observed field $y$, the observation mask $m$ and, optionally,
-    the ground truth $x^\mathrm{gt}$, for samples of a 2-D state over time.
+    Holds the observed field y, the observation mask m and, optionally, the
+    ground truth x_gt, for samples of a 2-D state over time.
 
     Attributes:
-        input: Observed (masked) input field $y$.
-        mask: Binary observation mask $m$.
-        target: Ground-truth field $x^\mathrm{gt}$. Optional.
+        input: Observed (masked) field y.
+        mask: Binary observation mask m.
+        target: Ground-truth field x_gt. Optional.
 
     Examples:
         >>> import jax.numpy as jnp, vardax
@@ -82,15 +82,15 @@ class Batch2D(eqx.Module):
 
 
 class Batch2DMultivar(eqx.Module):
-    r"""Batch of 2-D multivariate spatiotemporal data.
+    """Batch of 2-D multivariate spatiotemporal data.
 
     Like [`Batch2D`][vardax.Batch2D] with an extra channel axis for the
     variables.
 
     Attributes:
-        input: Observed (masked) input field $y$.
-        mask: Binary observation mask $m$.
-        target: Ground-truth field $x^\mathrm{gt}$. Optional.
+        input: Observed (masked) field y.
+        mask: Binary observation mask m.
+        target: Ground-truth field x_gt. Optional.
 
     Examples:
         >>> import jax.numpy as jnp, vardax
@@ -112,31 +112,30 @@ class Batch2DMultivar(eqx.Module):
 
 
 class PointObsBatch(eqx.Module):
-    r"""Scattered point observations, padded to a fixed count.
+    """Scattered point observations, padded to a fixed count.
 
-    Observation $i$ has coordinates $s_i$, value $y_i$, error standard
-    deviation $\sigma_i$ and a validity flag $m_i$; padding rows have
-    ``valid=False`` and contribute exactly nothing to the cost or its
-    gradient, whatever their other fields hold (``NaN`` included). The
-    observation cost is
-    $J_o = \tfrac12 \sum_i m_i (y_i - \mathcal H(x)(s_i, t_i))^2 / \sigma_i^2$
-    ([`point_obs_cost`][vardax.point_obs_cost]).
+        𝒥_o = ½ ∑ᵢ mᵢ (yᵢ − h(x)(sᵢ, tᵢ))² / σᵢ²
 
-    Every array field may carry a leading batch axis; the models then
-    return one analysis per sample, and without it a single analysis.
+    Observation i has coordinates sᵢ, value yᵢ, error standard deviation σᵢ and
+    a validity flag mᵢ; the cost is
+    [`point_obs_cost`][vardax.point_obs_cost]. Padding rows have ``valid=False``
+    and contribute exactly nothing to the cost or its gradient, whatever their
+    other fields hold (``NaN`` included).
+
+    Every array field may carry a leading batch axis; the models then return one
+    analysis per sample, and without it a single analysis.
 
     Attributes:
-        coords: Coordinates $s_i$, e.g. ``(x,)``, ``(y, x)`` or
-            ``(lon, lat, t)``.
-        values: Observed values $y_i$.
-        sigma: Per-observation error standard deviations $\sigma_i$.
-        valid: Validity flags $m_i$, ``False`` on padding rows.
-        time_index: Window step of each observation, for gridded-state
-            models (the trajectory state it is compared with). ``None``:
-            every observation is at step 0.
-        n_times: Number of states in the assimilation window (rollout
-            steps + 1) for the 4D-Var models; required with
-            ``time_index``. Static. ``None`` means 1.
+        coords: Coordinates sᵢ, e.g. ``(x,)``, ``(y, x)`` or ``(lon, lat, t)``.
+        values: Observed values yᵢ.
+        sigma: Per-observation error standard deviations σᵢ.
+        valid: Validity flags mᵢ, ``False`` on padding rows.
+        time_index: Window step of each observation, for gridded-state models
+            (the trajectory state it is compared with). ``None``: every
+            observation is at step 0.
+        n_times: Number of states in the assimilation window (rollout steps + 1)
+            for the 4D-Var models; required with ``time_index``. Static. ``None``
+            means 1.
 
     Examples:
         >>> import jax.numpy as jnp, vardax
@@ -203,9 +202,9 @@ class LSTMState1D(eqx.Module):
         """Create a zero-initialised LSTM state.
 
         Args:
-            batch_size: Number of samples $B$.
+            batch_size: Number of samples B.
             hidden_dim: Hidden channel count.
-            seq_len: Length $N$ of the 1-D axis.
+            seq_len: Length N of the 1-D axis.
 
         Returns:
             A state with zero hidden and cell tensors.
@@ -250,10 +249,10 @@ class LSTMState2D(eqx.Module):
         """Create a zero-initialised LSTM state.
 
         Args:
-            batch_size: Number of samples $B$.
+            batch_size: Number of samples B.
             hidden_dim: Hidden channel count.
-            height: Grid height $H$.
-            width: Grid width $W$.
+            height: Grid height H.
+            width: Grid width W.
 
         Returns:
             A state with zero hidden and cell tensors.
