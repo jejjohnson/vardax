@@ -13,10 +13,15 @@ from __future__ import annotations
 import equinox as eqx
 from jaxtyping import Array, Float
 import lineax as lx
+import pipekit_cycle as _pc
 
 
-class LinearObs(eqx.Module):
+class LinearObs(eqx.Module, _pc.LinearObs):
     r"""$H(x) = H x$ for a linear operator $H$ (``operator``).
+
+    It is a ``pipekit_cycle.LinearObs`` that holds a lineax operator and stays
+    a pytree, so its operator can be traced and differentiated. A plain
+    ``pipekit_cycle.LinearObs`` also works in every vardax model.
 
     Examples:
         >>> import jax.numpy as jnp, lineax as lx
@@ -45,14 +50,21 @@ class LinearObs(eqx.Module):
 
     operator: lx.AbstractLinearOperator
 
-    def __call__(self, x: Float[Array, ...]) -> Float[Array, ...]:
-        return self.operator.mv(x)
+    @property
+    def H(self) -> lx.AbstractLinearOperator:
+        """``pipekit_cycle.LinearObs``'s name for the operator."""
+        return self.operator
 
-    def linearize(self, x: Float[Array, ...]) -> lx.AbstractLinearOperator:
-        """Tangent-linear operator at ``x``: just ``operator`` (linear).
+    def _apply(self, state: Float[Array, ...]) -> Float[Array, ...]:
+        return self.operator.mv(state)
+
+    def linearize(  # ty: ignore[invalid-method-override]
+        self, state: Float[Array, ...]
+    ) -> lx.AbstractLinearOperator:
+        """Tangent-linear operator at ``state``: just ``operator`` (linear).
 
         Args:
-            x: State at which to linearise; unused.
+            state: State at which to linearise; unused.
 
         Returns:
             The stored operator ``operator``.

@@ -23,10 +23,15 @@ from typing import Literal
 import equinox as eqx
 from jaxtyping import Array, Float
 import lineax as lx
+import pipekit_cycle as _pc
 
 
-class CallableObs(eqx.Module):
+class CallableObs(eqx.Module, _pc.CallableObs):
     r"""$H(x) = f(x)$ for any differentiable JAX function $f$.
+
+    It is a ``pipekit_cycle.CallableObs`` that linearises itself by autodiff
+    and stays a pytree. A plain ``pipekit_cycle.CallableObs`` also works in
+    every vardax model, which then takes its tangent by autodiff too.
 
     ``linearize(x)`` is a matrix-free ``lineax.JacobianLinearOperator`` at
     ``x``: its ``mv`` is a JVP of $f$ and its ``transpose().mv`` a VJP, so
@@ -97,28 +102,35 @@ class CallableObs(eqx.Module):
     jac: Literal["fwd", "bwd"] | None = eqx.field(static=True, default=None)
     materialise: bool = eqx.field(static=True, default=False)
 
-    def __call__(self, x: Float[Array, ...]) -> Float[Array, ...]:
+    @property
+    def name(self) -> str:
+        """``pipekit_cycle.CallableObs``'s name, from ``fn``."""
+        return getattr(self.fn, "__name__", "CallableObs")
+
+    def _apply(self, state: Float[Array, ...]) -> Float[Array, ...]:
         """Forward map $f(x)$.
 
         Args:
-            x: State.
+            state: State.
 
         Returns:
             The observation prediction $f(x)$.
         """
-        return self.fn(x)
+        return self.fn(state)
 
-    def linearize(self, x: Float[Array, ...]) -> lx.AbstractLinearOperator:
-        r"""Tangent-linear operator $H'(x) = \partial f / \partial x$ at ``x``.
+    def linearize(self, state: Float[Array, ...]) -> lx.AbstractLinearOperator:
+        r"""Tangent-linear operator $H'(x) = \partial f / \partial x$ at ``state``.
 
         Args:
-            x: State at which to linearise.
+            state: State at which to linearise.
 
         Returns:
             A matrix-free ``JacobianLinearOperator``, or its dense
             materialisation when ``materialise=True``.
         """
-        tangent = lx.JacobianLinearOperator(lambda z, _: self.fn(z), x, jac=self.jac)
+        tangent = lx.JacobianLinearOperator(
+            lambda z, _: self.fn(z), state, jac=self.jac
+        )
         if self.materialise:
             # dense ∂f/∂x: one VJP per output (jac="bwd") or JVP per input
             return lx.materialise(tangent)

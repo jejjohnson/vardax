@@ -19,6 +19,8 @@ the ubiquitous "observe a subset of grid points" case (satellite tracks,
 sparse sensor networks); `AveragingKernel` implements the smoothing kernels
 of retrieval products such as atmospheric-composition column averages.
 
+`LinearObs` and `CallableObs` subclass `pipekit_cycle`'s classes of the same names, adding a lineax operator and a pytree for `LinearObs` and an autodiff tangent for `CallableObs`, so `isinstance` holds for either. pipekit-cycle's own `IdentityObs`, `LinearObs`, `CallableObs` and `CompositeObs`, and its `CallableForward`, also work directly in every model and posterior; where `linearize` gives no lineax operator, the tangent comes from autodiff. Prefer them unless you need what vardax's classes add. `MaskedIdentity` and `AveragingKernel` have no pipekit-cycle equivalent.
+
 ::: vardax
     options:
       show_root_heading: false
