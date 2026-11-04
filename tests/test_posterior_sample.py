@@ -8,6 +8,7 @@ errors.
 
 from __future__ import annotations
 
+import gaussx
 import jax
 import jax.numpy as jnp
 import lineax as lx
@@ -123,3 +124,40 @@ def test_stored_samples_return_a_subset():
 def test_without_cov_or_samples_raises():
     with pytest.raises(vdx.UnsupportedInputError):
         vdx.Posterior(mean=jnp.zeros(2)).sample(jax.random.PRNGKey(0), 3)
+
+
+def _structured_covariances():
+    rng = np.random.default_rng(5)
+    root = rng.normal(size=(4, 4))
+    left_root, right_root = rng.normal(size=(2, 2)), rng.normal(size=(3, 3))
+    psd = lx.positive_semidefinite_tag
+    left = lx.MatrixLinearOperator(
+        jnp.asarray(left_root @ left_root.T + np.eye(2)), psd
+    )
+    right = lx.MatrixLinearOperator(
+        jnp.asarray(right_root @ right_root.T + np.eye(3)), psd
+    )
+    return {
+        "diagonal": (jnp.zeros(4), lx.DiagonalLinearOperator(jnp.arange(1.0, 5.0))),
+        "diagonal-2d": (
+            jnp.zeros((2, 3)),
+            lx.TaggedLinearOperator(
+                lx.DiagonalLinearOperator(jnp.arange(1.0, 7.0).reshape(2, 3)), psd
+            ),
+        ),
+        "kronecker": (jnp.zeros(6), gaussx.Kronecker(left, right)),
+        "dense": (
+            jnp.zeros(4),
+            lx.MatrixLinearOperator(jnp.asarray(root @ root.T + np.eye(4)), psd),
+        ),
+    }
+
+
+@pytest.mark.parametrize("name", ["diagonal", "diagonal-2d", "kronecker", "dense"])
+def test_covariance_draws_for_each_structure(x64, name):
+    """20,000 draws match x* and P within 5 Monte Carlo standard errors (#196)."""
+    mean, cov = _structured_covariances()[name]
+    posterior = vdx.Posterior(mean=mean + 1.0, cov=cov)
+    draws = posterior.sample(jax.random.PRNGKey(2), 20_000)
+    assert draws.shape == (20_000, *mean.shape)
+    _assert_moments(draws, mean + 1.0, cov.as_matrix())
