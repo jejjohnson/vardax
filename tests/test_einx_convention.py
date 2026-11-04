@@ -22,7 +22,7 @@ CEILINGS = {
     "src/vardax": {
         "method .reshape/.ravel": 9,
         "axis= keyword": 2,
-        "None-index broadcast": 2,
+        "None-index broadcast": 1,
         "jnp shape functions": 8,
     },
     "tests": {
