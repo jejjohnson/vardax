@@ -34,8 +34,12 @@ import lineax as lx
 
 from vardax._src._types import Batch1D, PointObsBatch
 from vardax._src.errors import MissingInputError, ShapeError, UnsupportedInputError
-from vardax._src.models._rollout import accepts_mask, linearise, observed_trajectory
-from vardax._src.utils.covariance import inverse_operator, masked_obs_cov
+from vardax._src.models._rollout import (
+    accepts_mask,
+    gauss_newton_hessian,
+    observed_trajectory,
+)
+from vardax._src.utils.covariance import inverse_operator
 from vardax._src.utils.shapes import as_shape
 
 
@@ -392,7 +396,9 @@ def gauss_newton_covariance(
         tangent = _masked_tangent(raw_tangent, mask)
         if mask is not None:
             # R̃ = M R M + (I − M), as the cost: masked entries drop out
-            obs_precision = inverse_operator(masked_obs_cov(obs_cov_op, mask), solver)
+            obs_precision = inverse_operator(
+                gaussx.masked_obs_covariance(obs_cov_op, mask), solver
+            )
         if basis_op is None:
             # P*⁻¹ = H'ᵀ R⁻¹ H' + B⁻¹
             state_precision = _single_time_precision(
@@ -415,7 +421,7 @@ def gauss_newton_covariance(
     ) -> Float[Array, "T_plus_1 N"]:
         # R̃ₜ⁻¹ at each time, R̃ₜ = Mₜ R Mₜ + (I − Mₜ), as every model's cost
         def solve(step_vector: Array, step_mask: Array) -> Array:
-            masked = masked_obs_cov(obs_cov_op, step_mask)
+            masked = gaussx.masked_obs_covariance(obs_cov_op, step_mask)
             return inverse_operator(masked, solver).mv(step_vector)
 
         return jax.vmap(solve)(observed_vector, mask)
@@ -455,11 +461,11 @@ def gauss_newton_covariance(
         )
         covariance = _state_covariance(basis_op, coefficient_cov)
         return analysis, covariance, "strong_4dvar", (basis_op, coefficient_cov), None
-    precision = _gauss_newton_precision(
+    precision = gauss_newton_hessian(
         observed,
         analysis,
-        prior_precision.mv,
         apply_obs_precision,
+        prior_precision.mv,
         _jac_mode(underlying),
     )
     return (
@@ -468,34 +474,6 @@ def gauss_newton_covariance(
         "strong_4dvar",
         None,
         precision,
-    )
-
-
-def _gauss_newton_precision(
-    observed: Callable[[Any], Array],
-    point: Any,
-    prior_mv: Callable[[Any], Any],
-    apply_obs_precision: Callable[[Array], Array],
-    jac: str = "fwd",
-) -> lx.AbstractLinearOperator:
-    """v ↦ prior_mv(v) + G'ᵀ R⁻¹ G' v at ``point``, matrix-free for ``jac="fwd"``."""
-    observed_tangent, observed_adjoint = linearise(observed, point, jac)
-
-    def precision_mv(direction: Any) -> Any:
-        # G' v
-        observed_direction = observed_tangent(direction)
-        # R⁻¹ G' v
-        weighted = apply_obs_precision(observed_direction)
-        # G'ᵀ R⁻¹ G' v
-        (data_term,) = observed_adjoint(weighted)
-        # prior precision v + G'ᵀ R⁻¹ G' v
-        return jax.tree.map(jnp.add, prior_mv(direction), data_term)
-
-    structure = jax.tree.map(
-        lambda leaf: jax.ShapeDtypeStruct(leaf.shape, leaf.dtype), point
-    )
-    return lx.FunctionLinearOperator(
-        precision_mv, structure, lx.positive_semidefinite_tag
     )
 
 
@@ -508,8 +486,8 @@ def _strong_covariance(
     jac: str = "fwd",
 ) -> lx.AbstractLinearOperator:
     """(B⁻¹ + G'ᵀ R⁻¹ G')⁻¹ at x₀*, lazily."""
-    precision = _gauss_newton_precision(
-        observed, initial_state, prior_precision.mv, apply_obs_precision, jac
+    precision = gauss_newton_hessian(
+        observed, initial_state, apply_obs_precision, prior_precision.mv, jac
     )
     return gaussx.inv(precision, solver=solver)
 
@@ -562,9 +540,7 @@ def _weak_covariance(
         return prior_state, prior_error
 
     control = (initial_state, model_error)
-    precision = _gauss_newton_precision(
-        observed, control, prior_mv, apply_obs_precision
-    )
+    precision = gauss_newton_hessian(observed, control, apply_obs_precision, prior_mv)
 
     def covariance_mv(direction: Float[Array, " N"]) -> Float[Array, " N"]:
         # solve P_z u = (v, 0); Cov(x₀) v = u_{x₀}

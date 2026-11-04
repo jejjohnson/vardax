@@ -29,6 +29,7 @@ from __future__ import annotations
 from typing import Any
 
 import equinox as eqx
+import gaussx
 import jax
 from jaxtyping import Array, Float
 import lineax as lx
@@ -42,7 +43,6 @@ from vardax._src.posterior.container import Posterior
 from vardax._src.utils.covariance import (
     as_covariance,
     inverse_operator,
-    masked_obs_cov,
 )
 
 
@@ -176,7 +176,7 @@ class OptimalInterpolation(eqx.Module):
     ) -> Float[Array, "*state"]:
         """BLUE analysis of one sample around the ``background``."""
         # R̃ = M R M + (I − M): masked entries drop out of the likelihood
-        obs_cov_op = masked_obs_cov(obs_cov_op, sample_mask)
+        obs_cov_op = gaussx.masked_obs_covariance(obs_cov_op, sample_mask)
         if self.form == "state":
             return self._analyse_state_space(
                 background, sample_obs, sample_mask, obs_op, obs_cov_op
@@ -342,7 +342,7 @@ class _ObservationSpaceCovariance(eqx.Module):
             model.prior_mean,
             mask,
             model.obs_op,
-            masked_obs_cov(model.obs_cov_op, mask),
+            gaussx.masked_obs_covariance(model.obs_cov_op, mask),
         )
         prior_cov = model.prior_cov_op
         obs_adjoint = obs_jacobian.transpose()

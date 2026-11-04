@@ -40,7 +40,7 @@ from jaxtyping import Array, Float
 import lineax as lx
 
 from vardax._src.models._observations import fill_gaps
-from vardax._src.utils.covariance import as_covariance, masked_obs_cov
+from vardax._src.utils.covariance import as_covariance
 
 
 class InstrumentSpec(eqx.Module):
@@ -247,7 +247,9 @@ class MultiInstrumentFusion(eqx.Module):
             # rᵢ = mᵢ ⊙ (yᵢ − Hᵢ(x))
             residual = spec.mask * (observed - spec.obs_op(x))
             # R̃ᵢ⁻¹ rᵢ with R̃ᵢ = Mᵢ Rᵢ Mᵢ + (I − Mᵢ), so masked cells drop out
-            masked_cov = masked_obs_cov(as_covariance(spec.obs_cov_op), spec.mask)
+            masked_cov = gaussx.masked_obs_covariance(
+                as_covariance(spec.obs_cov_op), spec.mask
+            )
             weighted = gaussx.solve(masked_cov, residual, solver=solver)
             # αᵢ ½ rᵢᵀ R̃ᵢ⁻¹ rᵢ
             total = total + self.weight(inst_id) * 0.5 * jnp.sum(residual * weighted)

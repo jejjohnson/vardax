@@ -48,6 +48,7 @@ from collections.abc import Callable
 from typing import Any
 
 import equinox as eqx
+import gaussx
 import jax
 import jax.numpy as jnp
 from jaxtyping import Array, Float
@@ -76,7 +77,6 @@ from vardax._src.protocols import Minimiser, StateParameterization
 from vardax._src.utils.covariance import (
     as_covariance,
     half_weighted_norm,
-    masked_obs_cov,
 )
 from vardax._src.utils.shapes import as_shape
 
@@ -321,7 +321,7 @@ class ReducedBasisFourDVar(eqx.Module):
                     # J_o,t = ½ rᵀ R̃⁻¹ r with R̃ = M R M + (I − M), so masked
                     # entries drop out of the likelihood
                     return half_weighted_norm(
-                        masked_obs_cov(obs_cov_op, step_mask),
+                        gaussx.masked_obs_covariance(obs_cov_op, step_mask),
                         residual,
                         self.cov_solver,
                     )

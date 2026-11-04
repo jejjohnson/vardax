@@ -45,7 +45,7 @@ from vardax._src.models._analysis_step import analyse_window, rollout_end
 from vardax._src.models._observations import fill_gaps
 from vardax._src.models._rollout import (
     checkpoint_every,
-    linearise,
+    gauss_newton_hessian,
     observed_trajectory,
     resolve_forward,
     rollout,
@@ -61,7 +61,6 @@ from vardax._src.obs_operators.point import (
 from vardax._src.utils.covariance import (
     as_covariance,
     guarded_solve,
-    masked_obs_cov,
 )
 
 
@@ -367,7 +366,9 @@ class IncrementalFourDVar(eqx.Module):
                 ) -> Float[Array, " M"]:
                     solver = lx.CG(atol=tol, rtol=tol)
                     solved, _ = guarded_solve(
-                        masked_obs_cov(obs_cov, step_mask), step_residual, solver
+                        gaussx.masked_obs_covariance(obs_cov, step_mask),
+                        step_residual,
+                        solver,
                     )
                     return solved
 
@@ -486,7 +487,6 @@ class IncrementalFourDVar(eqx.Module):
             weighted = apply_obs_precision(misfit)
             return background_cost(control) + 0.5 * jnp.sum(misfit * weighted)
 
-        structure = jax.ShapeDtypeStruct(control.shape, control.dtype)
         # truncated CG: throw=False stops at n_inner whether or not it has
         # converged
         inner_solver = gaussx.CGSolver(
@@ -496,23 +496,13 @@ class IncrementalFourDVar(eqx.Module):
             throw=False,
         )
         for _ in range(config.n_outer):
-            # --- linearise at c⁽ᵏ⁾ ---
-            residual_tangent, residual_adjoint = linearise(
-                control_residual, control, config.jac
-            )
-
-            def hessian_mv(
-                direction: Float[Array, " C"],
-                tangent: Callable = residual_tangent,
-                adjoint: Callable = residual_adjoint,
-            ) -> Float[Array, " C"]:
-                # (P + r'ᵀ W r') v
-                weighted = apply_obs_precision(tangent(direction))
-                (data_term,) = adjoint(weighted)
-                return apply_prior_precision(direction) + data_term
-
-            hessian = gaussx.as_linear_operator(
-                hessian_mv, in_structure=structure, positive_semidefinite=True
+            # (P + r'ᵀ W r'), linearised at c⁽ᵏ⁾
+            hessian = gauss_newton_hessian(
+                control_residual,
+                control,
+                apply_obs_precision,
+                apply_prior_precision,
+                config.jac,
             )
 
             # --- inner solve: (P + r'ᵀ W r') δc = -∇J(c⁽ᵏ⁾) ---
