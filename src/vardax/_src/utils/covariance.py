@@ -7,6 +7,8 @@ import jax.numpy as jnp
 from jaxtyping import Array, Bool, Float
 import lineax as lx
 
+_COMPOSITES = (lx.MulLinearOperator, gaussx.Kronecker, gaussx.BlockDiag)
+
 
 def as_covariance(operator: lx.AbstractLinearOperator) -> lx.AbstractLinearOperator:
     """Tag a covariance operator positive semidefinite.
@@ -22,6 +24,18 @@ def as_covariance(operator: lx.AbstractLinearOperator) -> lx.AbstractLinearOpera
         ``operator`` unchanged if it is already PSD, else ``operator``
         wrapped in a PSD ``TaggedLinearOperator``.
     """
+    # gaussx.solve hands each part to the solver, and lx.CG refuses an untagged
+    # one; the parts of a covariance's product or block form are covariances
+    if isinstance(operator, lx.TaggedLinearOperator) and isinstance(
+        operator.operator, _COMPOSITES
+    ):
+        operator = operator.operator
+    if isinstance(operator, lx.MulLinearOperator):
+        operator = as_covariance(operator.operator) * operator.scalar
+    elif isinstance(operator, gaussx.Kronecker):
+        operator = gaussx.Kronecker(*(as_covariance(op) for op in operator.operators))
+    elif isinstance(operator, gaussx.BlockDiag):
+        operator = gaussx.BlockDiag(*(as_covariance(op) for op in operator.operators))
     if lx.is_positive_semidefinite(operator):
         return operator
     return lx.TaggedLinearOperator(operator, lx.positive_semidefinite_tag)
@@ -57,7 +71,7 @@ def guarded_solve(
 
     A line search tries points whose rollout has blown up, and it can only
     reject a trial that returns. ``lx.linear_solve`` raises on such a vector,
-    and ``throw=False`` is not enough: its JVP and transpose rules solve with
+    and ``throw=False`` would not help: its JVP and transpose rules solve with
     ``throw=True``, and a minimiser evaluates trial points through them. So a
     non-finite or overflowing vector never reaches the solver.
 
@@ -74,7 +88,9 @@ def guarded_solve(
     limit = jnp.finfo(vector.dtype).max ** 0.25
     usable = jnp.all(jnp.abs(vector) <= limit)
     safe_vector = jnp.where(usable, vector, jnp.zeros_like(vector))
-    solved = lx.linear_solve(cov_op, safe_vector, solver=solver, throw=False).value
+    # structural rules first, so a diagonal, Kronecker or block-diagonal C skips
+    # solver; anything else is lx.linear_solve with solver
+    solved = gaussx.solve(cov_op, safe_vector, solver=solver)
     return jnp.where(usable, solved, jnp.full_like(solved, jnp.nan)), usable
 
 
