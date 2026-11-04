@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.3.0](https://github.com/jejjohnson/vardax/compare/v0.2.1...v0.3.0) (2026-11-04)
+
+
+### ⚠ BREAKING CHANGES
+
+* **models:** vardax.KalmanSmoother, added in v0.2.1, is removed. Use filterax.KalmanSmoother, whose fields are transition, process_noise, obs_model, obs_noise, init_mean and init_cov, and whose smooth(observations, mask) takes one sequence.
+
+### Bug Fixes
+
+* **models:** marginalise masked observations out of a correlated R ([#201](https://github.com/jejjohnson/vardax/issues/201)) ([503e7f5](https://github.com/jejjohnson/vardax/commit/503e7f5f1694e2acb9702a0e7dafe14638c45251)), closes [#189](https://github.com/jejjohnson/vardax/issues/189)
+
+
+### Code Refactoring
+
+* **models:** remove KalmanSmoother, which moved to filterax ([#205](https://github.com/jejjohnson/vardax/issues/205)) ([963a2ba](https://github.com/jejjohnson/vardax/commit/963a2bae93c7965e82a2021a9b827dc03555d557)), closes [#203](https://github.com/jejjohnson/vardax/issues/203)
+
 ## [0.2.1](https://github.com/jejjohnson/vardax/compare/v0.2.0...v0.2.1) (2026-10-30)
 
 
