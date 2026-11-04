@@ -248,8 +248,11 @@ def _masked_tangent(
     """
     if mask is None:
         return tangent
-    # diagonal, so a diagonal precision stays visible to gaussx.diag
-    return lx.DiagonalLinearOperator(mask) @ tangent
+    # diagonal, so a diagonal precision stays visible to gaussx.diag; in the
+    # tangent's dtype, as lineax composes only matching structures
+    return (
+        lx.DiagonalLinearOperator(mask.astype(tangent.out_structure().dtype)) @ tangent
+    )
 
 
 def _whitened_control(model: Any) -> bool:
