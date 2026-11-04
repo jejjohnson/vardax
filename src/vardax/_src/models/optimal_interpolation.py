@@ -181,18 +181,18 @@ class OptimalInterpolation(eqx.Module):
             return self._analyse_state_space(
                 background, sample_obs, sample_mask, obs_op, obs_cov_op
             )
-        masked_obs, obs_jacobian, inner_op, solver = self._innovation_system(
-            background, sample_mask, obs_op, obs_cov_op
-        )
+        masked_obs, obs_jacobian = _masked_system(background, sample_mask, obs_op)
         # d = m ⊙ y − m ⊙ H(x_b)
         innovation = (sample_obs * sample_mask) - masked_obs(background)
-        # v = (H B Hᵀ + R)⁻¹ d
-        dual_weights = lx.linear_solve(inner_op, innovation, solver=solver).value
-
-        # xₐ = x_b + B Hᵀ v
-        return background + self.prior_cov_op.mv(
-            obs_jacobian.transpose().mv(dual_weights)
-        )
+        # xₐ = x_b + B Hᵀ (H B Hᵀ + R)⁻¹ d, with y′ = d + H x_b for a nonlinear H
+        return gaussx.linear_gaussian_update(
+            background,
+            self.prior_cov_op,
+            obs_jacobian,
+            obs_cov_op,
+            innovation + obs_jacobian.mv(background),
+            solver=self._default_solver(),
+        ).mean
 
     def _analyse_state_space(
         self,
@@ -203,9 +203,13 @@ class OptimalInterpolation(eqx.Module):
         obs_cov_op: lx.AbstractLinearOperator,
     ) -> Float[Array, "*state"]:
         """BLUE analysis in the state-space (information) form."""
-        masked_obs, obs_jacobian, precision, solver = self._information_system(
-            background, sample_mask, obs_op, obs_cov_op
-        )
+        masked_obs, obs_jacobian = _masked_system(background, sample_mask, obs_op)
+        solver = self._default_solver()
+        # B⁻¹ + Hᵀ R⁻¹ H; masked rows of H are zero, so gaps drop out
+        precision_raw = obs_jacobian.transpose() @ inverse_operator(
+            obs_cov_op, solver
+        ) @ obs_jacobian + inverse_operator(self.prior_cov_op, solver)
+        precision = lx.TaggedLinearOperator(precision_raw, lx.positive_semidefinite_tag)
         # d = m ⊙ y − m ⊙ H(x_b)
         innovation = (sample_obs * sample_mask) - masked_obs(background)
         # Hᵀ R⁻¹ d
@@ -216,62 +220,6 @@ class OptimalInterpolation(eqx.Module):
         increment = lx.linear_solve(precision, right_hand_side, solver=solver).value
         # xₐ = x_b + δx
         return background + increment
-
-    def _information_system(
-        self,
-        background: Float[Array, "*state"],
-        sample_mask: Float[Array, "*obs"],
-        obs_op: Any,
-        obs_cov_op: lx.AbstractLinearOperator,
-    ) -> tuple[Any, lx.AbstractLinearOperator, lx.AbstractLinearOperator, Any]:
-        """m ⊙ H(·), its tangent at ``background``, B⁻¹ + Hᵀ R⁻¹ H and its solver."""
-        masked_obs, obs_jacobian, _, solver = self._innovation_system(
-            background, sample_mask, obs_op, obs_cov_op
-        )
-        # B⁻¹ + Hᵀ R⁻¹ H; masked rows of H are zero, so gaps drop out
-        precision_raw = obs_jacobian.transpose() @ inverse_operator(
-            obs_cov_op, solver
-        ) @ obs_jacobian + inverse_operator(self.prior_cov_op, solver)
-        precision = lx.TaggedLinearOperator(precision_raw, lx.positive_semidefinite_tag)
-        return masked_obs, obs_jacobian, precision, solver
-
-    def _innovation_system(
-        self,
-        background: Float[Array, "*state"],
-        sample_mask: Float[Array, "*obs"],
-        obs_op: Any,
-        obs_cov_op: lx.AbstractLinearOperator,
-    ) -> tuple[Any, lx.AbstractLinearOperator, lx.AbstractLinearOperator, Any]:
-        """m ⊙ H(·), its tangent at ``background``, H B Hᵀ + R and its solver."""
-
-        # The effective observation operator is mask ⊙ H(·) — apply the
-        # mask both to the predicted obs (innovation) AND to the
-        # tangent-linear used to assemble (H B H^T + R). Without the
-        # mask in `linearize`, missing entries are treated as
-        # zero-innovation observations and bias the analysis whenever
-        # B couples observed and missing components.
-        def masked_obs(state: Float[Array, "*state"]) -> Float[Array, "*obs"]:
-            raw = (
-                obs_op(state, mask=sample_mask)
-                if accepts_mask(obs_op)
-                else obs_op(state)
-            )
-            return sample_mask * raw
-
-        # Build (H B H^T + R) as a composed lineax operator. We
-        # tag it positive-semidefinite so lineax.CG accepts it
-        # (the composition itself doesn't carry the tag).
-        # H = ∂(m ⊙ H(x))/∂x at x_b
-        obs_jacobian = lx.JacobianLinearOperator(
-            lambda state, _args=None: masked_obs(state), background
-        )
-        # H B Hᵀ + R
-        inner_raw = (
-            obs_jacobian @ self.prior_cov_op @ obs_jacobian.transpose() + obs_cov_op
-        )
-        inner_op = lx.TaggedLinearOperator(inner_raw, lx.positive_semidefinite_tag)
-
-        return masked_obs, obs_jacobian, inner_op, self._default_solver()
 
     def posterior(self, batch: Batch1D, adapter: Any = None) -> Any:
         r"""Analyse one window and return its [`Posterior`][vardax.Posterior].
@@ -302,7 +250,7 @@ class OptimalInterpolation(eqx.Module):
             # the precision form is the system the analysis just solved
             adapter = LaplaceCovariance(solver=self._default_solver())
         elif adapter is None:
-            adapter = _ObservationSpaceCovariance()
+            adapter = _observation_space_posterior
         return model_posterior(self, batch, adapter)
 
     def _default_solver(self) -> lx.AbstractLinearSolver:
@@ -323,52 +271,76 @@ class OptimalInterpolation(eqx.Module):
         return _OIAnalysisStep(self)
 
 
-class _ObservationSpaceCovariance(eqx.Module):
-    r"""OI posterior $P^* = B - B H^\top (H B H^\top + R)^{-1} H B$, lazily.
+def _masked_system(
+    background: Float[Array, "*state"],
+    sample_mask: Float[Array, "*obs"],
+    obs_op: Any,
+) -> tuple[Any, lx.AbstractLinearOperator]:
+    """m ⊙ H(·) and its tangent at ``background``.
 
-    $H$ is the masked tangent at the background, the one the analysis
-    used, so for a linear ``obs_op`` this is the exact BLUE covariance.
+    The effective observation operator is m ⊙ H(·), so the mask applies both
+    to the predicted observations and to the tangent. Without it in the tangent,
+    missing entries act as zero-innovation observations and bias the analysis
+    wherever B couples observed and missing components.
+
+    Args:
+        background: The linearisation point x_b.
+        sample_mask: The mask m.
+        obs_op: The observation operator H.
+
+    Returns:
+        The masked observation map and H = ∂(m ⊙ H(x))/∂x at x_b.
     """
 
-    def __call__(
-        self,
-        analysis: Float[Array, "*state"],
-        model: OptimalInterpolation,
-        batch: Batch1D,
-    ) -> Posterior:
-        # the one window's mask, (T, N) or (N,)
-        mask = batch.mask[0]
-        _, obs_jacobian, inner_op, solver = model._innovation_system(
-            model.prior_mean,
-            mask,
-            model.obs_op,
-            gaussx.masked_obs_covariance(model.obs_cov_op, mask),
-        )
-        prior_cov = model.prior_cov_op
-        obs_adjoint = obs_jacobian.transpose()
+    def masked_obs(state: Float[Array, "*state"]) -> Float[Array, "*obs"]:
+        raw = obs_op(state, mask=sample_mask) if accepts_mask(obs_op) else obs_op(state)
+        return sample_mask * raw
 
-        def covariance_mv(direction: Float[Array, "*state"]) -> Float[Array, "*state"]:
-            # B v
-            prior_direction = prior_cov.mv(direction)
-            # (H B Hᵀ + R)⁻¹ H B v
-            weights = lx.linear_solve(
-                inner_op, obs_jacobian.mv(prior_direction), solver=solver
-            ).value
-            # B v − B Hᵀ (H B Hᵀ + R)⁻¹ H B v
-            return prior_direction - prior_cov.mv(obs_adjoint.mv(weights))
+    obs_jacobian = lx.JacobianLinearOperator(
+        lambda state, _args=None: masked_obs(state), background
+    )
+    return masked_obs, obs_jacobian
 
-        covariance = lx.FunctionLinearOperator(
-            covariance_mv, prior_cov.in_structure(), lx.positive_semidefinite_tag
-        )
-        return Posterior(
-            mean=analysis,
-            cov=covariance,
-            samples=None,
-            provenance={
-                "adapter": "OptimalInterpolation",
-                "structure": "observation_space",
-            },
-        )
+
+def _observation_space_posterior(
+    analysis: Float[Array, "*state"],
+    model: OptimalInterpolation,
+    batch: Batch1D,
+) -> Posterior:
+    r"""OI posterior $P^* = B - B H^\top (H B H^\top + R)^{-1} H B$, lazily.
+
+    $H$ is the masked tangent at the background, the one the analysis used, so
+    for a linear ``obs_op`` this is the exact BLUE covariance.
+
+    Args:
+        analysis: The analysed state, kept as the posterior mean.
+        model: The model.
+        batch: The one window.
+
+    Returns:
+        The posterior, with gaussx's lazy Joseph-form covariance.
+    """
+    # the one window's mask, (T, N) or (N,)
+    mask = batch.mask[0]
+    _, obs_jacobian = _masked_system(model.prior_mean, mask, model.obs_op)
+    # only the covariance is used; y = H x_b makes the innovation zero
+    update = gaussx.linear_gaussian_update(
+        model.prior_mean,
+        model.prior_cov_op,
+        obs_jacobian,
+        gaussx.masked_obs_covariance(model.obs_cov_op, mask),
+        obs_jacobian.mv(model.prior_mean),
+        solver=model._default_solver(),
+    )
+    return Posterior(
+        mean=analysis,
+        cov=update.cov,
+        samples=None,
+        provenance={
+            "adapter": "OptimalInterpolation",
+            "structure": "observation_space",
+        },
+    )
 
 
 class _OIAnalysisStep(eqx.Module):
