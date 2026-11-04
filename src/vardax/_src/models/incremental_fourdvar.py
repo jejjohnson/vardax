@@ -58,7 +58,7 @@ from vardax._src.obs_operators.point import (
     whitened_residual,
     window_steps,
 )
-from vardax._src.utils.covariance import as_covariance
+from vardax._src.utils.covariance import as_covariance, masked_obs_cov
 
 
 class IncrementalConfig(eqx.Module):
@@ -347,20 +347,25 @@ class IncrementalFourDVar(eqx.Module):
         tol = self.config.covariance_tol
         obs_cov = require_obs_cov(self.obs_cov_op)
 
-        def apply_obs_precision(
-            residuals: Float[Array, "T_plus_1 M"],
-        ) -> Float[Array, "T_plus_1 M"]:
-            # R⁻¹ rₜ at each time
-            def solve_one(step_residual: Float[Array, " M"]) -> Float[Array, " M"]:
-                solver = lx.CG(atol=tol, rtol=tol)
-                return lx.linear_solve(obs_cov, step_residual, solver=solver).value
-
-            return jax.vmap(solve_one)(residuals)
-
         def analyse_one(
             window_obs: Float[Array, "T_plus_1 M"],
             window_mask: Float[Array, "T_plus_1 M"],
         ) -> Float[Array, " N"]:
+            def apply_obs_precision(
+                residuals: Float[Array, "T_plus_1 M"],
+            ) -> Float[Array, "T_plus_1 M"]:
+                # R̃ₜ⁻¹ rₜ at each time, R̃ₜ = Mₜ R Mₜ + (I − Mₜ), so masked
+                # entries drop out of the likelihood
+                def solve_one(
+                    step_residual: Float[Array, " M"], step_mask: Float[Array, " M"]
+                ) -> Float[Array, " M"]:
+                    solver = lx.CG(atol=tol, rtol=tol)
+                    return lx.linear_solve(
+                        masked_obs_cov(obs_cov, step_mask), step_residual, solver=solver
+                    ).value
+
+                return jax.vmap(solve_one)(residuals, window_mask)
+
             # G(x₀) = [mₜ ⊙ Hₜ(Mₜ(x₀))]ₜ, shared with the posterior adapters
             observed = observed_trajectory(self, window_mask)
             masked_observations = window_mask * window_obs

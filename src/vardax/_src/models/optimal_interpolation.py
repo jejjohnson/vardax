@@ -40,7 +40,7 @@ from vardax._src.models._analysis_step import analyse_forecast
 from vardax._src.models._observations import fill_gaps
 from vardax._src.models._rollout import accepts_mask
 from vardax._src.posterior.container import Posterior
-from vardax._src.utils.covariance import as_covariance
+from vardax._src.utils.covariance import as_covariance, masked_obs_cov
 
 
 class OptimalInterpolation(eqx.Module):
@@ -172,6 +172,8 @@ class OptimalInterpolation(eqx.Module):
         obs_cov_op: lx.AbstractLinearOperator,
     ) -> Float[Array, "*state"]:
         """BLUE analysis of one sample around the ``background``."""
+        # R̃ = M R M + (I − M): masked entries drop out of the likelihood
+        obs_cov_op = masked_obs_cov(obs_cov_op, sample_mask)
         if self.form == "state":
             return self._analyse_state_space(
                 background, sample_obs, sample_mask, obs_op, obs_cov_op
@@ -356,7 +358,10 @@ class _ObservationSpaceCovariance(eqx.Module):
         # the one window's mask, (T, N) or (N,)
         mask = batch.mask[0]
         _, obs_jacobian, inner_op, solver = model._innovation_system(
-            model.prior_mean, mask, model.obs_op, model.obs_cov_op
+            model.prior_mean,
+            mask,
+            model.obs_op,
+            masked_obs_cov(model.obs_cov_op, mask),
         )
         prior_cov = model.prior_cov_op
         obs_adjoint = obs_jacobian.transpose()

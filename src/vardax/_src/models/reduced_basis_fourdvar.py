@@ -73,7 +73,7 @@ from vardax._src.obs_operators.point import (
     window_steps,
 )
 from vardax._src.protocols import Minimiser, StateParameterization
-from vardax._src.utils.covariance import as_covariance
+from vardax._src.utils.covariance import as_covariance, masked_obs_cov
 from vardax._src.utils.shapes import as_shape
 
 
@@ -314,22 +314,10 @@ class ReducedBasisFourDVar(eqx.Module):
                     )
                     # r = m ⊙ (y − H(x))
                     residual = step_mask * (observation - predicted_obs)
-                    # Solve against the marginalized covariance
-                    # R~ = M R M + (I - M): for a 0/1 mask its inverse on
-                    # the observed block equals (R_oo)^{-1}, so masked
-                    # entries drop out of the likelihood exactly. Solving
-                    # the full R against a zeroed residual would instead
-                    # weight observed entries by the observed block of
-                    # R^{-1}, biasing the analysis when R is correlated.
-                    mask_op = lx.DiagonalLinearOperator(step_mask)
-                    masked_obs_cov = lx.TaggedLinearOperator(
-                        mask_op @ obs_cov_op @ mask_op
-                        + lx.DiagonalLinearOperator(1.0 - step_mask),
-                        lx.positive_semidefinite_tag,
-                    )
-                    # R̃⁻¹r
+                    # R̃⁻¹r with R̃ = M R M + (I − M), so masked entries
+                    # drop out of the likelihood
                     weighted_residual = lx.linear_solve(
-                        masked_obs_cov,
+                        masked_obs_cov(obs_cov_op, step_mask),
                         residual,
                         solver=self.cov_solver,
                     ).value
