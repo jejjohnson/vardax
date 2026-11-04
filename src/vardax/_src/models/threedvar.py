@@ -35,6 +35,7 @@ from vardax._src.errors import InputTypeError
 from vardax._src.minimisers import MinimiseResult, minimise, minimise_with_result
 from vardax._src.models._analysis_step import analyse_forecast
 from vardax._src.models._observations import fill_gaps
+from vardax._src.models._rollout import accepts_mask
 from vardax._src.obs_operators.point import (
     FieldPointObs,
     check_point_obs_cov,
@@ -289,7 +290,7 @@ class ThreeDVar(eqx.Module):
             # would otherwise penalise the analysis there.
             predicted_obs = (
                 obs_op(state, mask=sample_mask)
-                if _accepts_mask(obs_op)
+                if accepts_mask(obs_op)
                 else obs_op(state)
             )
             # r = m ⊙ (y − H(x))
@@ -422,15 +423,6 @@ class ThreeDVar(eqx.Module):
             forecast, treating ``NaN`` observations as missing.
         """
         return _ThreeDVarAnalysisStep(self)
-
-
-def _accepts_mask(obs_op: Any) -> bool:
-    import inspect
-
-    try:
-        return "mask" in inspect.signature(obs_op.__call__).parameters
-    except (TypeError, ValueError):
-        return False
 
 
 class _ThreeDVarAnalysisStep(eqx.Module):

@@ -102,7 +102,7 @@ def test_linearize_preserves_flat_state_shape(grid):
 
 def test_mask_kwarg_zeroes_masked_obs(grid):
     """Optional `mask` matches the `MaskedIdentity` style for
-    `_accepts_mask` dispatch."""
+    `accepts_mask` dispatch."""
     y, x = grid
     pts = np.array([[0.5, 1.0], [0.3, 0.5]])
     op = interp_obs_from_coords((y, x), pts)
