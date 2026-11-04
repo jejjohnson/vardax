@@ -29,7 +29,6 @@ from __future__ import annotations
 from typing import Any
 
 import equinox as eqx
-import gaussx
 import jax
 from jaxtyping import Array, Float
 import lineax as lx
@@ -40,7 +39,11 @@ from vardax._src.models._analysis_step import analyse_forecast
 from vardax._src.models._observations import fill_gaps
 from vardax._src.models._rollout import accepts_mask
 from vardax._src.posterior.container import Posterior
-from vardax._src.utils.covariance import as_covariance, masked_obs_cov
+from vardax._src.utils.covariance import (
+    as_covariance,
+    inverse_operator,
+    masked_obs_cov,
+)
 
 
 class OptimalInterpolation(eqx.Module):
@@ -207,7 +210,7 @@ class OptimalInterpolation(eqx.Module):
         innovation = (sample_obs * sample_mask) - masked_obs(background)
         # Hᵀ R⁻¹ d
         right_hand_side = obs_jacobian.transpose().mv(
-            _inverse(obs_cov_op, solver).mv(innovation)
+            inverse_operator(obs_cov_op, solver).mv(innovation)
         )
         # δx = (B⁻¹ + Hᵀ R⁻¹ H)⁻¹ Hᵀ R⁻¹ d
         increment = lx.linear_solve(precision, right_hand_side, solver=solver).value
@@ -226,9 +229,9 @@ class OptimalInterpolation(eqx.Module):
             background, sample_mask, obs_op, obs_cov_op
         )
         # B⁻¹ + Hᵀ R⁻¹ H; masked rows of H are zero, so gaps drop out
-        precision_raw = obs_jacobian.transpose() @ _inverse(
+        precision_raw = obs_jacobian.transpose() @ inverse_operator(
             obs_cov_op, solver
-        ) @ obs_jacobian + _inverse(self.prior_cov_op, solver)
+        ) @ obs_jacobian + inverse_operator(self.prior_cov_op, solver)
         precision = lx.TaggedLinearOperator(precision_raw, lx.positive_semidefinite_tag)
         return masked_obs, obs_jacobian, precision, solver
 
@@ -318,28 +321,6 @@ class OptimalInterpolation(eqx.Module):
             supplied forecast, treating ``NaN`` observations as missing.
         """
         return _OIAnalysisStep(self)
-
-
-def _inverse(
-    operator: lx.AbstractLinearOperator, solver: lx.AbstractLinearSolver
-) -> lx.AbstractLinearOperator:
-    """A⁻¹ of a PSD operator, lazily: closed form when A is diagonal."""
-    structure = operator.in_structure()
-    if lx.is_diagonal(operator):
-        diagonal = lx.diagonal(operator)
-
-        def divide(vector: Array) -> Array:
-            # A⁻¹ v = v / diag(A)
-            return vector / diagonal.reshape(vector.shape)
-
-        return lx.FunctionLinearOperator(
-            divide, structure, lx.positive_semidefinite_tag
-        )
-    # wrapped so lineax can linearise it inside the composed precision
-    inverse = gaussx.inv(operator, solver=solver)
-    return lx.FunctionLinearOperator(
-        inverse.mv, structure, lx.positive_semidefinite_tag
-    )
 
 
 class _ObservationSpaceCovariance(eqx.Module):

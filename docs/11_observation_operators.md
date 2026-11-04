@@ -56,7 +56,7 @@ tangent_mask = tangent.mv(mask)  # (N,) → (N,)
 print(type(tangent).__name__, bool(jnp.allclose(tangent_mask, mask)))
 ```
 
-It prints `JacobianLinearOperator True`: the tangent is the identity, so masked residuals come from the cost, which multiplies by $m$.
+It prints `IdentityLinearOperator True`: the tangent is the identity, so masked residuals come from the cost, which multiplies by $m$.
 
 The mask can be soft ($m_i \in [0, 1]$) for fuzzy observations. The operator still works, but the obs-error covariance interpretation changes (a soft mask implicitly inflates $R$ where $m$ is small).
 

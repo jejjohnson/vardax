@@ -35,32 +35,8 @@ import lineax as lx
 from vardax._src._types import Batch1D, PointObsBatch
 from vardax._src.errors import MissingInputError, ShapeError, UnsupportedInputError
 from vardax._src.models._rollout import accepts_mask, linearise, observed_trajectory
-from vardax._src.utils.covariance import masked_obs_cov
+from vardax._src.utils.covariance import inverse_operator, masked_obs_cov
 from vardax._src.utils.shapes import as_shape
-
-
-def inverse_operator(
-    operator: lx.AbstractLinearOperator, solver: lx.AbstractLinearSolver
-) -> lx.AbstractLinearOperator:
-    """Lazy PSD inverse — delegates to ``gaussx.inv``.
-
-    Structured operators (diagonal, Kronecker, block-diagonal, low-rank)
-    invert in closed form; everything else solves with ``solver``, never
-    materialising the inverse. The result is re-wrapped as a
-    ``FunctionLinearOperator`` so lineax can linearise it inside a composed
-    precision that is itself solved (gaussx's ``InverseOperator`` does not
-    register ``lx.linearise``).
-
-    Args:
-        operator: Symmetric positive-definite operator A.
-        solver: Linear solver for operators without a closed-form inverse.
-
-    Returns:
-        A⁻¹ as a lazy operator.
-    """
-    tagged = lx.TaggedLinearOperator(operator, lx.positive_semidefinite_tag)
-    inverse = gaussx.inv(tagged, solver=solver)
-    return lx.FunctionLinearOperator(inverse.mv, operator.in_structure())
 
 
 def has_rollout(model: Any) -> bool:
@@ -205,6 +181,47 @@ def _single_time_mask(
     return mask
 
 
+def _all_diagonal_identity(
+    tangent: lx.AbstractLinearOperator,
+    obs_precision: lx.AbstractLinearOperator,
+    prior_precision: lx.AbstractLinearOperator,
+) -> bool:
+    """Whether P*⁻¹ = M R⁻¹ M + B⁻¹ is diagonal because H' = I."""
+    return (
+        isinstance(tangent, lx.IdentityLinearOperator)
+        and lx.is_diagonal(obs_precision)
+        and lx.is_diagonal(prior_precision)
+    )
+
+
+def _diagonal_precision(
+    mask: Float[Array, "*obs"] | None,
+    obs_precision: lx.AbstractLinearOperator,
+    prior_precision: lx.AbstractLinearOperator,
+) -> lx.DiagonalLinearOperator:
+    """diag(P*⁻¹) = m² ⊙ diag(R⁻¹) + diag(B⁻¹), as a diagonal operator.
+
+    lineax's ``diagonal`` materialises a composition, so the sum is formed here
+    from each term's closed-form diagonal, and P* inverts in closed form too.
+
+    Args:
+        mask: The mask of a single-time batch, or ``None``.
+        obs_precision: R⁻¹, diagonal.
+        prior_precision: B⁻¹, diagonal, on the same structure.
+
+    Returns:
+        The precision, in the shape of the state.
+    """
+    shape = prior_precision.in_structure().shape
+    # m² ⊙ diag(R⁻¹) with a mask, diag(R⁻¹) without
+    data = jnp.reshape(gaussx.diag(obs_precision), shape)
+    if mask is not None:
+        data = jnp.reshape(mask, shape) ** 2 * data
+    return lx.DiagonalLinearOperator(
+        data + jnp.reshape(gaussx.diag(prior_precision), shape)
+    )
+
+
 def _masked_tangent(
     tangent: lx.AbstractLinearOperator, mask: Float[Array, "*obs"] | None
 ) -> lx.AbstractLinearOperator:
@@ -215,11 +232,11 @@ def _masked_tangent(
     """
     if mask is None:
         return tangent
-    obs_structure = tangent.out_structure()
-    mask_op = lx.FunctionLinearOperator(
-        lambda observed: mask * observed, obs_structure, lx.symmetric_tag
+    # diagonal, so a diagonal precision stays visible to gaussx.diag; in the
+    # tangent's dtype, as lineax composes only matching structures
+    return (
+        lx.DiagonalLinearOperator(mask.astype(tangent.out_structure().dtype)) @ tangent
     )
-    return mask_op @ tangent
 
 
 def _whitened_control(model: Any) -> bool:
@@ -353,6 +370,15 @@ def gauss_newton_covariance(
             # R̃ = M R M + (I − M), as the cost: masked entries drop out
             obs_precision = inverse_operator(masked_obs_cov(obs_cov_op, mask), solver)
         if basis_op is None:
+            if _all_diagonal_identity(raw_tangent, obs_precision, prior_precision):
+                return (
+                    analysis,
+                    gaussx.inv(
+                        _diagonal_precision(mask, obs_precision, prior_precision)
+                    ),
+                    "single_time",
+                    None,
+                )
             # P*⁻¹ = H'ᵀ R⁻¹ H' + B⁻¹
             precision = tangent.transpose() @ obs_precision @ tangent + prior_precision
             tagged = lx.TaggedLinearOperator(precision, lx.positive_semidefinite_tag)
