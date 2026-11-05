@@ -1,8 +1,7 @@
-"""Public ``vardax.amortized`` API surface (Epic 8 / Decision D12).
+"""Public ``vardax.amortized`` API surface.
 
 Re-exports from ``vardax._src.amortized`` so namespaced access like
-``vdx.amortized.AmortizedPosterior(...)`` works for users following
-the design docs.
+``vdx.amortized.AmortizedPosterior(...)`` works.
 """
 
 from vardax._src.amortized import (

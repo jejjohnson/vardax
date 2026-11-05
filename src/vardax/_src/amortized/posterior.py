@@ -1,7 +1,7 @@
-"""``AmortizedPosterior`` — the seventh AnalysisStep.
+"""``AmortizedPosterior``: an encoder and a density head forming q(x | y; ν).
 
-Composes an encoder (``(input, mask) → context``) with a density head
-(``context → q_φ(x | y)``). Trained by simulation:
+The encoder maps ``(input, mask)`` to a context c and the head maps c to a
+density over the state. Trained by simulation:
 
 ```python
 def sample_train_pair(key):
@@ -43,25 +43,27 @@ from .config import AmortizedConfig
 
 
 class AmortizedPosterior(eqx.Module):
-    r"""Amortized variational posterior $q_\phi(x \mid y)$.
+    """Amortized variational posterior q(x | y; ν).
 
-    Composes an encoder $c = E(y, m)$ with a density head $q_\phi(x \mid c)$;
-    a trained model answers any new observation with one forward pass.
+        c = g_enc(y, m; ν),   q(x | y; ν) = q(x | c; ν)
+
+    A trained model answers any new observation with one forward pass.
 
     Algorithm:
-        1. Encode each batch element's ``(input, mask)`` into a context vector
-           (vmapped over the batch).
-        2. Hand the context to the head: ``__call__`` takes its mode,
-           ``sample`` draws from it, ``log_prob`` evaluates the density.
+        1. Encode each batch element's ``(input, mask)`` into a context c,
+           vmapped over the batch.
+        2. Hand c to the head: ``__call__`` takes its mode, ``sample`` draws
+           from it and ``log_prob`` evaluates its log-density.
 
     Attributes:
-        encoder: ``eqx.Module`` mapping ``(input, mask)`` to a context
-            vector. Vmapped over the batch axis at call time.
-        head: ``RegressionHead`` / ``ConditionalFlowHead`` /
-            ``ScoreDiffusionHead``. Exposes ``map_estimate(ctx)``,
-            ``sample(ctx, key, n)``, ``log_prob(x, ctx)``.
-        config: ``AmortizedConfig`` carrying head type and sampling
-            defaults.
+        encoder: Observation encoder g_enc mapping ``(input, mask)`` to the
+            context c, vmapped over the batch axis at call time.
+        head: Density head q(x | c; ν), a ``RegressionHead``,
+            ``ConditionalFlowHead`` or ``ScoreDiffusionHead``. Exposes
+            ``map_estimate(ctx)``, ``sample(ctx, key, n)`` and
+            ``log_prob(x, ctx)``.
+        config: ``AmortizedConfig`` carrying the head type and the default
+            sample count.
 
     Examples:
         >>> import jax
@@ -96,7 +98,7 @@ class AmortizedPosterior(eqx.Module):
     config: AmortizedConfig
 
     def __call__(self, batch: Batch1D | Batch2D) -> Float[Array, ...]:
-        r"""Return the per-sample MAP / mode of $q_\phi(x \mid y)$.
+        """Return the per-sample mode x̂ = argmaxₓ q(x | y; ν).
 
         Args:
             batch: Observations ``(input, mask)`` to condition on.
@@ -106,6 +108,7 @@ class AmortizedPosterior(eqx.Module):
         """
 
         def _one(input_sample, mask_sample):
+            # c = g_enc(y, m; ν), then x̂ = mode of q(x | c; ν)
             context = self.encoder(input_sample, mask_sample)
             return self.head.map_estimate(context)
 
@@ -117,21 +120,23 @@ class AmortizedPosterior(eqx.Module):
         key: PRNGKeyArray,
         n: int | None = None,
     ) -> Float[Array, ...]:
-        """Draw posterior samples per batch element.
+        """Draw posterior samples x ∼ q(x | y; ν) per batch element.
 
         Args:
             batch: Observations ``(input, mask)`` to condition on.
             key: PRNG key, split into one key per batch element.
-            n: Number of samples per element. Defaults to ``config.n_samples``.
+            n: Number of samples N_E per element. Defaults to ``config.n_samples``.
 
         Returns:
             Samples stacked as ``(B, n, *state_shape)``.
         """
         n = self.config.n_samples if n is None else n
         batch_size = batch.input.shape[0]
+        # One independent key per batch element
         keys = jax.random.split(key, batch_size)
 
         def _one(input_sample, mask_sample, key_sample):
+            # c = g_enc(y, m; ν), then x ∼ q(x | c; ν)
             context = self.encoder(input_sample, mask_sample)
             return self.head.sample(context, key_sample, n)
 
@@ -142,31 +147,32 @@ class AmortizedPosterior(eqx.Module):
         x: Float[Array, ...],
         batch: Batch1D | Batch2D,
     ) -> Float[Array, " B"]:
-        r"""Per-sample log-density of ``x`` under ``q_φ(·|y)``.
-
-        For ``ScoreDiffusionHead`` this raises ``NotImplementedError``
-        (no closed-form density). Use ``sample`` instead.
+        """Per-sample log-density log q(x | y; ν).
 
         Args:
             x: States whose density is evaluated, one per batch element.
             batch: Observations ``(input, mask)`` to condition on.
 
         Returns:
-            The log-density $\log q_\phi(x \mid y)$ for each batch element.
+            The log-density log q(x | y; ν) for each batch element.
         """
 
         def _one(state_sample, input_sample, mask_sample):
+            # c = g_enc(y, m; ν), then log q(x | c; ν)
             context = self.encoder(input_sample, mask_sample)
             return self.head.log_prob(state_sample, context)
 
         return jax.vmap(_one)(x, batch.input, batch.mask)
 
     def as_analysis_step(self) -> _AmortizedAnalysisStep:
-        """Adapt to ``pipekit_cycle.AnalysisStep`` (Decision D8).
+        """Adapt to ``pipekit_cycle.AnalysisStep``.
+
+            μ_x,t|t = x̂(y_t, m_t),   m_t = 1 where y_t is finite, else 0
 
         Returns:
             A callable ``(forecast, obs, *, obs_op, obs_err_cov) -> analysis`` that
-            masks the non-finite entries of ``obs`` and returns the MAP estimate.
+            masks the non-finite entries of ``obs`` and returns the mode of the
+            posterior. The forecast, ``obs_op`` and ``obs_err_cov`` are unused.
 
         Examples:
             Non-finite observations are treated as unobserved:
@@ -189,7 +195,7 @@ class AmortizedPosterior(eqx.Module):
 
 
 class _AmortizedAnalysisStep(eqx.Module):
-    """``pipekit_cycle.AnalysisStep`` adapter for ``AmortizedPosterior``."""
+    """``pipekit_cycle.AnalysisStep`` adapter: the analysis is the posterior mode."""
 
     model: AmortizedPosterior
 
@@ -201,10 +207,15 @@ class _AmortizedAnalysisStep(eqx.Module):
         obs_op: Any,
         obs_err_cov: Any,
     ) -> Float[Array, ...]:
+        """Return μ_x,t|t = x̂(y_t, m_t) with non-finite entries of y_t masked."""
+        # m = 1 where y is finite, else 0
         mask = jnp.where(jnp.isfinite(obs), 1.0, 0.0)
+        # Masked entries are zeroed so the encoder never sees NaN or inf
         obs_clean = jnp.nan_to_num(obs)
+        # Four axes mean (batch, time, y, x); otherwise (batch, time, obs)
         if obs.ndim == 4:
             batch = Batch2D(input=obs_clean, mask=mask, target=None)
         else:
             batch = Batch1D(input=obs_clean, mask=mask, target=None)
+        # x̂ = mode of q(x | y; ν)
         return self.model(batch)
