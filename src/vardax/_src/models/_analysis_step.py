@@ -19,6 +19,7 @@ import lineax as lx
 from vardax._src._types import Batch1D
 from vardax._src.errors import InputTypeError, ShapeError
 from vardax._src.obs_operators.point import require_obs_cov
+from vardax._src.parameterization import LinearParameterization
 from vardax._src.utils.covariance import as_covariance
 
 #: ``analyse_one(μ_x, y, m, h, Σ_ε)`` for one sample.
@@ -291,7 +292,7 @@ def analyse_window(
         target=None,
     )
 
-    swapped = eqx.tree_at(lambda m: m.prior_mean, model, prior_mean)
+    swapped = centred_on(model, prior_mean)
     if obs_op is not None:
         swapped = eqx.tree_at(lambda m: m.obs_op, swapped, obs_op)
     if obs_err_cov is not None:
@@ -308,6 +309,29 @@ def analyse_window(
     analysis = swapped(batch)
     # the window holds T + 1 times, so T steps to its end
     return end_of_window(swapped, analysis, num_times - 1)
+
+
+def centred_on(model: Any, prior_mean: Float[Array, ...]) -> Any:
+    """``model`` analysing around ``prior_mean``, the cycle's forecast.
+
+        μ_x ← ``prior_mean``, in x = μ_x + Φ z too for a ``LinearParameterization``
+
+    A nonlinear parameterization has no μ_x to move: its x = g_dec(θ) starts from its
+    own initial control, so the forecast does not reach it.
+
+    Args:
+        model: A model with a ``prior_mean``, and possibly a ``parameterization``.
+        prior_mean: The new prior mean μ_x.
+
+    Returns:
+        A copy of ``model`` centred on ``prior_mean``.
+    """
+    centred = eqx.tree_at(lambda m: m.prior_mean, model, prior_mean)
+    if isinstance(getattr(model, "parameterization", None), LinearParameterization):
+        centred = eqx.tree_at(
+            lambda m: m.parameterization.background, centred, prior_mean
+        )
+    return centred
 
 
 def rollout_end(model: Any, analysis: Array, n_steps: int) -> Float[Array, " N"]:
