@@ -140,12 +140,29 @@ def test_a_shaped_dense_block_is_reshaped():
     assert jnp.allclose(fusion.obs_cov_op().mv(vector), 3.0 * vector)
 
 
-def test_an_empty_registry_has_an_empty_covariance():
+@pytest.mark.parametrize("enable_x64", [False, True], ids=["float32", "float64"])
+def test_an_empty_registry_means_no_observations(enable_x64):
+    with jax.enable_x64(enable_x64):
+        fusion = vdx.MultiInstrumentFusion(vdx.InstrumentRegistry(entries={}))
+        state = jnp.zeros(2)
+
+        flattened = fusion.to_observation_operator()(state)
+        covariance = fusion.obs_cov_op()
+        cost = fusion.cost(state, {})
+
+        assert flattened.shape == (0,)
+        assert flattened.dtype == state.dtype
+        assert covariance.in_size() == 0
+        assert covariance.mv(jnp.zeros(0)).shape == (0,)
+        assert cost == 0.0
+        assert cost.dtype == state.dtype
+
+
+def test_an_empty_registry_keeps_a_float32_state_under_x64(x64):
     fusion = vdx.MultiInstrumentFusion(vdx.InstrumentRegistry(entries={}))
-    covariance = fusion.obs_cov_op()
-    assert covariance.in_size() == 0
-    assert covariance.mv(jnp.zeros(0)).shape == (0,)
-    assert fusion.cost(jnp.zeros(2), {}) == 0.0
+    state = jnp.zeros(2, dtype=jnp.float32)
+    assert fusion.to_observation_operator()(state).dtype == jnp.float32
+    assert fusion.cost(state, {}).dtype == jnp.float32
 
 
 @pytest.mark.parametrize(
