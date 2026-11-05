@@ -23,11 +23,11 @@ released code.
 | 09 | [Parameter estimation on L63](09_param_estimation_L63.ipynb) | Learning ODE parameters (and the initial state) with `DynTrajectory` and `strong_variational_cost` |
 | 10 | [Bilevel optimisation on L63](10_bilevel_opt_L63.ipynb) | Learning the cost weights by differentiating through the inner 4DVar solve |
 | 11 | [Learning the gradient update](11_gradient_learning_L63.ipynb) | Training only the `ConvLSTMGradMod1D` against vanilla gradient descent, with a solver-steps ablation |
-| 12 | [Weak-constraint 4DVar on L63](12_weak_constraint_4dvar_L63.ipynb) | `WeakFourDVar` with a biased model: model-error increments, the $Q$ dial, and the same cost in trajectory space via `DynIncrements.bind` |
+| 12 | [Weak-constraint 4DVar on L63](12_weak_constraint_4dvar_L63.ipynb) | `WeakFourDVar` with a biased model: model-error increments, the $\gmat{\Sigma}_\eta$ dial, and the same cost in trajectory space via `DynIncrements.bind` |
 | 13 | [Neural closures on two-level L96](13_neural_closure_L96.ipynb) | Learning the unresolved coupling offline (regression) and online (through the ODE solve), forecast skill, and the hybrid model inside 4DVar |
 | 14 | [Posterior uncertainty on L63](14_posterior_uncertainty_L63.ipynb) | `LaplaceCovariance`, `GaussNewtonHessian` and `EnsembleCovariance` for a 4DVar analysis, uncertainty along the window, calibration and SBC |
 | 15 | [Observation operators](15_observation_operators.ipynb) | Masks vs selection matrices, `InterpObs` off-grid data, the `AveragingKernel` bias, and `MultiInstrumentFusion` on a Gaussian random field |
-| 16 | [Cycled assimilation on L63](16_cycled_assimilation_L63.ipynb) | `pipekit_cycle` forecast–analysis loops: spin-up, the error equilibrium, tuning $B$ by innovations, and windowed 4DVar cycling |
+| 16 | [Cycled assimilation on L63](16_cycled_assimilation_L63.ipynb) | `pipekit_cycle` forecast–analysis loops: spin-up, the error equilibrium, tuning $\gmat{\Sigma}_x$ by innovations, and windowed 4DVar cycling |
 | 17 | [Amortized posterior on L63](17_amortized_posterior_L63.ipynb) | Simulation-based training of `AmortizedPosterior`, a multi-start 4DVar oracle, and the three validation gates |
 
 ## Running locally

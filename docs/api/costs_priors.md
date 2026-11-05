@@ -10,7 +10,7 @@ optimisation.
 
 ## Cost functions
 
-The variational cost $J(x) = J_\text{obs}(x) + J_\text{prior}(x)$ and its
+The variational cost $\mathcal{J}(\vect{x}) = \mathcal{J}_o(\vect{x}) + \mathcal{J}_p(\vect{x})$ and its
 gradient, with the observation and prior terms also available separately
 (`decomposed_loss` returns them unsummed for logging). The `_1d` / `_2d`
 suffixes match the [`Batch1D` / `Batch2D`](protocols.md) carriers. See
@@ -28,9 +28,9 @@ implements.
 
 `ResidualPenalty` adds a PDE as a weak constraint on a continuous field
 (a neural field, or any differentiable callable of one point): the
-residual $\mathcal N[f]$ is evaluated by autodiff at collocation points,
+residual $r(\vect{c}; \gvect{\theta}) \in \mathbb{R}^{D_r}$ is evaluated by autodiff at the $N_c$ collocation points $\vect{c}_j$,
 fixed or redrawn from a key on every call, and scored as
-$\frac{\lambda}{2 N_c}\sum_j \lVert \mathcal N[f](c_j) \rVert^2$.
+$\mathcal{J}_\text{res}(\gvect{\theta}) = \frac{\beta_\text{res}}{2 N_c} \sum_{j=1}^{N_c} \Vert r(\vect{c}_j; \gvect{\theta}) \Vert^2$.
 Residuals are plain callables `(field, s) -> (R,)` built on
 `geonnax.diffops`; vardax ships two references in `vardax.examples`,
 2-D advection–diffusion and 2-D incompressible Navier–Stokes in
@@ -97,9 +97,9 @@ families; `CompositeBasis` concatenates several.
 Implementations of the [`StateParameterization`](protocols.md) protocol,
 accepted as `parameterization=` by `ThreeDVar`, `StrongFourDVar`,
 `WeakFourDVar` and `ReducedBasisFourDVar`: the control becomes any pytree
-$\theta$, the state $\psi(\theta)$, and $\mathrm{pen}(\theta)$ replaces
+$\gvect{\theta}$, the state $g_\text{dec}(\gvect{\theta})$, and the penalty $\mathcal{R}(\gvect{\theta})$ replaces
 the background term. `LinearParameterization` adapts any reduced basis
-($\psi(X) = x_b + \Phi X$); `NeuralFieldParameterization` makes the state
+($g_\text{dec}(\vect{z}) = \gvect{\mu}_x + \gmat{\Phi} \vect{z}$, with $\gmat{\Phi} \in \mathbb{R}^{D_x \times D_z}$ and $\vect{z} \in \mathbb{R}^{D_z}$); `NeuralFieldParameterization` makes the state
 a coordinate network on the grid, with weight decay as its penalty.
 
 ::: vardax
