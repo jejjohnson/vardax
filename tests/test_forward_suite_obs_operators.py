@@ -10,6 +10,7 @@ import numpy as np
 import pytest
 
 import vardax as vdx
+from vardax._src.obs_operators.tangent import obs_tangent
 
 RTOL = 1e-12
 SETTINGS = settings(max_examples=25, deadline=None)
@@ -493,20 +494,14 @@ class TestMultiInstrumentFusion:
                 tangent.as_matrix(), jacobians[key], rtol=RTOL, atol=1e-14
             )
 
-    @pytest.mark.xfail(
-        strict=True,
-        raises=TypeError,
-        reason=(
-            "_FlattenedMultiInstrument.linearize passes the one-argument "
-            "self.__call__ to lx.JacobianLinearOperator, which calls fn(x, args)."
-        ),
-    )
     def test_flattened_linearize_matches_jacobian(self, x64):
         fusion = _fusion()
         x = jnp.array([0.4, -1.3])
         flat = fusion.to_observation_operator()
+        jacobian = jax.jacfwd(flat)(x)
+        np.testing.assert_allclose(flat.linearize(x).as_matrix(), jacobian, rtol=RTOL)
         np.testing.assert_allclose(
-            flat.linearize(x).as_matrix(), jax.jacfwd(flat)(x), rtol=RTOL
+            obs_tangent(flat, x).as_matrix(), jacobian, rtol=RTOL
         )
 
     def test_jit_vmap_match_loop(self, x64):
