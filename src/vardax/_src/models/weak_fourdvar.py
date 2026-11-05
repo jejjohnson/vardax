@@ -356,7 +356,9 @@ class WeakFourDVar(eqx.Module):
         basis = self.model_err_basis
         model_noise_covariance = self.model_err_cov_op
         if model_noise_covariance is not None:
-            init_model_errors = jnp.zeros((num_steps, state_size))
+            init_model_errors = jnp.zeros(
+                (num_steps, state_size), dtype=self.prior_mean.dtype
+            )
 
             def to_errors(error_control: Array) -> Float[Array, "T N"]:
                 return error_control
@@ -382,7 +384,9 @@ class WeakFourDVar(eqx.Module):
         elif basis is not None:
             basis.check_steps(num_steps)
             # ω, the whitened coefficients
-            init_model_errors = jnp.zeros(basis.coefficient_shape)
+            init_model_errors = jnp.zeros(
+                basis.coefficient_shape, dtype=self.prior_mean.dtype
+            )
             to_errors = basis.errors
 
             def model_error_cost(error_control: Array) -> Float[Array, ""]:

@@ -195,3 +195,37 @@ def test_needs_exactly_one_model_error_prior():
     wrong_length = vdx.Batch1D(input=jnp.ones((1, 5, N)), mask=jnp.ones((1, 5, N)))
     with pytest.raises(vdx.ShapeError, match="model-error steps"):
         vdx.WeakFourDVar(**common, model_err_basis=basis)(wrong_length)
+
+
+@pytest.mark.parametrize("reduced", [False, True], ids=["full", "reduced"])
+def test_a_float32_window_stays_float32_under_x64(x64, reduced):
+    covariance = lx.DiagonalLinearOperator(jnp.ones(N, dtype=jnp.float32))
+    error_option = (
+        {
+            "model_err_basis": vdx.ModelErrorBasis(
+                temporal=jnp.eye(T, dtype=jnp.float32),
+                spatial=jnp.eye(N, dtype=jnp.float32),
+                temporal_variance=jnp.ones(T, dtype=jnp.float32),
+                spatial_variance=jnp.ones(N, dtype=jnp.float32),
+            )
+        }
+        if reduced
+        else {"model_err_cov_op": covariance}
+    )
+    model = vdx.WeakFourDVar(
+        forward=_Linear(jnp.asarray(TRANSITION, dtype=jnp.float32)),
+        obs_op=vdx.MaskedIdentity(),
+        prior_mean=jnp.zeros(N, dtype=jnp.float32),
+        prior_cov_op=covariance,
+        obs_cov_op=covariance,
+        **error_option,
+    )
+    window = vdx.Batch1D(
+        input=jnp.ones((1, T + 1, N), dtype=jnp.float32),
+        mask=jnp.ones((1, T + 1, N), dtype=jnp.float32),
+    )
+
+    initial_state, model_errors = model(window)
+
+    assert initial_state.dtype == jnp.float32
+    assert model_errors.dtype == jnp.float32
