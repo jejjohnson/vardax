@@ -232,10 +232,14 @@ class MultiInstrumentFusion(eqx.Module):
             masked_covariance = gaussx.masked_obs_covariance(
                 as_covariance(spec.obs_cov_op), spec.mask
             )
-            # Σ̃_ε,i⁻¹ rᵢ
-            whitened = gaussx.solve(masked_covariance, residual, solver=solver)
+            flat_residual = _flatten(residual)
+            # Σ̃_ε,i⁻¹ rᵢ on flat vectors, as gaussx's direct solve treats the columns of
+            # a 2-D right-hand side as separate systems
+            whitened = gaussx.solve(
+                _flat_covariance(masked_covariance), flat_residual, solver=solver
+            )
             # rᵢᵀ Σ̃_ε,i⁻¹ rᵢ; jnp, not einx: an instrument may have no observations
-            squared_norm = jnp.sum(residual * whitened)
+            squared_norm = jnp.sum(flat_residual * whitened)
             # 𝒥_o += αᵢ ½ rᵢᵀ Σ̃_ε,i⁻¹ rᵢ
             total = total + self.weight(instrument_id) * 0.5 * squared_norm
         return total
@@ -281,6 +285,11 @@ class MultiInstrumentFusion(eqx.Module):
         return _FlattenedMultiInstrument(fusion=self)
 
 
+def _flatten(array: Float[Array, ...]) -> Float[Array, " M"]:
+    """Flatten an array; ravel, not einx: an instrument may have no observations."""
+    return jnp.ravel(array)
+
+
 def _flat_covariance(cov: lx.AbstractLinearOperator) -> lx.AbstractLinearOperator:
     """``cov`` on flattened vectors, as a `gaussx.BlockDiag` block must act.
 
@@ -300,8 +309,8 @@ def _flat_covariance(cov: lx.AbstractLinearOperator) -> lx.AbstractLinearOperato
 
     def flat_mv(vector: Float[Array, " M"]) -> Float[Array, " M"]:
         """Apply Σ_ε,i to a flat vector."""
-        # reshape and ravel, not einx: an instrument may have no observations
-        return jnp.ravel(cov.mv(vector.reshape(structure.shape)))
+        # reshape, not einx: an instrument may have no observations
+        return _flatten(cov.mv(vector.reshape(structure.shape)))
 
     return lx.FunctionLinearOperator(flat_mv, flat, lx.positive_semidefinite_tag)
 
@@ -317,9 +326,8 @@ class _FlattenedMultiInstrument(eqx.Module):
     def __call__(self, x: Float[Array, ...]) -> Float[Array, ...]:
         """Concatenate the flattened hᵢ(x) in sorted instrument order."""
         per_instrument = self.fusion(x)
-        # ravel, not einx: an instrument may have no observations
         flat_per_instrument = [
-            jnp.ravel(per_instrument[key]) for key in sorted(per_instrument)
+            _flatten(per_instrument[key]) for key in sorted(per_instrument)
         ]
         # h(x) = (h₁(x), …, h_k(x))
         return jnp.concatenate(flat_per_instrument)

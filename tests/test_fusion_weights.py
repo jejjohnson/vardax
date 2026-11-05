@@ -8,11 +8,13 @@ give a model the same weighted likelihood.
 
 from __future__ import annotations
 
+import einx
 import gaussx
 import jax
 import jax.numpy as jnp
 import lineax as lx
 import numpy as np
+import pytest
 
 import vardax as vdx
 
@@ -144,3 +146,37 @@ def test_an_empty_registry_has_an_empty_covariance():
     assert covariance.in_size() == 0
     assert covariance.mv(jnp.zeros(0)).shape == (0,)
     assert fusion.cost(jnp.zeros(2), {}) == 0.0
+
+
+@pytest.mark.parametrize(
+    "mask_values",
+    [[[1.0, 1.0], [1.0, 1.0]], [[1.0, 0.0], [1.0, 1.0]]],
+    ids=["full", "gap"],
+)
+def test_default_solver_handles_a_non_diagonal_covariance_on_a_2d_observation(
+    x64, mask_values
+):
+    mask = jnp.array(mask_values)
+    covariance_matrix = jnp.eye(4) + 0.2
+
+    def covariance_mv(vector):
+        flat = einx.id("a b -> (a b)", vector)
+        return einx.id("(a b) -> a b", covariance_matrix @ flat, a=2, b=2)
+
+    covariance = lx.FunctionLinearOperator(
+        covariance_mv,
+        jax.eval_shape(lambda: jnp.zeros((2, 2))),
+        lx.positive_semidefinite_tag,
+    )
+    spec = vdx.InstrumentSpec(vdx.MaskedIdentity(), mask, covariance, "a")
+    fusion = vdx.MultiInstrumentFusion(vdx.InstrumentRegistry(entries={"a": spec}))
+
+    cost = fusion.cost(jnp.zeros((2, 2)), {"a": jnp.ones((2, 2))})
+
+    # ½ rᵀ Σ̃_ε⁻¹ r, with Σ̃_ε = M Σ_ε M + (I − M)
+    flat_mask = einx.id("a b -> (a b)", mask)
+    masked_matrix = jnp.diag(flat_mask) @ covariance_matrix @ jnp.diag(
+        flat_mask
+    ) + jnp.diag(1.0 - flat_mask)
+    expected = 0.5 * flat_mask @ jnp.linalg.solve(masked_matrix, flat_mask)
+    assert jnp.allclose(cost, expected)
