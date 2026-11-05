@@ -66,6 +66,9 @@ class InstrumentSpec(eqx.Module):
 class InstrumentRegistry(eqx.Module):
     """Keyed lookup of ``InstrumentSpec`` by ``instrument_id``.
 
+    An empty registry means no observations: ``MultiInstrumentFusion.cost`` is zero, and
+    the flattened operator and its covariance have size 0.
+
     Attributes:
         entries: The ``InstrumentSpec`` of each instrument, by ``instrument_id``.
 
@@ -219,7 +222,7 @@ class MultiInstrumentFusion(eqx.Module):
         Returns:
             The scalar cost 𝒥_o.
         """
-        total = jnp.zeros(())
+        total = jnp.zeros((), dtype=x.dtype)
         for instrument_id, spec in self.registry.entries.items():
             observed = fill_gaps(observations[instrument_id], spec.mask)
             # hᵢ(x)
@@ -259,7 +262,7 @@ class MultiInstrumentFusion(eqx.Module):
             # BlockDiag needs at least one block
             return lx.FunctionLinearOperator(
                 lambda vector: vector,
-                jax.ShapeDtypeStruct((0,), jnp.float32),
+                jax.ShapeDtypeStruct((0,), jnp.result_type(float)),
                 lx.positive_semidefinite_tag,
             )
         # Σ_ε,i / αᵢ
@@ -326,6 +329,9 @@ class _FlattenedMultiInstrument(eqx.Module):
     def __call__(self, x: Float[Array, ...]) -> Float[Array, ...]:
         """Concatenate the flattened hᵢ(x) in sorted instrument order."""
         per_instrument = self.fusion(x)
+        if not per_instrument:
+            # jnp.concatenate needs at least one array
+            return jnp.zeros((0,), dtype=x.dtype)
         flat_per_instrument = [
             _flatten(per_instrument[key]) for key in sorted(per_instrument)
         ]
