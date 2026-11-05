@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.3.3](https://github.com/jejjohnson/vardax/compare/v0.3.2...v0.3.3) (2026-11-05)
+
+
+### Bug Fixes
+
+* **adapters:** add the documented vardax.adapters.pipekit_train module ([#263](https://github.com/jejjohnson/vardax/issues/263)) ([e0e9b3c](https://github.com/jejjohnson/vardax/commit/e0e9b3c2c2c9c8befe065f046b8391731beace53))
+* **models:** analyse a linear parameterization around the cycle's forecast ([#257](https://github.com/jejjohnson/vardax/issues/257)) ([b2d836b](https://github.com/jejjohnson/vardax/commit/b2d836b56fe71b846103074f3e41e0c23ff1e45a))
+* **models:** keep WeakFourDVar's model errors in the prior mean's dtype ([#259](https://github.com/jejjohnson/vardax/issues/259)) ([14e66ca](https://github.com/jejjohnson/vardax/commit/14e66caeee6006755d8ea9416c1b036b90d462d7))
+* **models:** raise InputTypeError when OptimalInterpolation gets a point batch ([#261](https://github.com/jejjohnson/vardax/issues/261)) ([837065e](https://github.com/jejjohnson/vardax/commit/837065e67f24c1f5a02bed13d0046040bd4a70bf))
+* **obs_operators:** give the flattened multi-instrument operator a working linearize ([#251](https://github.com/jejjohnson/vardax/issues/251)) ([9a56a7a](https://github.com/jejjohnson/vardax/commit/9a56a7ae36e7be11ba52999c06071f77192d77c5))
+* **obs_operators:** solve the fused cost on flat vectors ([#252](https://github.com/jejjohnson/vardax/issues/252)) ([5ff3e99](https://github.com/jejjohnson/vardax/commit/5ff3e99ff8370977e8b95249608b689a32ad90ce))
+* **obs_operators:** treat an empty instrument registry as no observations ([#254](https://github.com/jejjohnson/vardax/issues/254)) ([8440f52](https://github.com/jejjohnson/vardax/commit/8440f52bf69f033472119784927f92ebd5a9e02a))
+* reject unsupported interpolation methods ([#238](https://github.com/jejjohnson/vardax/issues/238)) ([dd93513](https://github.com/jejjohnson/vardax/commit/dd935133bfc9056e62116375aa428e33344f9073))
+
 ## [0.3.2](https://github.com/jejjohnson/vardax/compare/v0.3.1...v0.3.2) (2026-11-05)
 
 
