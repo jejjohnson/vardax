@@ -14,8 +14,8 @@ import jax
 from jaxtyping import Array, Float
 import lineax as lx
 
-from vardax._src._types import Batch1D
-from vardax._src.errors import ConfigurationError
+from vardax._src._types import Batch1D, PointObsBatch
+from vardax._src.errors import ConfigurationError, InputTypeError
 from vardax._src.models._analysis_step import analyse_forecast
 from vardax._src.models._observations import fill_gaps
 from vardax._src.models._rollout import accepts_mask
@@ -141,7 +141,15 @@ class OptimalInterpolation(eqx.Module):
 
         Returns:
             The analysis of every sample, with a leading batch axis.
+
+        Raises:
+            InputTypeError: For a ``PointObsBatch``, which only the variational models
+                take.
         """
+        if isinstance(batch, PointObsBatch):
+            raise InputTypeError(
+                "OptimalInterpolation takes a gridded Batch1D; got a PointObsBatch."
+            )
 
         def analyse_sample(
             sample_obs: Float[Array, "*obs"], sample_mask: Float[Array, "*obs"]
