@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.2](https://github.com/jejjohnson/vardax/compare/v0.3.1...v0.3.2) (2026-11-05)
+
+
+### Bug Fixes
+
+* **deps:** pin gaussx 0.6.7 and drop the reverse-mode Hessian workaround ([#222](https://github.com/jejjohnson/vardax/issues/222)) ([be7d476](https://github.com/jejjohnson/vardax/commit/be7d4767c0b08c62181f334898c6507d0eb992a7))
+
 ## [0.3.1](https://github.com/jejjohnson/vardax/compare/v0.3.0...v0.3.1) (2026-11-04)
 
 
