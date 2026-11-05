@@ -15,40 +15,42 @@ for when the regime allows it (Decision D16).
 
 The prior is
 
-$$p(x) = \mathcal{N}(x; x_b, B), \text{ with } x \in \mathbb{R}^n$$ (eq-oi-prior)
+$$p(\vect{x}) = \mathcal{N}(\vect{x}; \gvect{\mu}_x, \gmat{\Sigma}_x), \text{ with } \vect{x} \in \mathbb{R}^{D_x}$$ (eq-oi-prior)
 
-where $x_b$ is the background mean and $B$ the background-error covariance. The likelihood is the observation model [](#eq-obs-model) with a linear $H$,
+where $\gvect{\mu}_x$ is the background mean and $\gmat{\Sigma}_x$ the background-error covariance. The likelihood is the observation model [](#eq-obs-model) with a linear $\mat{H}$,
 
-$$p(y \mid x) = \mathcal{N}(y; H x, R), \text{ with } H \in \mathbb{R}^{m \times n}$$ (eq-oi-likelihood)
+$$p(\vect{y} \mid \vect{x}) = \mathcal{N}(\vect{y}; \mat{H} \vect{x}, \gmat{\Sigma}_\varepsilon), \text{ with } \vect{y} \in \mathbb{R}^{D_y} \text{ and } \mat{H} \in \mathbb{R}^{D_y \times D_x}$$ (eq-oi-likelihood)
 
-where $R$ is the observation-error covariance. By the standard Gaussian conjugacy result, the posterior is
+where $\gmat{\Sigma}_\varepsilon$ is the observation-error covariance. By the standard Gaussian conjugacy result, the posterior is
 
-$$p(x \mid y) = \mathcal{N}(x; x^*, P^*)$$ (eq-oi-posterior)
+$$p(\vect{x} \mid \vect{y}) = \mathcal{N}(\vect{x}; \vect{x}^\star, \gmat{\Sigma}_{x \mid y})$$ (eq-oi-posterior)
 
 with mean
 
-$$x^* = x_b + K(y - H x_b), \text{ with } K = B H^\top (H B H^\top + R)^{-1}$$ (eq-blue-mean)
+$$\vect{x}^\star = \gvect{\mu}_x + \mat{G}(\vect{y} - \mat{H} \gvect{\mu}_x), \text{ with } \mat{G} = \gmat{\Sigma}_x \mat{H}^\top (\mat{H} \gmat{\Sigma}_x \mat{H}^\top + \gmat{\Sigma}_\varepsilon)^{-1}$$ (eq-blue-mean)
 
-where $K$ is the Kalman gain and $y - H x_b$ the innovation, and covariance
+where $\mat{G}$ is the Kalman gain and $\vect{y} - \mat{H} \gvect{\mu}_x$ the innovation, and covariance
 
-$$P^* = (I - K H) B = (B^{-1} + H^\top R^{-1} H)^{-1}$$ (eq-blue-cov)
+$$\gmat{\Sigma}_{x \mid y} = (\mat{I} - \mat{G} \mat{H}) \gmat{\Sigma}_x = (\gmat{\Sigma}_x^{-1} + \mat{H}^\top \gmat{\Sigma}_\varepsilon^{-1} \mat{H})^{-1}$$ (eq-blue-cov)
 
-The two forms of $P^*$ are equivalent by Sherman-Morrison-Woodbury, and which one to compute depends on which is cheaper.
+The shapes are $\vect{x}, \gvect{\mu}_x, \vect{x}^\star \in \mathbb{R}^{D_x}$, $\vect{y} \in \mathbb{R}^{D_y}$, $\gmat{\Sigma}_x, \gmat{\Sigma}_{x \mid y} \in \mathbb{R}^{D_x \times D_x}$, $\gmat{\Sigma}_\varepsilon \in \mathbb{R}^{D_y \times D_y}$ and $\mat{G} \in \mathbb{R}^{D_x \times D_y}$.
+
+The two forms of $\gmat{\Sigma}_{x \mid y}$ are equivalent by Sherman-Morrison-Woodbury, and which one to compute depends on which is cheaper.
 
 ## Two equivalent expressions, two computations
 
-The Kalman gain in [](#eq-blue-mean) requires inverting an $m \times m$ matrix (observation-space form). The second form of [](#eq-blue-cov) instead inverts the posterior precision $B^{-1} + H^\top R^{-1} H$, an $n \times n$ matrix (state-space form).
+The Kalman gain in [](#eq-blue-mean) requires inverting a $D_y \times D_y$ matrix (observation-space form). The second form of [](#eq-blue-cov) instead inverts the posterior precision $\gmat{\Sigma}_x^{-1} + \mat{H}^\top \gmat{\Sigma}_\varepsilon^{-1} \mat{H}$, a $D_x \times D_x$ matrix (state-space form).
 
 Pick the form whose matrix is smaller:
 
 | Regime | Form | Inversion size |
 |---|---|---|
-| $m \ll n$ (sparse observations) | Kalman gain $K$ of [](#eq-blue-mean) | $m \times m$ |
-| $m \gg n$ (dense observations) | precision $(P^*)^{-1}$ of [](#eq-blue-cov) | $n \times n$ |
+| $D_y \ll D_x$ (sparse observations) | Kalman gain $\mat{G}$ of [](#eq-blue-mean) | $D_y \times D_y$ |
+| $D_y \gg D_x$ (dense observations) | precision $\gmat{\Sigma}_{x \mid y}^{-1}$ of [](#eq-blue-cov) | $D_x \times D_x$ |
 
-For SSH altimetry with sparse along-track samples and a 2D grid, $m \ll n$ and the observation-space form wins. For a satellite imager with one observation per state cell, $m \approx n$ and either works.
+For SSH altimetry with sparse along-track samples and a 2D grid, $D_y \ll D_x$ and the observation-space form wins. For a satellite imager with one observation per state cell, $D_y \approx D_x$ and either works.
 
-`OptimalInterpolation` solves the observation-space system $(H B H^\top + R) v = y - H x_b$ by default, and the state-space system $(B^{-1} + H^\top R^{-1} H) \delta x = H^\top R^{-1} (y - H x_b)$ with `form="state"`. The block below fuses $m = 2000$ pixels into $n = 3$ unknowns and prints `True`: both forms give the same analysis.
+`OptimalInterpolation` solves the observation-space system $(\mat{H} \gmat{\Sigma}_x \mat{H}^\top + \gmat{\Sigma}_\varepsilon) \vect{v} = \vect{y} - \mat{H} \gvect{\mu}_x$ by default, and the state-space system $(\gmat{\Sigma}_x^{-1} + \mat{H}^\top \gmat{\Sigma}_\varepsilon^{-1} \mat{H}) \delta\vect{x} = \mat{H}^\top \gmat{\Sigma}_\varepsilon^{-1} (\vect{y} - \mat{H} \gvect{\mu}_x)$ with `form="state"`. The block below fuses $D_y = 2000$ pixels into $D_x = 3$ unknowns and prints `True`: both forms give the same analysis.
 
 ```{code-block} python
 :caption: Solves one BLUE in the observation-space and the state-space form and checks they agree.
@@ -57,29 +59,29 @@ import jax.numpy as jnp
 import lineax as lx
 import vardax as vdx
 
-# Shapes: n = 3 unknowns; m = 2000 pixels
+# Shapes: S = 1 sample; D_x = 3 unknowns; D_y = 2000 pixels
 
 jax.config.update("jax_enable_x64", True)
 key_design, key_obs = jax.random.split(jax.random.PRNGKey(0))
 # H, a dense design
-design = jax.random.normal(key_design, (2000, 3))  # (M, N)
+design = jax.random.normal(key_design, (2000, 3))  # (D_y, D_x)
 # y ~ 𝒩(0, I)
-pixels = jax.random.normal(key_obs, (1, 2000))  # (S, M)
+pixels = jax.random.normal(key_obs, (1, 2000))  # (S, D_y)
 analyses = {}
 for form in ("observation", "state"):
     # today (vardax)
     oi = vdx.OptimalInterpolation(
         obs_op=vdx.LinearObs(operator=lx.MatrixLinearOperator(design)),
         prior_mean=jnp.zeros(3),
-        # B = I
+        # Σ_x = I
         prior_cov_op=lx.IdentityLinearOperator(jax.ShapeDtypeStruct((3,), jnp.float64)),
-        # R = 10⁻² I
+        # Σ_ε = 10⁻² I
         obs_cov_op=lx.DiagonalLinearOperator(jnp.full(2000, 1e-2)),
         solver=lx.Cholesky(),
         form=form,
     )
-    # x* = x_b + δx
-    analyses[form] = oi(vdx.Batch1D(input=pixels, mask=jnp.ones_like(pixels)))  # (S, M) → (S, N)
+    # x⋆ = μ_x + δx
+    analyses[form] = oi(vdx.Batch1D(input=pixels, mask=jnp.ones_like(pixels)))  # (S, D_y) → (S, D_x)
 print(bool(jnp.allclose(analyses["observation"], analyses["state"], rtol=1e-8)))
 ```
 
@@ -90,15 +92,15 @@ The observation-space solve factors a $2000 \times 2000$ matrix here, the state-
 Both forms require solving a linear system, not inverting a matrix
 explicitly. `kernellib` and `gaussx` supply structured operators:
 
-- $B$ as a Matérn covariance: `kernellib.ImplicitKernelOperator(matern, coords)` applies it matrix-free with $O(N)$ memory, and `gaussx.Kronecker` exploits separable grids. Both can be passed to a vardax model directly when the state is a single $(N,)$ vector; for a $(T, N)$ state, wrap the mat-vec as `lx.FunctionLinearOperator(apply, structure, lx.positive_semidefinite_tag)`, as the example below does.
-- $R$ as `lineax.DiagonalLinearOperator(variances)`, which is diagonal and trivial.
-- $H B H^\top$ is never materialised; only $v \mapsto H B H^\top v$ is needed, which is one mat-vec each with $H^\top$, $B$ and $H$.
+- $\gmat{\Sigma}_x$ as a Matérn covariance: `kernellib.ImplicitKernelOperator(matern, coords)` applies it matrix-free with $O(D_x)$ memory, and `gaussx.Kronecker` exploits separable grids. Both can be passed to a vardax model directly when the state is a single $(D_x,)$ vector; for a $(T + 1, D_x)$ state, wrap the mat-vec as `lx.FunctionLinearOperator(apply, structure, lx.positive_semidefinite_tag)`, as the example below does.
+- $\gmat{\Sigma}_\varepsilon$ as `lineax.DiagonalLinearOperator(variances)`, which is diagonal and trivial.
+- $\mat{H} \gmat{\Sigma}_x \mat{H}^\top$ is never materialised; only $\vect{v} \mapsto \mat{H} \gmat{\Sigma}_x \mat{H}^\top \vect{v}$ is needed, which is one mat-vec each with $\mat{H}^\top$, $\gmat{\Sigma}_x$ and $\mat{H}$.
 
-The innovation system $(H B H^\top + R) v = y - H x_b$ is then solved by `lineax.CG`, returning $v$ in $O(k \cdot m)$ time where $k$ is the CG iteration count (typically tens). The analysis [](#eq-blue-mean) is then $x^* = x_b + B H^\top v$, one more mat-vec.
+The innovation system $(\mat{H} \gmat{\Sigma}_x \mat{H}^\top + \gmat{\Sigma}_\varepsilon) \vect{v} = \vect{y} - \mat{H} \gvect{\mu}_x$ is then solved by `lineax.CG`, returning $\vect{v} \in \mathbb{R}^{D_y}$ in $O(N_\text{iter} \cdot D_y)$ time where $N_\text{iter}$ is the CG iteration count (typically tens). The analysis [](#eq-blue-mean) is then $\vect{x}^\star = \gvect{\mu}_x + \gmat{\Sigma}_x \mat{H}^\top \vect{v}$, one more mat-vec.
 
 CG runs at a fixed tolerance with a step cap, so its analysis is
-approximate, and an ill-conditioned $H B H^\top + R$ (small $R$, smooth
-$B$) can exhaust the cap. When the innovation system is small enough to
+approximate, and an ill-conditioned $\mat{H} \gmat{\Sigma}_x \mat{H}^\top + \gmat{\Sigma}_\varepsilon$ (small $\gmat{\Sigma}_\varepsilon$, smooth
+$\gmat{\Sigma}_x$) can exhaust the cap. When the innovation system is small enough to
 factor, pass a direct solver instead:
 `OptimalInterpolation(..., solver=lx.Cholesky())` (or
 `lx.AutoLinearSolver(well_posed=True)`) gives the BLUE to machine
@@ -107,14 +109,14 @@ covariance.
 
 A full OI on a 2D Matérn prior with 50,000 grid cells and 5,000
 observations takes seconds on a single GPU. No materialised matrices,
-no $O(n^3)$ factorisations.
+no $O(D_x^3)$ factorisations.
 
 ## Implementation in vardax
 
-The example is a toy along-track problem: $N = 20$ cells every 10 km on one track, $M = 5$ samples, a Matérn-3/2 prior $B$ with length scale $\ell = 50$ km and standard deviation $\sigma_b = 0.1$ m around a zero climatology, and $R = \sigma_o^2 I$ with $\sigma_o = 0.02$ m. The truth is a smooth sine wave and the observations add noise to it. The state has shape $(T, N)$ with $T = 1$, as `posterior` expects.
+The example is a toy along-track problem: $D_x = 20$ cells every 10 km on one track, $D_y = 5$ samples, a Matérn-3/2 prior $\gmat{\Sigma}_x$ with length scale $\ell = 50$ km and standard deviation $\sigma_x = 0.1$ m around a zero climatology, and $\gmat{\Sigma}_\varepsilon = \sigma_\varepsilon^2 \mat{I}$ with $\sigma_\varepsilon = 0.02$ m. The truth is a smooth sine wave and the observations add noise to it. The window has $T = 0$ steps, so the state has shape $(T + 1, D_x) = (1, D_x)$, as `posterior` expects.
 
 ```{code-block} python
-:caption: Computes the OI analysis [](#eq-blue-mean) and posterior covariance [](#eq-blue-cov) of a toy along-track problem and reads two marginal standard deviations off P*.
+:caption: Computes the OI analysis [](#eq-blue-mean) and posterior covariance [](#eq-blue-cov) of a toy along-track problem and reads two marginal standard deviations off Σ_x|y.
 :label: code-oi-blue-along-track
 import einx
 import jax
@@ -124,11 +126,11 @@ import lineax as lx
 import vardax as vdx
 from jaxtyping import Array, Float
 
-# Shapes: S = 1 sample; T = 1 time; N = 20 grid cells; M = 5 along-track samples
-# D = 1 coordinate
+# Shapes: S = 1 sample; T = 0 steps, so T + 1 = 1 time; D_x = 20 grid cells;
+# D_y = 5 along-track samples; D_s = 1 coordinate
 
 key_noise = jax.random.PRNGKey(0)
-# ℓ = 50 km, σ_b = 0.1 m, σ_o = 0.02 m
+# ℓ = 50 km, σ_x = 0.1 m, σ_ε = 0.02 m
 length_scale, prior_std, obs_std = 50.0, 0.1, 0.02
 state_structure = jax.ShapeDtypeStruct((1, 20), jnp.float32)
 
@@ -136,63 +138,63 @@ state_structure = jax.ShapeDtypeStruct((1, 20), jnp.float32)
 # user
 def matern32(cell: Float[Array, " d"], other: Float[Array, " d"]) -> Float[Array, ""]:
     # (sᵢ − sⱼ)²
-    squared_difference = (cell - other) ** 2  # (D,)
+    squared_difference = (cell - other) ** 2  # (D_s,)
     # ‖sᵢ − sⱼ‖², with a floor so the gradient at r = 0 is finite
     squared_gap = einx.sum("d -> ", squared_difference) + 1e-12  # → ()
     # √3 r, with r = ‖sᵢ − sⱼ‖ / ℓ
     scaled_gap = jnp.sqrt(3.0 * squared_gap) / length_scale  # → ()
-    # k(r) = σ_b² (1 + √3 r) exp(−√3 r)
+    # k(r) = σ_x² (1 + √3 r) exp(−√3 r)
     return prior_std**2 * (1.0 + scaled_gap) * jnp.exp(-scaled_gap)  # → ()
 
 
 # user
 def sample_track(state: Float[Array, "t n"]) -> Float[Array, "t m"]:
     # H x, the cells under the along-track samples
-    return einx.dot("t n, m n -> t m", state, along_track)  # (T, M)
+    return einx.dot("t n, m n -> t m", state, along_track)  # (T + 1, D_y)
 
 
 # user
 def apply_prior_cov(state: Float[Array, "t n"]) -> Float[Array, "t n"]:
-    # B xₜ at each time
-    return jax.vmap(kernel_op.mv)(state)  # (T, N)
+    # Σ_x xₜ at each time
+    return jax.vmap(kernel_op.mv)(state)  # (T + 1, D_x)
 
 
 # sᵢ, cell centres every 10 km along one track
-positions = jnp.linspace(0.0, 190.0, 20)  # (N,)
-coords = einx.id("n -> n 1", positions)  # (N,) → (N, D)
+positions = jnp.linspace(0.0, 190.0, 20)  # (D_x,)
+coords = einx.id("n -> n 1", positions)  # (D_x,) → (D_x, D_s)
 # rows of I at the sampled cells
-along_track = jnp.eye(20)[jnp.array([1, 5, 9, 13, 17])]  # (M, N)
+along_track = jnp.eye(20)[jnp.array([1, 5, 9, 13, 17])]  # (D_y, D_x)
 
-# today (kernellib)
-# B = [k(sᵢ, sⱼ)]ᵢⱼ, never materialised
-kernel_op = kl.ImplicitKernelOperator(matern32, coords)  # (N, N) op
+# not pinned (kernellib)
+# Σ_x = [k(sᵢ, sⱼ)]ᵢⱼ, never materialised
+kernel_op = kl.ImplicitKernelOperator(matern32, coords)  # (D_x, D_x) op
 # today (lineax)
-# B on (T, N) states, applied at each time
-prior_cov = lx.FunctionLinearOperator(  # (T N, T N) PSD op
+# Σ_x on (T + 1, D_x) states, applied at each time
+prior_cov = lx.FunctionLinearOperator(  # ((T + 1) D_x, (T + 1) D_x) PSD op
     apply_prior_cov, state_structure, lx.positive_semidefinite_tag
 )
 # today (lineax)
-along_track_op = lx.FunctionLinearOperator(  # (T M, T N) op
+along_track_op = lx.FunctionLinearOperator(  # ((T + 1) D_y, (T + 1) D_x) op
     sample_track, state_structure
 )
-# σ_o², one per sample
-obs_var = jnp.full((1, 5), obs_std**2)  # (T, M)
+# σ_ε², one per sample
+obs_var = jnp.full((1, 5), obs_std**2)  # (T + 1, D_y)
 # today (lineax)
-# R = σ_o² I
-obs_cov = lx.DiagonalLinearOperator(obs_var)  # (T M, T M) op
+# Σ_ε = σ_ε² I
+obs_cov = lx.DiagonalLinearOperator(obs_var)  # ((T + 1) D_y, (T + 1) D_y) op
 
-# x_b = 0, a climatology
-climatology_ssh = jnp.zeros((1, 20))  # (T, N)
+# μ_x = 0, a climatology
+climatology_ssh = jnp.zeros((1, 20))  # (T + 1, D_x)
 # sᵢ laid out as a state
-track_position = einx.id("n 1 -> 1 n", coords)  # (N, 1) → (T, N)
-# x_true(s) = σ_b sin(2π s / 200 km), a smooth truth
-truth = prior_std * jnp.sin(2.0 * jnp.pi * track_position / 200.0)  # (T, N)
-# y = H x_true + σ_o ε, ε ~ 𝒩(0, I)
-noise = obs_std * jax.random.normal(key_noise, (1, 5))  # (T, M)
+track_position = einx.id("n 1 -> 1 n", coords)  # (D_x, D_s) → (T + 1, D_x)
+# x_true(s) = σ_x sin(2π s / 200 km), a smooth truth
+truth = prior_std * jnp.sin(2.0 * jnp.pi * track_position / 200.0)  # (T + 1, D_x)
+# y = H x_true + σ_ε ε, ε ~ 𝒩(0, I)
+noise = obs_std * jax.random.normal(key_noise, (1, 5))  # (T + 1, D_y)
 # user
 # H x_true
-track_truth = sample_track(truth)  # (T, N) → (T, M)
-obs = track_truth + noise  # (T, M)
+track_truth = sample_track(truth)  # (T + 1, D_x) → (T + 1, D_y)
+obs = track_truth + noise  # (T + 1, D_y)
 
 # today (vardax)
 # H x, a linear observation operator
@@ -207,57 +209,58 @@ model = vdx.OptimalInterpolation(
 )
 # today (vardax)
 batch = vdx.Batch1D(
-    input=einx.id("t m -> 1 t m", obs),  # (T, M) → (S, T, M)
+    input=einx.id("t m -> 1 t m", obs),  # (T + 1, D_y) → (S, T + 1, D_y)
     mask=jnp.ones((1, 1, 5)),
 )
-# x* = x_b + B Hᵀ (H B Hᵀ + R)⁻¹ (y − H x_b), one pass, no iteration
-x_star = model(batch)  # → (S, T, N)
+# x⋆ = μ_x + Σ_x Hᵀ (H Σ_x Hᵀ + Σ_ε)⁻¹ (y − H μ_x), one pass, no iteration
+x_star = model(batch)  # → (S, T + 1, D_x)
 
 # today (vardax)
-# P* = (B⁻¹ + Hᵀ R⁻¹ H)⁻¹, a lazy operator
+# Σ_x|y = (Σ_x⁻¹ + Hᵀ Σ_ε⁻¹ H)⁻¹, a lazy operator
 posterior = model.posterior(batch)
 # eᵢ at an observed cell (i = 1) and between samples (i = 3)
-observed_cell = jnp.eye(20)[jnp.array([1])]  # (T, N)
-gap_cell = jnp.eye(20)[jnp.array([3])]  # (T, N)
-# P* eᵢ, one matrix-free product each
-observed_column = posterior.cov.mv(observed_cell)  # (T, N) → (T, N)
-gap_column = posterior.cov.mv(gap_cell)  # (T, N) → (T, N)
-# σᵢ² = eᵢᵀ P* eᵢ
+observed_cell = jnp.eye(20)[jnp.array([1])]  # (T + 1, D_x)
+gap_cell = jnp.eye(20)[jnp.array([3])]  # (T + 1, D_x)
+# Σ_x|y eᵢ, one matrix-free product each
+observed_column = posterior.cov.mv(observed_cell)  # (T + 1, D_x) → (T + 1, D_x)
+gap_column = posterior.cov.mv(gap_cell)  # (T + 1, D_x) → (T + 1, D_x)
+# [Σ_x|y]ᵢᵢ = eᵢᵀ Σ_x|y eᵢ
 observed_var = einx.dot("t n, t n ->", observed_cell, observed_column)  # → ()
 gap_var = einx.dot("t n, t n ->", gap_cell, gap_column)  # → ()
 
-# ‖x_b − x_true‖
+# ‖μ_x − x_true‖
 background_error = jnp.linalg.norm(climatology_ssh - truth)  # → ()
-# ‖x* − x_true‖
+# ‖x⋆ − x_true‖
 analysis_error = jnp.linalg.norm(x_star[0] - truth)  # → ()
 print(f"background error {background_error:.3f}, analysis error {analysis_error:.3f}")
 print(f"posterior std {observed_var**0.5:.3f} observed, {gap_var**0.5:.3f} in a gap")
 ```
 
-It prints `background error 0.316, analysis error 0.095` and `posterior std 0.019 observed, 0.035 in a gap`. The Cholesky solver makes the analysis and the posterior exact; the posterior solves the same innovation system as the analysis and never applies $B^{-1}$.
+It prints `background error 0.316, analysis error 0.095` and `posterior std 0.019 observed, 0.035 in a gap`. The Cholesky solver makes the analysis and the posterior exact; the posterior solves the same innovation system as the analysis and never applies $\gmat{\Sigma}_x^{-1}$.
 
-The `posterior.cov` is an `AbstractLinearOperator` representing $P^*$.
-Sampling from the posterior is a mat-vec in $(P^*)^{1/2}$; the diagonal
-of $P^*$ (marginal variances) is one more mat-vec family. Nothing is
+The `posterior.cov` is an `AbstractLinearOperator` representing $\gmat{\Sigma}_{x \mid y}$.
+Sampling from the posterior is a mat-vec in $\gmat{\Sigma}_{x \mid y}^{1/2}$; the diagonal
+of $\gmat{\Sigma}_{x \mid y}$ (marginal variances) is one more mat-vec family. Nothing is
 ever materialised.
 
 ## Validation
 
 `OptimalInterpolation` is the canonical baseline. Every more
 sophisticated method must agree with it in the linear-Gaussian limit
-(Decision D14 invariant). `tests/test_linear_gaussian_agreement.py` enforces this for `ThreeDVar`, `StrongFourDVar`, `WeakFourDVar` and `IncrementalFourDVar`. The block below checks the first two against the BLUE, with $M_t$ the identity and a single time for `StrongFourDVar`. It prints `True` twice. Both use a direct `cov_solver` and 500 minimiser steps, because the smooth prior makes $B^{-1}$ ill-conditioned and BFGS needs about 260 steps here.
+(Decision D14 invariant). `tests/test_linear_gaussian_agreement.py` enforces this for `ThreeDVar`, `StrongFourDVar`, `WeakFourDVar` and `IncrementalFourDVar`. The block below checks the first two against the BLUE, with $f$ the identity and a single time for `StrongFourDVar`. It prints `True` twice. Both use a direct `cov_solver` and 500 minimiser steps, because the smooth prior makes $\gmat{\Sigma}_x^{-1}$ ill-conditioned and BFGS needs about 260 steps here.
 
 ```{code-block} python
 :caption: Checks that ThreeDVar minimising [](#eq-3dvar-cost) and StrongFourDVar minimising [](#eq-strong4dvar-cost) both reach the BLUE [](#eq-blue-mean).
 :label: code-oi-blue-agreement
 import equinox as eqx
 
-# Shapes: S = 1 sample; T = 1 time; N = 20 grid cells; M = 5 along-track samples
+# Shapes: S = 1 sample; T = 0 steps, so T + 1 = 1 time; D_x = 20 grid cells;
+# D_y = 5 along-track samples
 
 
 # user
 class StaticForward(eqx.Module):
-    """Trivial dynamics, Mₜ(x) = x: a one-time window is the 3D problem."""
+    """Trivial dynamics, f(x) = x: a one-time window is the 3D problem."""
 
     dt: float = 1.0
 
@@ -266,7 +269,7 @@ class StaticForward(eqx.Module):
 
 
 # today (vardax)
-# J(x) = ½ ‖x − x_b‖²_{B⁻¹} + ½ ‖y − H x‖²_{R⁻¹}, minimised iteratively
+# 𝒥(x) = ½ ‖x − μ_x‖²_Σ_x⁻¹ + ½ ‖y − H x‖²_Σ_ε⁻¹, minimised iteratively
 three_dvar = vdx.ThreeDVar(
     obs_op=model.obs_op,
     prior_mean=climatology_ssh,
@@ -275,25 +278,26 @@ three_dvar = vdx.ThreeDVar(
     cov_solver=lx.AutoLinearSolver(well_posed=True),
     max_steps=500,
 )
-# StrongFourDVar steps (N,) states, so B, H and R act on one time
+# StrongFourDVar steps (D_x,) states, so Σ_x, H and Σ_ε act on one time
 cell_structure = jax.ShapeDtypeStruct((20,), jnp.float32)
+# not pinned (kernellib)
 # today (lineax)
-# B on (N,) states
-cell_cov = lx.FunctionLinearOperator(  # (N, N) PSD op
+# Σ_x on (D_x,) states, applied by the kernellib operator's mv
+cell_cov = lx.FunctionLinearOperator(  # (D_x, D_x) PSD op
     kernel_op.mv, cell_structure, lx.positive_semidefinite_tag
 )
 # today (lineax)
-along_track_matrix = lx.MatrixLinearOperator(along_track)  # (M, N) op
+along_track_matrix = lx.MatrixLinearOperator(along_track)  # (D_y, D_x) op
 # today (vardax)
-# H x on (N,) states
+# H x on (D_x,) states
 cell_obs = vdx.LinearObs(operator=along_track_matrix)
-# σ_o², one per sample
-cell_obs_var = jnp.full(5, obs_std**2)  # (M,)
+# σ_ε², one per sample
+cell_obs_var = jnp.full(5, obs_std**2)  # (D_y,)
 # today (lineax)
-# R = σ_o² I on (M,) observations
-cell_obs_cov = lx.DiagonalLinearOperator(cell_obs_var)  # (M, M) op
+# Σ_ε = σ_ε² I on (D_y,) observations
+cell_obs_cov = lx.DiagonalLinearOperator(cell_obs_var)  # (D_y, D_y) op
 # today (vardax)
-# J(x₀) = ½ ‖x₀ − x_b‖²_{B⁻¹} + ½ ‖y − H x₀‖²_{R⁻¹}, with M₀ = I
+# 𝒥(x₀) = ½ ‖x₀ − μ_x‖²_Σ_x⁻¹ + ½ ‖y − H x₀‖²_Σ_ε⁻¹, with f = I
 strong_4dvar = vdx.StrongFourDVar(
     forward=StaticForward(),
     obs_op=cell_obs,
@@ -303,10 +307,10 @@ strong_4dvar = vdx.StrongFourDVar(
     cov_solver=lx.AutoLinearSolver(well_posed=True),
     max_steps=500,
 )
-# x* = argminₓ J(x), by 3DVar
-iterative_3d = three_dvar(batch)  # → (S, T, N)
-# x₀* = argmin J(x₀), by strong 4DVar
-iterative_4d = strong_4dvar(batch)  # → (S, N)
+# x⋆ = argminₓ 𝒥(x), by 3DVar
+iterative_3d = three_dvar(batch)  # → (S, T + 1, D_x)
+# x₀⋆ = argmin 𝒥(x₀), by strong 4DVar
+iterative_4d = strong_4dvar(batch)  # → (S, D_x)
 
 print(bool(jnp.allclose(x_star, iterative_3d, atol=1e-3)))
 print(bool(jnp.allclose(x_star[:, 0], iterative_4d, atol=1e-3)))
@@ -319,12 +323,12 @@ something is wrong. The agreement is the definition of correctness.
 
 The Kalman filter analysis step is OI applied at each cycle,
 
-$$\begin{aligned} \text{forecast: } & x^f_t = M_t x^a_{t-1}, \text{ and } P^f_t = M_t P^a_{t-1} M_t^\top + Q \\ \text{analysis: } & K_t = P^f_t H^\top (H P^f_t H^\top + R)^{-1} \\ & x^a_t = x^f_t + K_t (y_t - H x^f_t) \\ & P^a_t = (I - K_t H) P^f_t \end{aligned}$$ (eq-kalman-filter)
+$$\begin{aligned} \text{forecast: } & \vect{x}_{t \mid t-1} = \mat{F}_t \vect{x}_{t-1 \mid t-1}, \text{ and } \gmat{\Sigma}_{x,t \mid t-1} = \mat{F}_t \gmat{\Sigma}_{x,t-1 \mid t-1} \mat{F}_t^\top + \gmat{\Sigma}_\eta \\ \text{analysis: } & \mat{G}_t = \gmat{\Sigma}_{x,t \mid t-1} \mat{H}^\top (\mat{H} \gmat{\Sigma}_{x,t \mid t-1} \mat{H}^\top + \gmat{\Sigma}_\varepsilon)^{-1} \\ & \vect{x}_{t \mid t} = \vect{x}_{t \mid t-1} + \mat{G}_t (\vect{y}_t - \mat{H} \vect{x}_{t \mid t-1}) \\ & \gmat{\Sigma}_{x,t \mid t} = (\mat{I} - \mat{G}_t \mat{H}) \gmat{\Sigma}_{x,t \mid t-1} \end{aligned}$$ (eq-kalman-filter)
 
-where $x^f_t$ and $P^f_t$ are the forecast mean and covariance, $x^a_t$ and $P^a_t$ the analysis mean and covariance, $M_t$ the linear dynamics and $Q$ the model-error covariance. The analysis lines are [](#eq-blue-mean) and the first form of [](#eq-blue-cov).
+where $\vect{x}_{t \mid t-1} \in \mathbb{R}^{D_x}$ and $\gmat{\Sigma}_{x,t \mid t-1} \in \mathbb{R}^{D_x \times D_x}$ are the forecast mean and covariance, $\vect{x}_{t \mid t}$ and $\gmat{\Sigma}_{x,t \mid t}$ the analysis mean and covariance, $\mat{F}_t \in \mathbb{R}^{D_x \times D_x}$ the linear dynamics, $\gmat{\Sigma}_\eta \in \mathbb{R}^{D_x \times D_x}$ the model-error covariance and $\mat{G}_t \in \mathbb{R}^{D_x \times D_y}$ the gain. The analysis lines are [](#eq-blue-mean) and the first form of [](#eq-blue-cov).
 
-The analysis step is exactly `OptimalInterpolation(prior_mean=x^f_t,
-prior_cov_op=P^f_t, obs_cov_op=R, obs_op=H)`. The forecast step lives
+The analysis step is exactly `OptimalInterpolation` with `prior_mean` set to $\vect{x}_{t \mid t-1}$,
+`prior_cov_op` to $\gmat{\Sigma}_{x,t \mid t-1}$, `obs_cov_op` to $\gmat{\Sigma}_\varepsilon$ and `obs_op` to $\mat{H}$. The forecast step lives
 in `filterax` (it's about propagating uncertainty through dynamics, not
 about inference per se).
 
@@ -339,27 +343,27 @@ For a linear-Gaussian state-space model, `filterax.KalmanSmoother` runs the whol
 
 Use `OptimalInterpolation` when **all** of:
 
-- $H$ is linear (or the linearisation around $x_b$ is good enough that
+- $h$ is linear (or the linearisation around $\gvect{\mu}_x$ is good enough that
   the residual nonlinearity is dominated by observation noise)
-- $B$ and $R$ are Gaussian
+- $\gmat{\Sigma}_x$ and $\gmat{\Sigma}_\varepsilon$ are Gaussian
 - The posterior is unimodal (no symmetry-breaking, no bistable
   regimes)
 - A single timestep (no dynamics) or the dynamics are linear
 
 If any fails:
 
-- Nonlinear $H$ → `ThreeDVar` (chapter 5)
+- Nonlinear $h$ → `ThreeDVar` (chapter 5)
 - Dynamics → `StrongFourDVar` / `IncrementalFourDVar` (chapters 6, 8)
 - Non-Gaussian likelihood → `AmortizedPosterior` with score head (chapter 10)
 - Multimodal posterior → ensemble methods via `filterax`
 
-`OptimalInterpolation` does not check that `obs_op` is linear: it linearises a nonlinear operator at $x_b$ and returns a single extended-Kalman update, so a nonlinear $H$ belongs in `ThreeDVar`.
+`OptimalInterpolation` does not check that `obs_op` is linear: it linearises a nonlinear operator at $\gvect{\mu}_x$ and returns a single extended-Kalman update, so a nonlinear $h$ belongs in `ThreeDVar`.
 
 ## See also
 
-- Chapter 2: the observation model (the linear $H$ assumption)
+- Chapter 2: the observation model (the linear $\mat{H}$ assumption)
 - Chapter 5: `ThreeDVar` (the nonlinear extension)
-- Chapter 13: posterior covariance (the closed-form $P^*$ is the simplest case)
+- Chapter 13: posterior covariance (the closed-form $\gmat{\Sigma}_{x \mid y}$ is the simplest case)
 - Design doc: [`design/decisions.md#d16`](design/decisions.md#d16-blue-oi-as-a-first-class-method)
 
 ## References
