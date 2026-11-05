@@ -633,3 +633,17 @@ def test_scattered_time_points_match_grid_batch(which):
             (xg, eta_g), (xp, eta_p) = xg, xp
             assert jnp.allclose(eta_g[0], eta_p, atol=1e-5)
         assert jnp.allclose(xg[0], xp, atol=1e-5)
+
+
+@pytest.mark.unchecked_types
+def test_optimal_interpolation_rejects_a_point_batch():
+    identity = lx.IdentityLinearOperator(jax.eval_shape(lambda: jnp.zeros(3)))
+    oi = OptimalInterpolation(
+        obs_op=vdx.MaskedIdentity(),
+        prior_mean=jnp.zeros(3),
+        prior_cov_op=identity,
+        obs_cov_op=identity,
+    )
+    points = _batch(jnp.zeros((2, 1)), jnp.zeros(2))
+    with pytest.raises(vdx.InputTypeError, match="gridded Batch1D"):
+        oi(points)
