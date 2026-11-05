@@ -1,12 +1,7 @@
-"""Shared plumbing for the ``AnalysisStep`` adapters.
+"""Shared plumbing for the ``AnalysisStep`` adapters, which analyse around the forecast.
 
-``pipekit_cycle.AnalysisStep`` hands an adapter the forecast $x_b$, the
-observations $y$, the observation operator $H$ and the observation-error
-covariance $R$. The models carry their own background, $H$ and $R$ for
-standalone use; their adapters analyse around the forecast instead, with
-the $H$ and $R$ the cycle passes. ``analyse_forecast`` does this for the
-single-time models (OI, 3D-Var) and ``analyse_window`` for the 4D-Var
-models, which see a window of observations.
+``analyse_forecast`` serves the single-time models and ``analyse_window`` the 4D-Var
+models, each taking the observation operator h and Σ_ε from the cycle when given.
 """
 
 from __future__ import annotations
@@ -26,7 +21,7 @@ from vardax._src.errors import InputTypeError, ShapeError
 from vardax._src.obs_operators.point import require_obs_cov
 from vardax._src.utils.covariance import as_covariance
 
-#: ``analyse_one(x_b, y, mask, obs_op, obs_cov_op)`` for one sample.
+#: ``analyse_one(μ_x, y, m, h, Σ_ε)`` for one sample.
 AnalyseOne = Callable[
     [Float[Array, "*state"], Array, Array, Any, lx.AbstractLinearOperator],
     Float[Array, "*state"],
@@ -44,34 +39,67 @@ def analyse_forecast(
     obs_op: Any,
     obs_err_cov: Any,
 ) -> Float[Array, ...]:
-    r"""Analyse around ``forecast`` with the cycle's $H$ and $R$.
+    """Analyse around ``forecast``, with the cycle's h and Σ_ε when given.
 
-    ``forecast`` is either one state (``state_shape``) or a batch of
-    states (``(B, *state_shape)``), and ``obs`` is batched the same way.
-    Missing observations are ``NaN`` and are masked out of the analysis.
+        x⋆ = analyse_one(μ_x, y, m, h, Σ_ε),   μ_x = ``forecast``
+
+    ``forecast`` is either one state or a batch of states, and ``obs`` is batched the
+    same way. Missing observations are ``NaN`` and are masked out of the analysis.
 
     Args:
-        analyse_one: The model's per-sample analysis around a background.
-        state_shape: Shape of one model state (the model's background).
-        default_obs_op: The model's $H$, used when ``obs_op`` is ``None``.
-        default_obs_cov_op: The model's $R$, used when ``obs_err_cov`` is
-            ``None``.
-        forecast: The forecast (background) $x_b$, one state or a batch.
-        obs: Observations $y$.
-        obs_op: $H$ from the cycle, or ``None``.
-        obs_err_cov: $R$ from the cycle: ``None``, a
-            ``lineax.AbstractLinearOperator`` on one observation sample,
-            or a scalar / array of error variances broadcastable to one
-            observation sample (a diagonal $R$).
+        analyse_one: The model's per-sample analysis around a prior mean.
+        state_shape: Shape of one model state.
+        default_obs_op: The model's h, used when ``obs_op`` is ``None``.
+        default_obs_cov_op: The model's Σ_ε, used when ``obs_err_cov`` is ``None``.
+        forecast: The forecast, one state or a batch, which is the prior mean μ_x.
+        obs: Observations y.
+        obs_op: The cycle's observation operator h, or ``None``.
+        obs_err_cov: The cycle's Σ_ε: ``None``, a ``lineax.AbstractLinearOperator`` on
+            one observation sample, or a scalar or array of error variances
+            broadcastable to one observation sample (a diagonal Σ_ε).
 
     Returns:
-        The analysis $x_a$, with ``forecast``'s shape.
+        The analysis x⋆, with the shape of ``forecast``.
 
     Raises:
-        ValueError: If ``forecast`` is neither one state nor a batch of
-            states, the batch sizes of ``forecast`` and ``obs`` differ, or
-            ``obs_err_cov`` does not act on one observation sample.
-        TypeError: If ``obs_err_cov`` is of none of the accepted kinds.
+        ShapeError: If ``forecast`` is neither one state nor a batch of states, the
+            batch sizes of ``forecast`` and ``obs`` differ, or ``obs_err_cov`` does not
+            act on one observation sample.
+        InputTypeError: If ``obs_err_cov`` is of none of the accepted kinds.
+        MissingInputError: If neither the cycle nor the model has a Σ_ε.
+
+    Examples:
+        A stand-in analysis that replaces each observed entry by its observation shows
+        how a ``NaN`` becomes a masked entry:
+
+        >>> import jax.numpy as jnp, lineax as lx
+        >>> def replace(prior_mean, obs, mask, obs_op, obs_covariance):
+        ...     return mask * obs + (1 - mask) * prior_mean
+        >>> options = dict(
+        ...     state_shape=(2,),
+        ...     default_obs_op=None,
+        ...     default_obs_cov_op=lx.DiagonalLinearOperator(jnp.ones(2)),
+        ...     obs_op=None,
+        ...     obs_err_cov=None,
+        ... )
+        >>> obs = jnp.array([3.0, jnp.nan])
+        >>> analyse_forecast(replace, forecast=jnp.ones(2), obs=obs, **options).tolist()
+        [3.0, 1.0]
+
+        A batch of forecasts is analysed sample by sample:
+
+        >>> batch = jnp.ones((4, 2))
+        >>> analyse_forecast(replace, forecast=batch, obs=batch, **options).shape
+        (4, 2)
+
+        A forecast of any other shape is rejected:
+
+        >>> analyse_forecast(
+        ...     replace, forecast=jnp.ones(3), obs=obs, **options
+        ... )  # doctest: +IGNORE_EXCEPTION_DETAIL
+        Traceback (most recent call last):
+        ...
+        ShapeError: forecast must be one state of shape (2,) or a batch of them, ...
     """
     forecast = jnp.asarray(forecast)
     obs = jnp.asarray(obs)
@@ -98,14 +126,16 @@ def analyse_forecast(
     )
 
     finite = jnp.isfinite(obs)
+    # m = 1 where y is finite
     mask = finite.astype(obs.dtype)
-    obs_clean = jnp.where(finite, obs, jnp.zeros((), obs.dtype))
+    # y with the gaps set to zero
+    filled_obs = jnp.where(finite, obs, jnp.zeros((), obs.dtype))
 
-    def _one(
-        background: Float[Array, "*state"], sample_obs: Array, sample_mask: Array
+    def analyse_sample(
+        prior_mean: Float[Array, "*state"], sample_obs: Array, sample_mask: Array
     ) -> Float[Array, "*state"]:
         return analyse_one(
-            background,
+            prior_mean,
             sample_obs,
             sample_mask,
             resolved_obs_op,
@@ -113,8 +143,8 @@ def analyse_forecast(
         )
 
     if batched:
-        return jax.vmap(_one)(forecast, obs_clean, mask)
-    return _one(forecast, obs_clean, mask)
+        return jax.vmap(analyse_sample)(forecast, filled_obs, mask)
+    return analyse_sample(forecast, filled_obs, mask)
 
 
 def _resolve_obs_err_cov(
@@ -123,7 +153,7 @@ def _resolve_obs_err_cov(
     obs_shape: tuple[int, ...],
     dtype: Any,
 ) -> lx.AbstractLinearOperator:
-    """Map the cycle's ``obs_err_cov`` onto a ``lineax`` operator $R$."""
+    """Map the cycle's ``obs_err_cov`` onto a ``lineax`` operator Σ_ε."""
     if obs_err_cov is None:
         return require_obs_cov(default)
     if isinstance(obs_err_cov, lx.AbstractLinearOperator):
@@ -149,7 +179,7 @@ def _resolve_obs_err_cov(
             f"broadcast to one observation sample, {tuple(obs_shape)}; pass "
             "a lineax operator for a non-diagonal R."
         ) from exc
-    # Variances are positive, so R is PSD; the tag lets lineax.CG solve it.
+    # Σ_ε = diag(σ²); variances are positive, so the tag lets lineax.CG solve it
     return lx.TaggedLinearOperator(
         lx.DiagonalLinearOperator(variances), lx.positive_semidefinite_tag
     )
@@ -164,68 +194,162 @@ def analyse_window(
     obs_op: Any,
     obs_err_cov: Any,
 ) -> Float[Array, " N"]:
-    r"""Cycled 4D-Var: analyse a window around the forecast, return its end state.
+    """Cycled 4D-Var: analyse a window around the forecast, return its end state.
 
-    ``SmootherCycle`` passes length-$W$ lists, the forecast and the
-    observations at each step of the window; ``DACycle`` passes one state
-    and one observation, a one-time window.
+        x₀⋆ = model(y₀, …, y_T),   μ_x = forecast at t = 0
+
+    ``SmootherCycle`` passes lists of length T + 1, the forecast and the observations
+    at each step of the window; ``DACycle`` passes one state and one observation, a
+    one-time window.
 
     Algorithm:
-        1. Take the forecast at the start of the window as the background
-           $x_b$, and stack the observations to ``(1, W, M)``; ``NaN``
-           entries are missing.
-        2. Swap $x_b$, and the cycle's $H$ and $R$ when given, into the
-           model (one $H$ and $R$ at every time of the window).
-        3. Analyse, then propagate the analysis to the end of the window,
-           the state the cycle steps forward from.
+        1. Take the forecast at the start of the window as the prior mean μ_x, and
+           stack the observations over time; ``NaN`` entries are missing.
+        2. Swap μ_x, and the cycle's h and Σ_ε when given, into the model (one h and
+           Σ_ε at every time of the window).
+        3. Analyse, then propagate the analysis to the end of the window, the state
+           the cycle steps forward from.
 
     Args:
-        model: A 4D-Var model with ``prior_mean``, ``obs_op`` and
-            ``obs_cov_op``.
-        end_of_window: ``(model, analysis, n_steps) ↦`` the analysed state
-            ``n_steps`` steps after the window start.
+        model: A 4D-Var model with ``prior_mean``, ``obs_op`` and ``obs_cov_op``.
+        end_of_window: ``(model, analysis, n_steps) ↦`` the analysed state ``n_steps``
+            steps after the start of the window.
         forecast: The forecasts of the window (a list), or one state.
         obs: The observations of the window (a list), or one sample.
-        obs_op: $H$ from the cycle, or ``None`` for the model's.
-        obs_err_cov: $R$ from the cycle, as in ``analyse_forecast``, or
-            ``None`` for the model's.
+        obs_op: The cycle's observation operator h, or ``None`` for the model's.
+        obs_err_cov: The cycle's Σ_ε, as in ``analyse_forecast``, or ``None`` for the
+            model's.
 
     Returns:
         The analysed state at the end of the window.
+
+    Raises:
+        ShapeError: If ``obs_err_cov`` does not act on one observation sample.
+        InputTypeError: If ``obs_err_cov`` is of none of the accepted kinds.
+
+    Examples:
+        One state and one observation are a one-time window, so with Σ_x = Σ_ε = I and
+        μ_x = 0 the analysis is y / 2:
+
+        >>> import jax, jax.numpy as jnp, lineax as lx, vardax
+        >>> class Still:
+        ...     dt = 1.0
+        ...
+        ...     def step(self, x, dt):
+        ...         return x
+        >>> eye = lx.IdentityLinearOperator(jax.ShapeDtypeStruct((2,), jnp.float32))
+        >>> model = vardax.StrongFourDVar(
+        ...     forward=Still(),
+        ...     obs_op=vardax.MaskedIdentity(),
+        ...     prior_mean=jnp.ones(2),
+        ...     prior_cov_op=eye,
+        ...     obs_cov_op=eye,
+        ... )
+        >>> end = analyse_window(
+        ...     model,
+        ...     rollout_end,
+        ...     forecast=jnp.zeros(2),
+        ...     obs=jnp.ones(2),
+        ...     obs_op=None,
+        ...     obs_err_cov=None,
+        ... )
+        >>> bool(jnp.allclose(end, 0.5, atol=1e-3))
+        True
+
+        Lists are a window, and a ``NaN`` is missing, so that entry stays at μ_x:
+
+        >>> forecasts = [jnp.zeros(2), jnp.zeros(2)]
+        >>> window_obs = [jnp.array([1.0, jnp.nan]), jnp.array([1.0, jnp.nan])]
+        >>> end = analyse_window(
+        ...     model,
+        ...     rollout_end,
+        ...     forecast=forecasts,
+        ...     obs=window_obs,
+        ...     obs_op=None,
+        ...     obs_err_cov=None,
+        ... )
+        >>> bool(jnp.allclose(end, jnp.array([2 / 3, 0.0]), atol=1e-3))
+        True
     """
     if isinstance(obs, (list, tuple)):
         obs_stack = jnp.stack([jnp.asarray(sample) for sample in obs])
     else:
         obs_stack = einx.id("m... -> 1 m...", jnp.asarray(obs))
-    n_times = obs_stack.shape[0]
-    background = jnp.asarray(
+    num_times = obs_stack.shape[0]
+    # μ_x, the forecast at the start of the window
+    prior_mean = jnp.asarray(
         forecast[0] if isinstance(forecast, (list, tuple)) else forecast
     )
     finite = jnp.isfinite(obs_stack)
+    # mₜ = 1 where yₜ is finite
     mask = finite.astype(obs_stack.dtype)
-    observed = jnp.where(finite, obs_stack, jnp.zeros((), obs_stack.dtype))
+    # yₜ with the gaps set to zero
+    filled_obs = jnp.where(finite, obs_stack, jnp.zeros((), obs_stack.dtype))
     batch = Batch1D(
-        input=einx.id("t m... -> 1 t m...", observed),
+        input=einx.id("t m... -> 1 t m...", filled_obs),
         mask=einx.id("t m... -> 1 t m...", mask),
         target=None,
     )
 
-    swapped = eqx.tree_at(lambda m: m.prior_mean, model, background)
+    swapped = eqx.tree_at(lambda m: m.prior_mean, model, prior_mean)
     if obs_op is not None:
         swapped = eqx.tree_at(lambda m: m.obs_op, swapped, obs_op)
     if obs_err_cov is not None:
-        obs_cov = as_covariance(
-            _resolve_obs_err_cov(
-                obs_err_cov, None, obs_stack.shape[1:], obs_stack.dtype
-            )
+        resolved_covariance = _resolve_obs_err_cov(
+            obs_err_cov, None, obs_stack.shape[1:], obs_stack.dtype
         )
+        obs_covariance = as_covariance(resolved_covariance)
         swapped = eqx.tree_at(
-            lambda m: m.obs_cov_op, swapped, obs_cov, is_leaf=lambda x: x is None
+            lambda m: m.obs_cov_op,
+            swapped,
+            obs_covariance,
+            is_leaf=lambda x: x is None,
         )
     analysis = swapped(batch)
-    return end_of_window(swapped, analysis, n_times - 1)
+    # the window holds T + 1 times, so T steps to its end
+    return end_of_window(swapped, analysis, num_times - 1)
 
 
 def rollout_end(model: Any, analysis: Array, n_steps: int) -> Float[Array, " N"]:
-    """The analysed initial state of one window, stepped ``n_steps`` forward."""
-    return model._rollout(analysis[0], n_steps)[-1]
+    """The analysed initial state of one window, stepped T = ``n_steps`` forward.
+
+        xₜ = f(xₜ₋₁),   t = 1, …, T,   from x₀⋆
+
+    Args:
+        model: A model with ``_rollout(initial_state, n_steps)``.
+        analysis: The analysed initial states, with a leading window axis of size 1.
+        n_steps: Number of steps T.
+
+    Returns:
+        The state x_T at the end of the window.
+
+    Examples:
+        With f(x) = x / 2, two steps give a quarter of x₀⋆:
+
+        >>> import jax, jax.numpy as jnp, lineax as lx, vardax
+        >>> class Halve:
+        ...     dt = 1.0
+        ...
+        ...     def step(self, x, dt):
+        ...         return 0.5 * x
+        >>> eye = lx.IdentityLinearOperator(jax.ShapeDtypeStruct((2,), jnp.float32))
+        >>> model = vardax.StrongFourDVar(
+        ...     forward=Halve(),
+        ...     obs_op=vardax.MaskedIdentity(),
+        ...     prior_mean=jnp.zeros(2),
+        ...     prior_cov_op=eye,
+        ...     obs_cov_op=eye,
+        ... )
+        >>> rollout_end(model, jnp.ones((1, 2)), 2).tolist()
+        [0.25, 0.25]
+
+        Zero steps return the analysed state itself:
+
+        >>> rollout_end(model, jnp.ones((1, 2)), 0).tolist()
+        [1.0, 1.0]
+    """
+    # x₀⋆ of the single window
+    initial_state = analysis[0]
+    # xₜ = f(xₜ₋₁)
+    trajectory = model._rollout(initial_state, n_steps)
+    return trajectory[-1]

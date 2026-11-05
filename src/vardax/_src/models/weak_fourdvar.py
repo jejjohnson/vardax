@@ -1,23 +1,7 @@
-r"""Weak-constraint 4DVar.
+"""Weak-constraint 4D-Var: the forward model errs, the control is w = (x₀, η₁, …, η_T).
 
-Multi-time analysis with control variable
-$(x_0, \eta_1, \ldots, \eta_T)$ — initial state plus per-step
-model-error increments. Cost:
-
-$$
-J(x_0, \boldsymbol{\eta}) =
-    \tfrac{1}{2} \|x_0 - x_b\|^2_{B^{-1}}
-  + \tfrac{1}{2} \sum_t \|y_t - H_t(x_t)\|^2_{R_t^{-1}}
-  + \tfrac{1}{2} \sum_t \|\eta_t\|^2_{Q_t^{-1}}
-$$
-
-where $x_t = M_t(x_{t-1}) + \eta_t$.
-
-The control vector has dimension $(T + 1) \cdot N$ (initial
-state + T model-error increments). For long windows this is
-computationally heavier than [`StrongFourDVar`][vardax.StrongFourDVar]
-— use only when the free model $M_t^\text{free}$ is known to have
-biases.
+μ_x and Σ_x are the prior mean and covariance, Σ_ε the observation-error covariance,
+Σ_η the model-error covariance, f the forward model and h the observation operator.
 """
 
 from __future__ import annotations
@@ -61,73 +45,68 @@ from vardax._src.utils.shapes import as_shape
 
 
 class WeakFourDVar(eqx.Module):
-    r"""Weak-constraint 4DVar with augmented control vector.
+    """Weak-constraint 4D-Var analysis of an assimilation window.
 
-    $$J(x_0, \eta) = \tfrac12 \|x_0 - x_b\|^2_{B^{-1}} + J_o + J_q$$
+        𝒥(w) = ½ ‖x₀ − μ_x‖²_Σ_x⁻¹ + ½ ∑ₜ ‖rₜ‖²_Σ̃_ε,t⁻¹ + ½ ∑ₜ ‖ηₜ‖²_Σ_η⁻¹
+        w = (x₀, η₁, …, η_T),   xₜ = f(xₜ₋₁) + ηₜ
+        rₜ = mₜ ⊙ (yₜ − h(xₜ))
+        Σ̃_ε,t = Mₜ Σ_ε Mₜ + (I − Mₜ),   Mₜ = diag(mₜ)
 
-    $$J_o = \tfrac12 \sum_t \|y_t - H(x_t)\|^2_{R^{-1}}$$
-
-    $$J_q = \tfrac12 \sum_t \|\eta_t\|^2_{Q^{-1}}$$
-
-    $$x_t = M^\text{free}(x_{t-1}) + \eta_t$$
+    The control has (T + 1) D_x entries, so a long window costs more than
+    [`StrongFourDVar`][vardax.StrongFourDVar]; use it when the free model f is known to
+    have biases.
 
     Algorithm:
-        1. Start from the background $x_0 = x_b$ and zero model errors.
-        2. Roll the free model out with the forcing $\eta_t$ added after
-           every step.
-        3. Sum the masked, $R^{-1}$-weighted observation misfit over the
-           trajectory, the $Q^{-1}$-weighted model-error cost over the
-           $T$ steps, and the background term (or the parameterization
-           penalty).
-        4. Minimise jointly over $(x_0, \eta)$ with ``minimiser`` and
-           return the pair.
+        1. Start from x₀ = μ_x and zero model errors.
+        2. Roll f out with the forcing ηₜ added after every step.
+        3. Sum the observation term over the trajectory, the Σ_η⁻¹-weighted model-error
+           term over the T steps, and the background term or the penalty ℛ(θ) of
+           ``parameterization``.
+        4. Minimise jointly over w with ``minimiser`` and return the pair (x₀⋆, η⋆).
 
     Attributes:
-        forward: ``pipekit_cycle.ForwardModel`` (the free model
-            $M_t^\text{free}$).
-        obs_op: Observation operator.
-        prior_mean: Background $x_b$ — the initial state.
-        prior_cov_op: $B$.
-        obs_cov_op: $R$.
-        model_err_cov_op: $Q$ — covariance of the per-step model
-            error $\eta_t$, which is then estimated at every step and
-            cell. Give exactly one of this and ``model_err_basis``.
+        forward: Forward model f, a ``pipekit_cycle.ForwardModel``.
+        obs_op: Observation operator h.
+        prior_mean: Prior mean μ_x of the state at t = 0.
+        prior_cov_op: Prior covariance Σ_x.
+        obs_cov_op: Observation-error covariance Σ_ε.
+        model_err_cov_op: Model-error covariance Σ_η of each ηₜ, which is then estimated
+            at every step and cell. Give exactly one of this and ``model_err_basis``.
         minimiser: As in [`StrongFourDVar`][vardax.StrongFourDVar].
         minimiser_adjoint: As in [`StrongFourDVar`][vardax.StrongFourDVar].
         max_steps: As in [`StrongFourDVar`][vardax.StrongFourDVar].
-        cov_solver: ``lineax`` solver for the covariance solves in the
-            cost ($B^{-1}$, $R^{-1}$, $Q^{-1}$). Default
-            ``lx.CG(atol=1e-6, rtol=1e-6)``, which suits large
-            matrix-free operators but is inexact on an ill-conditioned
-            covariance (for example a tiny $R$); pass
-            ``lx.AutoLinearSolver(well_posed=True)`` or ``lx.Cholesky()``
-            for an exact solve when the operator can be materialised.
+        cov_solver: ``lineax`` solver for Σ_x⁻¹, Σ_ε⁻¹ and Σ_η⁻¹ in the cost. The
+            default ``lx.CG(atol=1e-6, rtol=1e-6)`` suits large matrix-free operators
+            but is inexact on an ill-conditioned covariance (for example a tiny Σ_ε);
+            pass ``lx.AutoLinearSolver(well_posed=True)`` or ``lx.Cholesky()`` for an
+            exact solve when the operator can be materialised.
         parameterization: Optional
-            [`StateParameterization`][vardax.StateParameterization] of the
-            initial state. When given, the control is $(\theta, \eta)$,
-            $x_0 = \psi(\theta)$ and $\mathrm{pen}(\theta)$ replaces the
-            background term (``prior_mean`` and ``prior_cov_op`` are not
-            used). Default ``None``: the control is $(x_0, \eta)$.
-        forward_adjoint: As in [`StrongFourDVar`][vardax.StrongFourDVar]:
-            a ``diffrax.AbstractAdjoint`` for a forward implementing
+            [`StateParameterization`][vardax.StateParameterization] of the initial
+            state. The control is then (θ, η₁, …, η_T), with x₀ = g_dec(θ), and ℛ(θ)
+            replaces the background term, so ``prior_mean`` and ``prior_cov_op`` are not
+            used. Default ``None``: the control is w.
+        forward_adjoint: As in [`StrongFourDVar`][vardax.StrongFourDVar]: a
+            ``diffrax.AbstractAdjoint`` for a forward implementing
             [`SupportsForwardAdjoint`][vardax.SupportsForwardAdjoint].
-        checkpoint: As in [`StrongFourDVar`][vardax.StrongFourDVar]:
-            ``False``, ``True`` or a block length ``k`` for
-            ``jax.checkpoint`` over the rollout.
-        model_err_basis: A [`ModelErrorBasis`][vardax.ModelErrorBasis]
-            $(\chi, \Phi, \Lambda_t, \Lambda_s)$ in place of
-            ``model_err_cov_op`` (reduced weak-constraint 4D-Var). The
-            model error is $\eta = \chi W \Phi^\top$ with
-            $W = \Lambda_t^{1/2} \omega \Lambda_s^{1/2}$, the control is
-            $(x_0, \omega)$ with $C P$ model-error unknowns, the
-            model-error term is $\tfrac12 \|\omega\|^2$, and the call
-            returns $(x_0^*, W^*)$. It composes with
-            ``parameterization``.
+        checkpoint: As in [`StrongFourDVar`][vardax.StrongFourDVar]: ``False``, ``True``
+            or a block length k for ``jax.checkpoint`` over the rollout.
+        model_err_basis: A [`ModelErrorBasis`][vardax.ModelErrorBasis] in place of
+            ``model_err_cov_op`` (reduced weak-constraint 4D-Var), holding χ, Φ, Σ_time
+            and Σ_space. The model error is η = χ W Φᵀ with
+            W = Σ_time^½ ω Σ_space^½, the control is (x₀, ω) with C P model-error
+            unknowns, the model-error term is ½ ‖ω‖², and the call returns (x₀⋆, W⋆). It
+            composes with ``parameterization``.
+
+    Raises:
+        ConfigurationError: If not exactly one of ``model_err_cov_op`` and
+            ``model_err_basis`` is given, or ``checkpoint`` is neither a bool nor an
+            int ≥ 1.
+        UnsupportedInputError: If ``forward_adjoint`` is set and ``forward`` has no
+            ``with_adjoint`` method.
 
     Examples:
-        Trivial dynamics and a single timestep: no model-error steps
-        remain ($T = 0$) and the analysis initial state reduces to the
-        3DVar / BLUE answer $x_0^* = y / 2$ for $B = R = I$.
+        Trivial dynamics and a single time: no model-error steps remain (T = 0), and
+        with Σ_x = Σ_ε = I the analysis reduces to the 3D-Var answer x₀⋆ = y / 2:
 
         >>> import jax, jax.numpy as jnp, lineax as lx, vardax
         >>> class Identity:
@@ -149,9 +128,9 @@ class WeakFourDVar(eqx.Module):
         >>> x0_star.shape, eta_star.shape
         ((1, 3), (1, 0, 3))
 
-        A two-time window has one model-error step. With a tiny model-error
-        covariance the free model is almost exact and the analysis
-        approaches the strong-constraint $x_0^* = 2/3$ for $M(x) = x / 2$:
+        A two-time window has one model-error step. With a tiny Σ_η the free model is
+        almost exact, and the analysis approaches the strong-constraint x₀⋆ = ⅔ for
+        f(x) = x / 2:
 
         >>> class Decay:
         ...     dt = 1.0
@@ -177,8 +156,8 @@ class WeakFourDVar(eqx.Module):
         >>> bool(jnp.allclose(x0_star, 2 / 3, atol=5e-2))
         True
 
-        Composed with the Laplace adapter, ``posterior`` returns the $x_0$
-        block of the inverse augmented precision:
+        Composed with the Laplace adapter, ``posterior`` returns the x₀ block of the
+        inverse precision over w:
 
         >>> weak.posterior(window).cov.mv(jnp.ones(3)).shape
         (3,)
@@ -246,16 +225,21 @@ class WeakFourDVar(eqx.Module):
         initial_state: Float[Array, " N"],
         model_errors: Float[Array, "T N"],
     ) -> Float[Array, "T_plus_1 N"]:
-        r"""Roll out with per-step model error.
+        """Roll out with per-step model error: xₜ = f(xₜ₋₁) + ηₜ.
 
-        Each step applies $x_t = M_t^\text{free}(x_{t-1}) + \eta_t$.
+        Args:
+            initial_state: Initial state x₀.
+            model_errors: Model errors η₁, …, η_T.
+
+        Returns:
+            The trajectory, including x₀.
         """
         forward = resolve_forward(self.forward, self.forward_adjoint)
-        n_steps = model_errors.shape[0]
+        num_steps = model_errors.shape[0]
         return rollout(
             forward,
             initial_state,
-            n_steps,
+            num_steps,
             forcing=model_errors,
             checkpoint=self.checkpoint,
         )
@@ -264,133 +248,148 @@ class WeakFourDVar(eqx.Module):
         self,
         batch: Batch1D | PointObsBatch,
     ) -> tuple[Float[Array, "*batch N"], Float[Array, ...]]:
-        r"""Weak-4DVar analysis.
+        """Analyse each window: w⋆ = argmin_w 𝒥(w).
 
-        Returns ``(x_0_star, eta_star)`` — the analysis initial state
-        and the per-step model-error trajectory (one row per
-        timestep, total ``T``). With ``model_err_basis`` the second
-        element is the coefficients $W^*$, shape ``(*batch, C, P)``.
-
-        A [`PointObsBatch`][vardax.PointObsBatch] needs
-        ``obs_op=GridPointObs(...)``: observation $i$ is compared with the
-        trajectory state at ``time_index[i]`` over a window of ``n_times``
-        states (so ``T = n_times - 1``), with error variance
-        $\sigma_i^2$ (``obs_cov_op`` must be ``None`` or an identity).
+        A [`PointObsBatch`][vardax.PointObsBatch] needs ``obs_op=GridPointObs(...)``:
+        observation i is compared with the trajectory state x_τᵢ,
+        τᵢ = ``time_index[i]``, over a window of ``n_times`` states (so
+        T = ``n_times`` − 1), with error variance σᵢ² (``obs_cov_op`` must be ``None``
+        or an identity).
 
         Args:
-            batch: A gridded [`Batch1D`][vardax.Batch1D] whose time axis
-                holds the window, or a
-                [`PointObsBatch`][vardax.PointObsBatch].
+            batch: A gridded [`Batch1D`][vardax.Batch1D] whose time axis holds the
+                window, or a [`PointObsBatch`][vardax.PointObsBatch].
 
         Returns:
-            The pair $(x_0^*, \eta^*)$ of every window.
+            The pair (x₀⋆, η⋆) of every window: the analysed initial state and the T
+            model errors. With ``model_err_basis`` the second element is the
+            coefficients W⋆.
 
         Raises:
-            ObservationError: For a point batch with a non-trivial
-                ``obs_cov_op`` or an out-of-range ``time_index``.
-            MissingInputError: For a gridded batch when ``obs_cov_op`` is
-                ``None``, or a point batch with ``time_index`` but no
-                ``n_times``.
+            ObservationError: For a point batch with a non-trivial ``obs_cov_op`` or an
+                out-of-range ``time_index``.
+            MissingInputError: For a gridded batch when ``obs_cov_op`` is ``None``, or a
+                point batch with ``time_index`` but no ``n_times``.
             InputTypeError: For a point batch whose ``obs_op`` is not a
                 ``GridPointObs``.
+            ShapeError: If ``model_err_basis`` has a different number of model-error
+                steps from the window.
         """
-        state_dim = self.prior_mean.shape[0]
+        state_size = self.prior_mean.shape[0]
         if isinstance(batch, PointObsBatch):
             check_point_obs_cov(self.obs_cov_op)
-            n_steps = window_steps(batch)
+            num_steps = window_steps(batch)
 
-            def _one_points(window: PointObsBatch):
-                def traj_obs_cost(
+            def analyse_points(window: PointObsBatch):
+                def obs_cost(
                     trajectory: Float[Array, "T_plus_1 N"],
                 ) -> Float[Array, ""]:
+                    # 𝒥_o = ½ ∑ᵢ ‖rᵢ / σᵢ‖²
                     return grid_point_obs_cost(self.obs_op, trajectory, window)
 
-                return self._solve(traj_obs_cost, n_steps, state_dim)
+                return self._solve(obs_cost, num_steps, state_size)
 
-            return map_point_batch(_one_points, batch)
+            return map_point_batch(analyse_points, batch)
 
-        obs_cov_op = require_obs_cov(self.obs_cov_op)
-        # T_plus_1 timesteps in the batch ⇒ T model-error steps.
-        n_times = batch.input.shape[1]
-        n_steps = n_times - 1
+        obs_covariance = require_obs_cov(self.obs_cov_op)
+        # the window holds T + 1 times, so T model-error steps
+        num_times = batch.input.shape[1]
+        num_steps = num_times - 1
 
-        def _one(
+        def analyse_window_obs(
             window_obs: Float[Array, "T_plus_1 M"],
             window_mask: Float[Array, "T_plus_1 M"],
         ):
-            def traj_obs_cost(
+            def obs_cost(
                 trajectory: Float[Array, "T_plus_1 N"],
             ) -> Float[Array, ""]:
-                def _per_step(state, observation, step_mask):
+                def step_cost(state, observation, step_mask):
+                    # h(xₜ)
                     predicted_obs = (
                         self.obs_op(state, mask=step_mask)
                         if accepts_mask(self.obs_op)
                         else self.obs_op(state)
                     )
-                    # r = m ⊙ (y − H(x))
+                    # rₜ = mₜ ⊙ (yₜ − h(xₜ))
                     residual = step_mask * (observation - predicted_obs)
-                    # J_o,t = ½ rᵀ R̃⁻¹ r with R̃ = M R M + (I − M), so masked
-                    # entries drop out of the likelihood
+                    # Σ̃_ε,t = Mₜ Σ_ε Mₜ + (I − Mₜ), so masked entries drop out
+                    # of the likelihood
+                    masked_covariance = gaussx.masked_obs_covariance(
+                        obs_covariance, step_mask
+                    )
+                    # 𝒥_o,t = ½ rₜᵀ Σ̃_ε,t⁻¹ rₜ
                     return half_weighted_norm(
-                        gaussx.masked_obs_covariance(obs_cov_op, step_mask),
-                        residual,
-                        self.cov_solver,
+                        masked_covariance, residual, self.cov_solver
                     )
 
-                per_step_costs = jax.vmap(_per_step)(
-                    trajectory, window_obs, window_mask
-                )
-                return jnp.sum(per_step_costs)
+                step_costs = jax.vmap(step_cost)(trajectory, window_obs, window_mask)
+                # 𝒥_o = ∑ₜ 𝒥_o,t
+                return jnp.sum(step_costs)
 
-            return self._solve(traj_obs_cost, n_steps, state_dim)
+            return self._solve(obs_cost, num_steps, state_size)
 
-        analysis, model_error_analysis = jax.vmap(_one)(
+        analysis, model_error_analysis = jax.vmap(analyse_window_obs)(
             fill_gaps(batch.input, batch.mask), batch.mask
         )
         return analysis, model_error_analysis
 
     def _solve(
         self,
-        traj_obs_cost: Callable[[Array], Array],
-        n_steps: int,
-        state_dim: int,
+        obs_cost: Callable[[Array], Array],
+        num_steps: int,
+        state_size: int,
     ) -> tuple[Float[Array, " N"], Array]:
-        """Minimise over (x₀, η), or (θ, η), with ω in place of η for a basis."""
+        """Minimise over w, or (θ, η₁, …, η_T), with ω in place of η for a basis.
+
+        Args:
+            obs_cost: The observation term of a trajectory, x₀, …, x_T ↦ 𝒥_o.
+            num_steps: Number of model-error steps T.
+            state_size: Length D_x of one state.
+
+        Returns:
+            The pair (x₀⋆, η⋆), or (x₀⋆, W⋆) with ``model_err_basis``.
+
+        Raises:
+            ConfigurationError: If the model has neither a Σ_η nor a basis.
+            ShapeError: If ``model_err_basis`` has a different number of steps.
+        """
         basis = self.model_err_basis
-        model_err_cov = self.model_err_cov_op
-        if model_err_cov is not None:
-            init_model_errors = jnp.zeros((n_steps, state_dim))
+        model_noise_covariance = self.model_err_cov_op
+        if model_noise_covariance is not None:
+            init_model_errors = jnp.zeros((num_steps, state_size))
 
             def to_errors(error_control: Array) -> Float[Array, "T N"]:
                 return error_control
 
             def model_error_cost(error_control: Array) -> Float[Array, ""]:
-                def _model_error_cost(step_error):
-                    # J_q,t = ½ ηᵀ Q⁻¹ η
+                def step_cost(step_error):
+                    # 𝒥_η,t = ½ ηₜᵀ Σ_η⁻¹ ηₜ
                     return half_weighted_norm(
-                        model_err_cov, step_error, self.cov_solver
+                        model_noise_covariance, step_error, self.cov_solver
                     )
 
-                # A one-state window has no model-error steps (vmap over an
-                # empty axis would trip lineax's CG on a zero-size operand).
+                # a one-state window has no model-error steps, and vmap over an
+                # empty axis would trip lineax's CG on a zero-size operand
                 if error_control.shape[0] == 0:
                     return jnp.zeros((), dtype=error_control.dtype)
-                return jnp.sum(jax.vmap(_model_error_cost)(error_control))
+                step_costs = jax.vmap(step_cost)(error_control)
+                # 𝒥_η = ∑ₜ 𝒥_η,t
+                return jnp.sum(step_costs)
 
             def to_output(error_control: Array) -> Array:
                 return error_control
 
         elif basis is not None:
-            basis.check_steps(n_steps)
+            basis.check_steps(num_steps)
             # ω, the whitened coefficients
             init_model_errors = jnp.zeros(basis.coefficient_shape)
             to_errors = basis.errors
 
             def model_error_cost(error_control: Array) -> Float[Array, ""]:
-                # ½ ‖ω‖²
+                # 𝒥_η = ½ ‖ω‖²
                 return 0.5 * jnp.sum(error_control**2)
 
-            # W = Λ_t^{1/2} ω Λ_s^{1/2}
+            # W = Σ_time^½ ω Σ_space^½
             to_output = basis.coefficients
         else:
             raise ConfigurationError(
@@ -401,44 +400,56 @@ class WeakFourDVar(eqx.Module):
             initial_state: Float[Array, " N"],
             error_control: Array,
         ) -> Float[Array, ""]:
-            # Observation term over xₜ = M(xₜ₋₁) + ηₜ
-            obs_cost = traj_obs_cost(
-                self._rollout_with_error(initial_state, to_errors(error_control))
-            )
-            return obs_cost + model_error_cost(error_control)
+            # η₁, …, η_T
+            model_errors = to_errors(error_control)
+            # xₜ = f(xₜ₋₁) + ηₜ
+            trajectory = self._rollout_with_error(initial_state, model_errors)
+            # 𝒥_o
+            observation_cost = obs_cost(trajectory)
+            # 𝒥_o + 𝒥_η
+            return observation_cost + model_error_cost(error_control)
 
-        param = self.parameterization
-        if param is not None:
-            # Control (θ, η); x_0 = ψ(θ) and pen(θ) replaces the B term.
-            def decode(theta: Any) -> Float[Array, " N"]:
-                return as_shape(param.decode(theta), self.prior_mean.shape)
+        parameterization = self.parameterization
+        if parameterization is not None:
 
-            def param_cost(control: Any, _args: Any) -> Float[Array, ""]:
-                theta, error_control = control
-                return param.penalty(theta) + model_and_obs_cost(
-                    decode(theta), error_control
-                )
+            def decode(params: Any) -> Float[Array, " N"]:
+                # x₀ = g_dec(θ)
+                decoded = parameterization.decode(params)
+                return as_shape(decoded, self.prior_mean.shape)
 
-            theta_star, error_star = minimise(
+            def params_cost(control: Any, _args: Any) -> Float[Array, ""]:
+                params, error_control = control
+                # ℛ(θ)
+                penalty = parameterization.penalty(params)
+                # x₀ = g_dec(θ)
+                initial_state = decode(params)
+                # 𝒥 = ℛ(θ) + 𝒥_o + 𝒥_η
+                return penalty + model_and_obs_cost(initial_state, error_control)
+
+            params_star, error_star = minimise(
                 self.minimiser,
-                param_cost,
-                (param.init_control(), init_model_errors),
+                params_cost,
+                (parameterization.init_control(), init_model_errors),
                 adjoint=self.minimiser_adjoint,
                 max_steps=self.max_steps,
             )
-            return decode(theta_star), to_output(error_star)
+            return decode(params_star), to_output(error_star)
 
-        def background_cost(initial_state: Float[Array, " N"]) -> Float[Array, ""]:
-            # δx = x₀ − x_b
+        def background_term(initial_state: Float[Array, " N"]) -> Float[Array, ""]:
+            # δx₀ = x₀ − μ_x
             increment = initial_state - self.prior_mean
-            # J_b = ½ δxᵀ B⁻¹ δx
+            # 𝒥_b = ½ δx₀ᵀ Σ_x⁻¹ δx₀
             return half_weighted_norm(self.prior_cov_op, increment, self.cov_solver)
 
         if basis is not None:
-            # control (x₀, ω)
+
             def reduced_cost(control: Any, _args: Any) -> Float[Array, ""]:
+                # the control is (x₀, ω)
                 initial_state, error_control = control
-                return background_cost(initial_state) + model_and_obs_cost(
+                # 𝒥_b
+                background_cost = background_term(initial_state)
+                # 𝒥 = 𝒥_b + 𝒥_o + 𝒥_η
+                return background_cost + model_and_obs_cost(
                     initial_state, error_control
                 )
 
@@ -452,13 +463,15 @@ class WeakFourDVar(eqx.Module):
             return initial_state_star, to_output(error_star)
 
         def cost(control: Float[Array, "T_plus_1 N"], _args: Any) -> Float[Array, ""]:
+            # w = (x₀, η₁, …, η_T), stacked as rows
             initial_state = control[0]
             model_errors = control[1:]
-            return background_cost(initial_state) + model_and_obs_cost(
-                initial_state, model_errors
-            )
+            # 𝒥_b
+            background_cost = background_term(initial_state)
+            # 𝒥(w) = 𝒥_b + 𝒥_o + 𝒥_η
+            return background_cost + model_and_obs_cost(initial_state, model_errors)
 
-        # control [x_b; η₁, …, η_T]; jnp, not einx: einx cannot size T = 0
+        # w⁽⁰⁾ = [μ_x; 0, …, 0]; jnp, not einx: einx cannot size T = 0
         initial_state = jnp.expand_dims(self.prior_mean, 0)
         initial_control = jnp.concatenate([initial_state, init_model_errors])
 
@@ -474,12 +487,10 @@ class WeakFourDVar(eqx.Module):
     def posterior(self, batch: Batch1D, adapter: Any = None) -> Any:
         """Analyse one window and return its [`Posterior`][vardax.Posterior].
 
-        Runs the analysis, then ``adapter(analysis, self, batch)``; the
-        default adapter is [`LaplaceCovariance`][vardax.LaplaceCovariance]
-        with this model's $B$ and $R$.
-
-        The covariance is that of $x_0$: the $x_0$ block of the inverse
-        Gauss–Newton precision over $(x_0, \\eta)$.
+        Runs the analysis, then ``adapter(analysis, self, batch)``; the default adapter
+        is [`LaplaceCovariance`][vardax.LaplaceCovariance] with this model's Σ_x and
+        Σ_ε. The covariance is that of x₀: the x₀ block of the inverse Gauss–Newton
+        precision over w.
 
         Args:
             batch: A ``Batch1D`` holding one window.
@@ -491,9 +502,10 @@ class WeakFourDVar(eqx.Module):
 
         Raises:
             ShapeError: If ``batch`` holds more than one window.
-            UnsupportedInputError: For a point batch, or for a model with
-                a ``parameterization``.
+            UnsupportedInputError: For a point batch, or for a model with a
+                ``parameterization`` or a ``model_err_basis``.
         """
+        # lazy: the posterior adapters import the models
         from vardax._src.posterior._precision import model_posterior
 
         return model_posterior(self, batch, adapter)
@@ -502,8 +514,9 @@ class WeakFourDVar(eqx.Module):
         """Adapt to ``pipekit_cycle.AnalysisStep``.
 
         Returns:
-            An analysis step that treats non-finite observations as
-            missing and returns the analysed initial state only.
+            An analysis step that treats non-finite observations as missing and returns
+            the state at the end of the window, rolled out with the analysed model
+            errors.
         """
         return _WeakFourDVarAnalysisStep(self)
 
@@ -511,20 +524,24 @@ class WeakFourDVar(eqx.Module):
 def _weak_rollout_end(
     model: WeakFourDVar, analysis: tuple[Array, Array], n_steps: int
 ) -> Float[Array, " N"]:
-    """xₜ = M(xₜ₋₁) + ηₜ from the analysed (x₀, η) of one window, at its end."""
+    """xₜ = f(xₜ₋₁) + ηₜ from the analysed (x₀⋆, η⋆) of one window, at its end."""
     initial_states, errors = analysis
     basis = model.model_err_basis
     # η, or χ W Φᵀ for a reduced model error
     model_errors = errors[0] if basis is None else basis.pattern(errors[0])
-    return model._rollout_with_error(initial_states[0], model_errors)[n_steps]
+    trajectory = model._rollout_with_error(initial_states[0], model_errors)
+    return trajectory[n_steps]
 
 
 class _WeakFourDVarAnalysisStep(eqx.Module):
     """``pipekit_cycle.AnalysisStep`` adapter for ``WeakFourDVar``.
 
-    Analyses the window around the cycle's forecast (``analyse_window``)
-    and returns the state at its end, rolled out with the analysed model
-    errors; the model errors themselves come from a direct ``model(batch)``.
+    Analyses the window around the cycle's forecast (``analyse_window``) and returns the
+    state at its end, rolled out with the analysed model errors; the model errors
+    themselves come from a direct ``model(batch)``.
+
+    Attributes:
+        model: The model to analyse with.
     """
 
     model: WeakFourDVar
@@ -537,6 +554,17 @@ class _WeakFourDVarAnalysisStep(eqx.Module):
         obs_op: Any,
         obs_err_cov: Any,
     ) -> Float[Array, ...]:
+        """Analyse a window around ``forecast``.
+
+        Args:
+            forecast: The cycle's forecast over the window.
+            obs: Observations over the window; non-finite entries are missing.
+            obs_op: The cycle's observation operator h, or ``None``.
+            obs_err_cov: The cycle's observation-error covariance Σ_ε, or ``None``.
+
+        Returns:
+            The analysed state at the end of the window.
+        """
         return analyse_window(
             self.model,
             _weak_rollout_end,

@@ -1,21 +1,7 @@
-r"""3D Variational analysis.
+"""3D-Var: minimise the variational cost of one time with an iterative minimiser.
 
-Minimises
-
-$$
-J(x) = \tfrac{1}{2} \|x - x_b\|^2_{B^{-1}}
-     + \tfrac{1}{2} \|y - H(x)\|^2_{R^{-1}}
-$$
-
-over a single timestep. When $H$ is linear and $B$, $R$ Gaussian,
-``ThreeDVar`` reduces to [`OptimalInterpolation`][vardax.OptimalInterpolation]
-— the canonical correctness gate enforced by the linear-Gaussian
-agreement test.
-
-The inner minimisation is delegated to an
-``optimistix.AbstractMinimiser`` (``GaussNewton``, ``BFGS``,
-``NonlinearCG``, ``LevenbergMarquardt``, …). The choice of minimiser
-is the user's; vardax provides a sensible default.
+μ_x and Σ_x are the prior mean and covariance, Σ_ε the observation-error covariance and
+h the observation operator; a linear h reduces it to optimal interpolation.
 """
 
 from __future__ import annotations
@@ -54,62 +40,55 @@ from vardax._src.utils.shapes import as_shape
 
 
 class ThreeDVar(eqx.Module):
-    r"""3D variational analysis.
+    """3D variational analysis of a single time.
 
-    $$J(x) = \tfrac12 \|x - x_b\|^2_{B^{-1}} + \tfrac12 \|y - H(x)\|^2_{R^{-1}}$$
+        𝒥(x) = ½ ‖x − μ_x‖²_Σ_x⁻¹ + ½ ‖r‖²_Σ̃_ε⁻¹,   x⋆ = argmin_x 𝒥(x)
+        r = m ⊙ (y − h(x))
+        Σ̃_ε = M Σ_ε M + (I − M),   M = diag(m)
 
-    with the residual masked by $m$ where observations are missing.
-
-    $$x^* = \arg\min_x J(x)$$
+    When h is linear this reduces to
+    [`OptimalInterpolation`][vardax.OptimalInterpolation], which
+    ``tests/test_linear_gaussian_agreement.py`` enforces.
 
     Algorithm:
-        1. For each sample in the batch (``jax.vmap``), start from the
-           background $x_b$ (or the parameterization's initial control).
-        2. Evaluate the background term
-           $\tfrac12 \delta x^\top B^{-1} \delta x$ with a ``cov_solver`` solve; under a
-           ``parameterization`` the penalty $\mathrm{pen}(\theta)$
-           replaces it.
-        3. Evaluate the observation term from the masked residual
-           $m \odot (y - H(x))$ and an $R^{-1}$ solve; a point batch uses
-           the $\sigma_i$-weighted point cost instead.
-        4. Minimise the sum with ``minimiser`` for at most ``max_steps``
-           iterations and return the minimising state.
+        1. For each sample, under ``jax.vmap``, start from the prior mean μ_x, or from
+           the initial control of ``parameterization``.
+        2. Evaluate the background term ½ δxᵀ Σ_x⁻¹ δx with a ``cov_solver`` solve; the
+           penalty ℛ(θ) of ``parameterization`` replaces it.
+        3. Evaluate the observation term from the masked residual r and a Σ̃_ε⁻¹ solve;
+           a point batch uses its σᵢ-weighted cost instead.
+        4. Minimise the sum with ``minimiser`` for at most ``max_steps`` iterations and
+           return the minimising state.
 
     Attributes:
-        obs_op: Observation operator (linear or nonlinear).
-        prior_mean: Background $x_b$.
-        prior_cov_op: $B$. ``lineax.AbstractLinearOperator``.
-        obs_cov_op: $R$. ``lineax.AbstractLinearOperator``.
-        minimiser: ``optimistix.AbstractMinimiser`` for the inner
-            iteration (default ``optimistix.BFGS(rtol=1e-6, atol=1e-6)``),
-            or a [`Minimiser`][vardax.Minimiser] such as
+        obs_op: Observation operator h, linear or nonlinear.
+        prior_mean: Prior mean μ_x.
+        prior_cov_op: Prior covariance Σ_x.
+        obs_cov_op: Observation-error covariance Σ_ε.
+        minimiser: ``optimistix.AbstractMinimiser`` for the inner iteration, by default
+            ``optimistix.BFGS(rtol=1e-6, atol=1e-6)``, or a
+            [`Minimiser`][vardax.Minimiser] such as
             [`OptaxMinimiser`][vardax.OptaxMinimiser].
-        minimiser_adjoint: ``optimistix.AbstractAdjoint`` for
-            differentiating *through* the minimum (used only if the
-            ``ThreeDVar`` analysis is itself nested inside a larger
-            training loop). Default ``ImplicitAdjoint`` — exact at the
-            optimum.
-        max_steps: Iteration cap on the inner solver when ``minimiser``
-            is an ``optimistix`` solver; a vardax `Minimiser` keeps its own.
-        cov_solver: ``lineax`` solver for the covariance solves in the
-            cost ($B^{-1}$, $R^{-1}$). Default
-            ``lx.CG(atol=1e-6, rtol=1e-6)``, which suits large
-            matrix-free operators but is inexact on an ill-conditioned
-            covariance (for example a tiny $R$); pass
-            ``lx.AutoLinearSolver(well_posed=True)`` or ``lx.Cholesky()``
-            for an exact solve when the operator can be materialised.
+        minimiser_adjoint: ``optimistix.AbstractAdjoint`` for differentiating through
+            the minimum, used only when the analysis is nested inside a larger training
+            loop. The default ``ImplicitAdjoint`` is exact at the optimum.
+        max_steps: Iteration cap on the inner solver when ``minimiser`` is an
+            ``optimistix`` solver; a vardax `Minimiser` keeps its own.
+        cov_solver: ``lineax`` solver for Σ_x⁻¹ and Σ_ε⁻¹ in the cost. The default
+            ``lx.CG(atol=1e-6, rtol=1e-6)`` suits large matrix-free operators but is
+            inexact on an ill-conditioned covariance (for example a tiny Σ_ε); pass
+            ``lx.AutoLinearSolver(well_posed=True)`` or ``lx.Cholesky()`` for an exact
+            solve when the operator can be materialised.
         parameterization: Optional
-            [`StateParameterization`][vardax.StateParameterization]. When
-            given, the control is $\theta$, the state is
-            $\psi(\theta)$ (reshaped to ``prior_mean.shape``) and
-            $\mathrm{pen}(\theta)$ replaces the background term, so
-            ``prior_mean`` and ``prior_cov_op`` are not used — nor is the
-            ``forecast`` of the analysis-step adapter. Default ``None``:
-            the control is the state itself.
+            [`StateParameterization`][vardax.StateParameterization]. The control is
+            then θ, with x = g_dec(θ) reshaped to ``prior_mean.shape``, and ℛ(θ)
+            replaces the background term, so ``prior_mean`` and ``prior_cov_op`` are not
+            used, nor is the ``forecast`` of the analysis-step adapter. Default
+            ``None``: the control is x.
 
     Examples:
-        With $B = R = I$, identity $H$ and everything observed, the
-        analysis agrees with the closed-form BLUE, $x^* = y / 2$.
+        With Σ_x = Σ_ε = I, identity h and everything observed, the analysis agrees with
+        the closed-form BLUE, x⋆ = y / 2:
 
         >>> import jax, jax.numpy as jnp, lineax as lx, vardax
         >>> eye = lx.IdentityLinearOperator(jax.ShapeDtypeStruct((1, 3), jnp.float32))
@@ -126,10 +105,9 @@ class ThreeDVar(eqx.Module):
         >>> bool(jnp.allclose(xa, 0.5, atol=1e-3))
         True
 
-        A nonlinear $H(x) = x^2$ through
-        [`CallableObs`][vardax.CallableObs]. Where the mask is zero the
-        analysis falls back to the background, and ``analyse`` also
-        returns the minimiser diagnostics:
+        A nonlinear h(x) = x² through [`CallableObs`][vardax.CallableObs]. Where the
+        mask is zero the analysis falls back to μ_x, and ``analyse`` also returns the
+        minimiser diagnostics:
 
         >>> sq = vardax.ThreeDVar(
         ...     obs_op=vardax.CallableObs(fn=lambda x: x**2),
@@ -147,9 +125,9 @@ class ThreeDVar(eqx.Module):
         >>> bool(jnp.allclose(xa[0, 0, 1:], 1.0, atol=1e-3))
         True
 
-        Composition with a posterior adapter: the default
+        Composed with a posterior adapter: the default
         [`LaplaceCovariance`][vardax.LaplaceCovariance] returns
-        $P^* = (I + I)^{-1}$ for the first example's model.
+        Σ_x|y = (I + I)⁻¹ for the first example's model:
 
         >>> post = three.posterior(batch)
         >>> bool(jnp.allclose(post.cov.mv(jnp.ones((1, 3))), 0.5, atol=1e-2))
@@ -189,16 +167,14 @@ class ThreeDVar(eqx.Module):
         self.parameterization = parameterization
 
     def __call__(self, batch: Batch1D | PointObsBatch) -> Float[Array, " batch *state"]:
-        r"""3DVar analysis for each sample in the batch.
+        """Analyse each sample of the batch: x⋆ = argmin_x 𝒥(x).
 
-        A [`PointObsBatch`][vardax.PointObsBatch] needs a point operator as
-        ``obs_op``: a [`GridPointObs`][vardax.GridPointObs] on the state
-        ``(T, N)`` (``time_index`` selects the row), or a
-        [`FieldPointObs`][vardax.FieldPointObs] with a
-        [`NeuralFieldParameterization`][vardax.NeuralFieldParameterization],
-        which evaluates the field at the coordinates directly. The error
-        variances are the batch's $\sigma_i^2$; ``obs_cov_op`` must be
-        ``None`` or an identity.
+        A [`PointObsBatch`][vardax.PointObsBatch] needs a point operator as ``obs_op``:
+        a [`GridPointObs`][vardax.GridPointObs] on the state (``time_index`` selects the
+        row), or a [`FieldPointObs`][vardax.FieldPointObs] with a
+        [`NeuralFieldParameterization`][vardax.NeuralFieldParameterization], which
+        evaluates the field at the coordinates directly. The error variances are the
+        batch's σᵢ²; ``obs_cov_op`` must be ``None`` or an identity.
 
         Args:
             batch: A gridded [`Batch1D`][vardax.Batch1D] or a
@@ -208,13 +184,10 @@ class ThreeDVar(eqx.Module):
             The analysis of every sample, with a leading batch axis.
 
         Raises:
-            ObservationError: For a point batch with a non-trivial
-                ``obs_cov_op``.
-            MissingInputError: For a gridded batch when ``obs_cov_op`` is
-                ``None``.
-            InputTypeError: For a point batch whose ``obs_op`` is not a
-                point operator, or a ``FieldPointObs`` without a
-                ``NeuralFieldParameterization``.
+            ObservationError: For a point batch with a non-trivial ``obs_cov_op``.
+            MissingInputError: For a gridded batch when ``obs_cov_op`` is ``None``.
+            InputTypeError: For a point batch whose ``obs_op`` is not a point operator,
+                or a ``FieldPointObs`` without a ``NeuralFieldParameterization``.
         """
         if isinstance(batch, PointObsBatch):
             check_point_obs_cov(self.obs_cov_op)
@@ -222,32 +195,31 @@ class ThreeDVar(eqx.Module):
                 lambda window: self._analyse_points(self.prior_mean, window), batch
             )
 
-        obs_cov_op = require_obs_cov(self.obs_cov_op)
+        obs_covariance = require_obs_cov(self.obs_cov_op)
 
-        def _one(
+        def analyse_sample(
             sample_obs: Float[Array, "*obs"], sample_mask: Float[Array, "*obs"]
         ) -> Float[Array, "*state"]:
             return self._analyse(
-                self.prior_mean, sample_obs, sample_mask, self.obs_op, obs_cov_op
+                self.prior_mean, sample_obs, sample_mask, self.obs_op, obs_covariance
             )
 
-        return jax.vmap(_one)(fill_gaps(batch.input, batch.mask), batch.mask)
+        return jax.vmap(analyse_sample)(fill_gaps(batch.input, batch.mask), batch.mask)
 
     def analyse(
         self, batch: Batch1D | PointObsBatch
     ) -> tuple[Float[Array, " batch *state"], MinimiseResult]:
-        r"""The analysis, as ``__call__``, with the minimiser's diagnostics.
+        """The analysis, as ``__call__``, with the minimiser's diagnostics.
 
         Args:
             batch: A gridded [`Batch1D`][vardax.Batch1D].
 
         Returns:
-            ``(analysis, result)``: the analysis ``(B, T, N)`` and a
-            [`MinimiseResult`][vardax.MinimiseResult] whose leaves carry a
-            leading sample axis: ``cost`` $J$ and ``grad_norm``
-            $\lVert \nabla J \rVert_2$ at the minimum, ``num_steps`` (``-1``
-            for a custom minimiser) and ``value``, the minimising control
-            (the state, or $\theta$ under a ``parameterization``).
+            ``(analysis, result)``: the analysis of every sample and a
+            [`MinimiseResult`][vardax.MinimiseResult] whose leaves carry a leading
+            sample axis: ``cost`` 𝒥 and ``grad_norm`` ‖∇𝒥‖₂ at the minimum,
+            ``num_steps`` (``-1`` for a custom minimiser) and ``value``, the minimising
+            control (x, or θ under a ``parameterization``).
 
         Raises:
             InputTypeError: For a ``PointObsBatch``.
@@ -257,9 +229,9 @@ class ThreeDVar(eqx.Module):
             raise InputTypeError(
                 f"ThreeDVar.analyse takes a Batch1D; got {type(batch).__name__}."
             )
-        obs_cov_op = require_obs_cov(self.obs_cov_op)
+        obs_covariance = require_obs_cov(self.obs_cov_op)
 
-        def _one(
+        def analyse_sample(
             sample_obs: Float[Array, "*obs"], sample_mask: Float[Array, "*obs"]
         ) -> tuple[Float[Array, "*state"], MinimiseResult]:
             return self._analyse(
@@ -267,97 +239,117 @@ class ThreeDVar(eqx.Module):
                 sample_obs,
                 sample_mask,
                 self.obs_op,
-                obs_cov_op,
+                obs_covariance,
                 with_result=True,
             )
 
-        return jax.vmap(_one)(fill_gaps(batch.input, batch.mask), batch.mask)
+        return jax.vmap(analyse_sample)(fill_gaps(batch.input, batch.mask), batch.mask)
 
     def _analyse(
         self,
-        background: Float[Array, "*state"],
+        prior_mean: Float[Array, "*state"],
         sample_obs: Float[Array, "*obs"],
         sample_mask: Float[Array, "*obs"],
         obs_op: Any,
-        obs_cov_op: lx.AbstractLinearOperator,
+        obs_covariance: lx.AbstractLinearOperator,
         *,
         with_result: bool = False,
     ) -> Any:
-        """Minimise the 3D-Var cost of one sample around the ``background``."""
-        # R̃ = M R M + (I − M): masked entries drop out of the likelihood
-        masked_cov = gaussx.masked_obs_covariance(obs_cov_op, sample_mask)
+        """Minimise the 3D-Var cost of one sample around the prior mean μ_x."""
+        # Σ̃_ε = M Σ_ε M + (I − M), so masked entries drop out of the likelihood
+        masked_covariance = gaussx.masked_obs_covariance(obs_covariance, sample_mask)
 
         def obs_cost(state: Float[Array, "*state"]) -> Float[Array, ""]:
-            # Observation term — apply R^{-1} via lineax solve.
-            # Mask predictions AND observations symmetrically: for
-            # obs_ops that don't take a `mask` kwarg (e.g.
-            # LinearObs), unmasked predictions at missing entries
-            # would otherwise penalise the analysis there.
+            # h(x)
             predicted_obs = (
                 obs_op(state, mask=sample_mask)
                 if accepts_mask(obs_op)
                 else obs_op(state)
             )
-            # r = m ⊙ (y − H(x))
+            # r = m ⊙ (y − h(x)); masking both sides stops an operator without a
+            # ``mask`` keyword from penalising the analysis at missing entries
             residual = sample_mask * (sample_obs - predicted_obs)
-            # J_o = ½ rᵀ R̃⁻¹ r
-            return half_weighted_norm(masked_cov, residual, self.cov_solver)
+            # 𝒥_o = ½ rᵀ Σ̃_ε⁻¹ r
+            return half_weighted_norm(masked_covariance, residual, self.cov_solver)
 
-        return self._solve(background, obs_cost, with_result=with_result)
+        return self._solve(prior_mean, obs_cost, with_result=with_result)
 
     def _analyse_points(
-        self, background: Float[Array, "*state"], batch: PointObsBatch
+        self, prior_mean: Float[Array, "*state"], batch: PointObsBatch
     ) -> Float[Array, "*state"]:
         """Minimise the 3D-Var cost of one point-observation sample."""
         if isinstance(self.obs_op, FieldPointObs):
-            param = self.parameterization
-            if not isinstance(param, NeuralFieldParameterization):
+            parameterization = self.parameterization
+            if not isinstance(parameterization, NeuralFieldParameterization):
                 raise InputTypeError(
                     "FieldPointObs evaluates a field: it needs "
                     "parameterization=NeuralFieldParameterization(...)."
                 )
             field_op = self.obs_op
 
-            def control_obs_cost(theta: Any) -> Float[Array, ""]:
-                return point_obs_cost(field_op(param.as_field(theta), batch), batch)
+            def control_obs_cost(params: Any) -> Float[Array, ""]:
+                # x(·; θ)
+                field = parameterization.as_field(params)
+                # ŷᵢ = x(sᵢ; θ)
+                predictions = field_op(field, batch)
+                # 𝒥_o = ½ ∑ᵢ mᵢ (yᵢ − ŷᵢ)² / σᵢ²
+                return point_obs_cost(predictions, batch)
 
-            return self._solve(background, None, control_obs_cost=control_obs_cost)
+            return self._solve(prior_mean, None, control_obs_cost=control_obs_cost)
 
         def obs_cost(state: Float[Array, "*state"]) -> Float[Array, ""]:
+            # 𝒥_o = ½ ∑ᵢ ‖rᵢ / σᵢ‖²
             return grid_point_obs_cost(self.obs_op, state, batch)
 
-        return self._solve(background, obs_cost)
+        return self._solve(prior_mean, obs_cost)
 
     def _solve(
         self,
-        background: Float[Array, "*state"],
+        prior_mean: Float[Array, "*state"],
         obs_cost: Callable[[Array], Array] | None,
         *,
         control_obs_cost: Callable[[Any], Array] | None = None,
         with_result: bool = False,
     ) -> Any:
-        """Minimise background (or penalty) plus ``obs_cost`` from ``background``.
+        """Minimise the background term or penalty, plus 𝒥_o, from the prior mean.
 
-        Returns the analysis, or ``(analysis, MinimiseResult)`` when
-        ``with_result``.
+        Args:
+            prior_mean: The prior mean μ_x, the start of the minimiser and the shape of
+                the decoded state.
+            obs_cost: The observation term x ↦ 𝒥_o(x), or ``None`` when
+                ``control_obs_cost`` is given.
+            control_obs_cost: The observation term θ ↦ 𝒥_o(θ) of a field evaluated at
+                the observation points directly.
+            with_result: Also return the minimiser's diagnostics.
+
+        Returns:
+            The analysis, or ``(analysis, MinimiseResult)`` when ``with_result``.
         """
         run = minimise_with_result if with_result else minimise
-        param = self.parameterization
-        if param is not None:
-            # J(θ) = pen(θ) + J_o(ψ(θ)): the penalty replaces the B term.
-            def decode(theta: Any) -> Float[Array, "*state"]:
-                return as_shape(param.decode(theta), background.shape)
+        parameterization = self.parameterization
+        if parameterization is not None:
 
-            def param_cost(theta: Any, _args: Any) -> Float[Array, ""]:
+            def decode(params: Any) -> Float[Array, "*state"]:
+                # x = g_dec(θ)
+                decoded = parameterization.decode(params)
+                return as_shape(decoded, prior_mean.shape)
+
+            def params_cost(params: Any, _args: Any) -> Float[Array, ""]:
+                # ℛ(θ)
+                penalty = parameterization.penalty(params)
                 if control_obs_cost is not None:
-                    return param.penalty(theta) + control_obs_cost(theta)
+                    # 𝒥(θ) = ℛ(θ) + 𝒥_o(θ)
+                    return penalty + control_obs_cost(params)
                 assert obs_cost is not None
-                return param.penalty(theta) + obs_cost(decode(theta))
+                # x = g_dec(θ)
+                state = decode(params)
+                # 𝒥(θ) = ℛ(θ) + 𝒥_o(g_dec(θ))
+                return penalty + obs_cost(state)
 
             result = run(
                 self.minimiser,
-                param_cost,
-                param.init_control(),
+                params_cost,
+                parameterization.init_control(),
                 adjoint=self.minimiser_adjoint,
                 max_steps=self.max_steps,
             )
@@ -366,20 +358,20 @@ class ThreeDVar(eqx.Module):
             return decode(result)
 
         def cost(state: Float[Array, "*state"], _args: Any) -> Float[Array, ""]:
-            # Background term — apply B^{-1} via lineax solve.
-            # δx = x − x_b
-            increment = state - background
-            # J_b = ½ δxᵀ B⁻¹ δx
+            # δx = x − μ_x
+            increment = state - prior_mean
+            # 𝒥_b = ½ δxᵀ Σ_x⁻¹ δx
             background_cost = half_weighted_norm(
                 self.prior_cov_op, increment, self.cov_solver
             )
             assert obs_cost is not None
+            # 𝒥(x) = 𝒥_b + 𝒥_o(x)
             return background_cost + obs_cost(state)
 
         result = run(
             self.minimiser,
             cost,
-            background,
+            prior_mean,
             adjoint=self.minimiser_adjoint,
             max_steps=self.max_steps,
         )
@@ -390,9 +382,9 @@ class ThreeDVar(eqx.Module):
     def posterior(self, batch: Batch1D, adapter: Any = None) -> Any:
         """Analyse one window and return its [`Posterior`][vardax.Posterior].
 
-        Runs the analysis, then ``adapter(analysis, self, batch)``; the
-        default adapter is [`LaplaceCovariance`][vardax.LaplaceCovariance]
-        with this model's $B$ and $R$.
+        Runs the analysis, then ``adapter(analysis, self, batch)``; the default adapter
+        is [`LaplaceCovariance`][vardax.LaplaceCovariance] with this model's Σ_x and
+        Σ_ε.
 
         Args:
             batch: A ``Batch1D`` holding one window.
@@ -406,35 +398,31 @@ class ThreeDVar(eqx.Module):
             ShapeError: If ``batch`` holds more than one window.
             UnsupportedInputError: For a point batch.
         """
+        # lazy: the posterior adapters import the models
         from vardax._src.posterior._precision import model_posterior
 
         return model_posterior(self, batch, adapter)
 
     def as_analysis_step(self) -> _ThreeDVarAnalysisStep:
-        """Adapt to ``pipekit_cycle.AnalysisStep`` (Decision D8).
+        """Adapt to ``pipekit_cycle.AnalysisStep``.
 
         Returns:
-            An analysis step that minimises the cost around a supplied
-            forecast, treating ``NaN`` observations as missing.
+            An analysis step that minimises the cost around a supplied forecast,
+            treating ``NaN`` observations as missing.
         """
         return _ThreeDVarAnalysisStep(self)
 
 
 class _ThreeDVarAnalysisStep(eqx.Module):
-    r"""``pipekit_cycle.AnalysisStep`` adapter for ``ThreeDVar``.
+    """``pipekit_cycle.AnalysisStep`` adapter for ``ThreeDVar``.
 
-    Minimises the 3D-Var cost around the forecast,
-    $J(x) = \tfrac12 \|x - x_b\|^2_{B^{-1}} + \tfrac12 \|y - H(x)\|^2_{R^{-1}}$
-    with $x_b$ = ``forecast`` (also the starting point of the
-    minimiser). ``B`` is the model's ``prior_cov_op``; ``H`` is ``obs_op``
-    and ``R`` is ``obs_err_cov`` when given, else the model's ``obs_op`` /
-    ``obs_cov_op``. The model's ``prior_mean`` is not used.
+    Minimises 𝒥(x) with μ_x = ``forecast``, which is also the starting point of the
+    minimiser, so the model's ``prior_mean`` is not used. Σ_x is the model's
+    ``prior_cov_op``; h is ``obs_op`` and Σ_ε is ``obs_err_cov`` when given, else the
+    model's.
 
-    ``forecast`` is one state shaped like ``prior_mean`` or a batch of
-    them, ``(B, T, N)``, and ``obs`` is batched the same way; ``NaN``
-    observations are missing. ``obs_err_cov`` may be ``None``, a
-    ``lineax.AbstractLinearOperator`` on one observation sample, or a
-    scalar / array of error variances (a diagonal $R$).
+    Attributes:
+        model: The model to analyse with.
     """
 
     model: ThreeDVar
@@ -447,6 +435,19 @@ class _ThreeDVarAnalysisStep(eqx.Module):
         obs_op: Any,
         obs_err_cov: Any,
     ) -> Float[Array, ...]:
+        """Analyse around ``forecast``.
+
+        Args:
+            forecast: One state shaped like ``prior_mean``, or a batch of them.
+            obs: Observations y, batched the same way; ``NaN`` entries are missing.
+            obs_op: The cycle's observation operator h, or ``None``.
+            obs_err_cov: The cycle's Σ_ε: ``None``, a
+                ``lineax.AbstractLinearOperator`` on one observation sample, or a
+                scalar or array of error variances (a diagonal Σ_ε).
+
+        Returns:
+            The analysis x⋆, with the shape of ``forecast``.
+        """
         return analyse_forecast(
             self.model._analyse,
             state_shape=self.model.prior_mean.shape,

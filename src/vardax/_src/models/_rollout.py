@@ -1,8 +1,7 @@
-r"""Forward rollouts for the 4DVar models, with optional checkpointing.
+"""Rollouts of the forward model f over a window, with optional checkpointing.
 
-One helper steps a ``ForwardModel`` over a window for every 4DVar model,
-so that memory control (``checkpoint=``) and diffrax adjoints
-(``forward_adjoint=``) behave the same everywhere.
+Every 4D-Var model steps f through this one helper, so that ``checkpoint=`` and
+``forward_adjoint=`` behave the same everywhere.
 """
 
 from __future__ import annotations
@@ -22,15 +21,14 @@ def checkpoint_every(checkpoint: bool | int) -> int:
     """Number of steps per rematerialised block; ``0`` means no checkpointing.
 
     Args:
-        checkpoint: ``False`` (store every intermediate), ``True`` (one
-            block per step) or an integer ``k ≥ 1`` (one block per ``k``
-            steps).
+        checkpoint: ``False`` (store every intermediate), ``True`` (one block per
+            step) or an integer k ≥ 1 (one block per k steps).
 
     Returns:
-        The block length ``k``, or ``0`` when checkpointing is off.
+        The block length k, or ``0`` when checkpointing is off.
 
     Raises:
-        ValueError: If ``checkpoint`` is an integer below 1.
+        ConfigurationError: If ``checkpoint`` is neither a bool nor an int ≥ 1.
 
     Examples:
         >>> checkpoint_every(False), checkpoint_every(True), checkpoint_every(5)
@@ -51,24 +49,24 @@ def checkpoint_every(checkpoint: bool | int) -> int:
 
 
 def resolve_forward(forward: Any, forward_adjoint: Any) -> Any:
-    """Return the forward to roll out, with ``forward_adjoint`` applied.
+    """Return the forward model f to roll out, with ``forward_adjoint`` applied.
 
     A forward that integrates with ``diffrax`` can expose
     ``with_adjoint(adjoint) -> forward`` (the
-    [`SupportsForwardAdjoint`][vardax.SupportsForwardAdjoint] protocol).
-    A per-step forward cannot take a diffrax adjoint, so asking for one
-    is an error rather than a silent no-op; use ``checkpoint=`` instead.
+    [`SupportsForwardAdjoint`][vardax.SupportsForwardAdjoint] protocol). A per-step
+    forward cannot take a diffrax adjoint, so asking for one is an error rather than a
+    silent no-op; use ``checkpoint=`` instead.
 
     Args:
-        forward: The model's ``ForwardModel``.
-        forward_adjoint: A ``diffrax.AbstractAdjoint``, or ``None`` to keep
-            the forward's own adjoint.
+        forward: The forward model f, a ``ForwardModel``.
+        forward_adjoint: A ``diffrax.AbstractAdjoint``, or ``None`` to keep the
+            forward's own adjoint.
 
     Returns:
         ``forward`` itself, or ``forward.with_adjoint(forward_adjoint)``.
 
     Raises:
-        ValueError: If ``forward_adjoint`` is set and ``forward`` has no
+        UnsupportedInputError: If ``forward_adjoint`` is set and ``forward`` has no
             ``with_adjoint`` method.
 
     Examples:
@@ -107,37 +105,39 @@ def rollout(
     forcing: Float[Array, "T N"] | None = None,
     checkpoint: bool | int = False,
 ) -> Float[Array, "T_plus_1 N"]:
-    r"""Step a forward model over a window, returning ``T + 1`` states.
+    """Step the forward model f over a window, returning T + 1 states.
 
-    xₜ₊₁ = M(xₜ) + ηₜ,  t = 0 … T − 1,  with ηₜ = 0 when ``forcing`` is None.
+        xₜ = f(xₜ₋₁) + ηₜ,   t = 1, …, T,   with ηₜ = 0 when ``forcing`` is ``None``
+
+    With ``checkpoint=False`` it is a single plain ``lax.scan``: reverse mode stores
+    every intermediate of every step. The trajectory itself is always returned, since
+    the observation cost reads every state; what checkpointing removes is the per-step
+    work arrays of the step function (Runge–Kutta stages, nonlinear terms).
 
     Algorithm:
-        1. Group the ``T`` steps into blocks of ``k`` (``checkpoint=k``),
-           plus one shorter tail block when ``k`` does not divide ``T``.
-        2. Scan over blocks; each block is a scan over its steps wrapped
-           in ``jax.checkpoint``, so reverse mode stores only the state
-           entering each block and recomputes the steps inside it.
+        1. Group the T steps into blocks of k (``checkpoint=k``), plus one shorter
+           tail block when k does not divide T.
+        2. Scan over the blocks. Each block is a scan over its steps wrapped in
+           ``jax.checkpoint``, so reverse mode stores only the state entering each
+           block and recomputes the steps inside it.
         3. Prepend x₀ to the stacked states.
 
-    With ``checkpoint=False`` it is a single plain ``lax.scan``: reverse
-    mode stores every intermediate of every step. The trajectory itself
-    is always returned, since the observation cost reads every state;
-    what checkpointing removes is the per-step work arrays of the step
-    function (Runge–Kutta stages, nonlinear terms).
-
     Args:
-        forward: ``ForwardModel`` with ``dt`` and ``step(state, dt)``.
+        forward: Forward model f, a ``ForwardModel`` with ``dt`` and
+            ``step(state, dt)``.
         initial_state: Initial state x₀.
         n_steps: Number of steps T.
-        forcing: Optional additive model error ηₜ per step (weak 4DVar).
+        forcing: Optional additive model error ηₜ per step (weak 4D-Var).
         checkpoint: ``False``, ``True`` (k = 1) or a block length k ≥ 1.
 
     Returns:
-        The trajectory ``[x₀, x₁, …, x_T]``.
+        The trajectory x₀, x₁, …, x_T.
+
+    Raises:
+        ConfigurationError: If ``checkpoint`` is neither a bool nor an int ≥ 1.
 
     Examples:
-        Decay xₜ₊₁ = 0.5 xₜ over three steps, with and without
-        checkpointing:
+        Decay f(x) = x / 2 over three steps, with and without checkpointing:
 
         >>> import jax.numpy as jnp
         >>> class Halve:
@@ -152,7 +152,7 @@ def rollout(
         >>> bool(jnp.array_equal(plain, blocked))
         True
 
-        Additive forcing, as in weak-constraint 4DVar:
+        Additive forcing, as in weak-constraint 4D-Var:
 
         >>> forced = rollout(Halve(), jnp.zeros(2), 2, forcing=jnp.ones((2, 2)))
         >>> forced[:, 0].tolist()
@@ -164,9 +164,10 @@ def rollout(
     def step(
         state: Float[Array, " N"], model_error: Float[Array, " N"] | None
     ) -> tuple[Float[Array, " N"], Float[Array, " N"]]:
-        # xₜ₊₁ = M(xₜ) (+ ηₜ)
+        # xₜ = f(xₜ₋₁), without ηₜ yet
         next_state = forward.step(state, dt)
         if model_error is not None:
+            # xₜ = f(xₜ₋₁) + ηₜ
             next_state = next_state + model_error
         return next_state, next_state
 
@@ -182,15 +183,16 @@ def rollout(
         # [x₀; x₁, …, x_T]; jnp, not einx: einx cannot size the T = 0 axis
         return jnp.concatenate([jnp.expand_dims(initial_state, 0), states])
 
-    n_blocks, tail_length = divmod(n_steps, block_length)
+    # T = k num_blocks + tail_length
+    num_blocks, tail_length = divmod(n_steps, block_length)
     checkpointed_block = jax.checkpoint(scan_steps, static_argnums=(2,))
 
     # --- full blocks ---
     head_forcing = None
     if forcing is not None:
-        head = forcing[: n_blocks * block_length]
-        # jnp, not einx: n_blocks is 0 when k exceeds T
-        head_forcing = head.reshape(n_blocks, block_length, *forcing.shape[1:])
+        head = forcing[: num_blocks * block_length]
+        # jnp, not einx: num_blocks is 0 when k exceeds T
+        head_forcing = head.reshape(num_blocks, block_length, *forcing.shape[1:])
 
     def scan_block(
         state: Float[Array, " N"], block_forcing: Float[Array, "k N"] | None
@@ -198,22 +200,42 @@ def rollout(
         return checkpointed_block(state, block_forcing, block_length)
 
     state, blocked_states = jax.lax.scan(
-        scan_block, initial_state, head_forcing, length=n_blocks
+        scan_block, initial_state, head_forcing, length=num_blocks
     )
-    # jnp, not einx: n_blocks is 0 when k exceeds T
-    head_states = blocked_states.reshape(n_blocks * block_length, *state.shape)
+    # jnp, not einx: num_blocks is 0 when k exceeds T
+    head_states = blocked_states.reshape(num_blocks * block_length, *state.shape)
 
     # --- tail block (k does not divide T) ---
     pieces = [jnp.expand_dims(initial_state, 0), head_states]
     if tail_length > 0:
-        tail_forcing = None if forcing is None else forcing[n_blocks * block_length :]
+        tail_forcing = None if forcing is None else forcing[num_blocks * block_length :]
         _, tail_states = checkpointed_block(state, tail_forcing, tail_length)
         pieces.append(tail_states)
     return jnp.concatenate(pieces)
 
 
 def accepts_mask(obs_op: Any) -> bool:
-    """Whether ``obs_op.__call__`` takes a ``mask`` keyword."""
+    """Whether ``obs_op.__call__`` takes a ``mask`` keyword.
+
+    Args:
+        obs_op: The observation operator h.
+
+    Returns:
+        ``True`` when h can be called with ``mask=``, ``False`` otherwise, including
+        for a callable whose signature cannot be read.
+
+    Examples:
+        ``MaskedIdentity`` takes the mask, and a plain callable does not:
+
+        >>> import vardax
+        >>> accepts_mask(vardax.MaskedIdentity())
+        True
+        >>> class Plain:
+        ...     def __call__(self, x):
+        ...         return x
+        >>> accepts_mask(Plain())
+        False
+    """
     try:
         return "mask" in inspect.signature(obs_op.__call__).parameters
     except (TypeError, ValueError):
@@ -223,32 +245,63 @@ def accepts_mask(obs_op: Any) -> bool:
 def observed_trajectory(
     model: Any, mask: Float[Array, "T_plus_1 M"]
 ) -> Callable[[Float[Array, " N"]], Float[Array, "T_plus_1 M"]]:
-    """The window's observation map of a strong-constraint 4DVar model.
+    """The masked predicted observations of a strong-constraint 4D-Var window.
 
-    G(x₀) = [mₜ ⊙ Hₜ(Mₜ(x₀))]ₜ₌₀…T, the masked predicted observations,
-    stacked over time. Its tangent G' and adjoint G'ᵀ (via ``jax.linearize``
-    and ``jax.vjp``) apply ∑ₜ H'ₜ M'ₜ without forming a Jacobian.
+        ŷₜ(x₀) = mₜ ⊙ h(xₜ),   xₜ = f(xₜ₋₁),   t = 0, …, T
+
+    The result is differentiable, so ``jax.linearize`` and ``jax.vjp`` apply its
+    Jacobian and adjoint without forming a matrix.
 
     Args:
         model: A model with ``obs_op`` and ``_rollout(initial_state, n_steps)``.
         mask: Observation mask mₜ; its length sets the window, T + 1.
 
     Returns:
-        The map x₀ ↦ G(x₀).
+        The map x₀ ↦ ŷ(x₀), stacked over time.
+
+    Examples:
+        With f(x) = x / 2, the second state is halved and the mask zeroes one entry:
+
+        >>> import jax, jax.numpy as jnp, lineax as lx, vardax
+        >>> class Halve:
+        ...     dt = 1.0
+        ...
+        ...     def step(self, x, dt):
+        ...         return 0.5 * x
+        >>> eye = lx.IdentityLinearOperator(jax.ShapeDtypeStruct((2,), jnp.float32))
+        >>> model = vardax.StrongFourDVar(
+        ...     forward=Halve(),
+        ...     obs_op=vardax.MaskedIdentity(),
+        ...     prior_mean=jnp.zeros(2),
+        ...     prior_cov_op=eye,
+        ...     obs_cov_op=eye,
+        ... )
+        >>> mask = jnp.array([[1.0, 1.0], [1.0, 0.0]])
+        >>> observed = observed_trajectory(model, mask)
+        >>> observed(jnp.ones(2)).tolist()
+        [[1.0, 1.0], [0.5, 0.0]]
+
+        A one-state window has no rollout steps:
+
+        >>> observed_trajectory(model, jnp.ones((1, 2)))(jnp.ones(2)).shape
+        (1, 2)
     """
-    n_steps = mask.shape[0] - 1
+    # the window holds T + 1 times, so T steps
+    num_steps = mask.shape[0] - 1
     obs_op = model.obs_op
 
     def observe(state: Float[Array, " N"], step_mask: Float[Array, " M"]):
-        # mₜ ⊙ Hₜ(xₜ)
+        # h(xₜ)
         if accepts_mask(obs_op):
             predicted = obs_op(state, mask=step_mask)
         else:
             predicted = obs_op(state)
+        # ŷₜ = mₜ ⊙ h(xₜ)
         return step_mask * predicted
 
     def observed(initial_state: Float[Array, " N"]) -> Float[Array, "T_plus_1 M"]:
-        trajectory = model._rollout(initial_state, n_steps)
+        # xₜ = f(xₜ₋₁)
+        trajectory = model._rollout(initial_state, num_steps)
         return jax.vmap(observe)(trajectory, mask)
 
     return observed

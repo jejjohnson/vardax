@@ -385,7 +385,7 @@ class StrongFourDVar(eqx.Module):
 
         Returns:
             An analysis step that treats non-finite observations as
-            missing and returns the analysed initial state.
+            missing and returns the analysis at the end of the window.
         """
         return _StrongFourDVarAnalysisStep(self)
 
