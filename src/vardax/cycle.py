@@ -1,4 +1,4 @@
-"""Public ``vardax.cycle`` API surface (Epic 7 / Decision D8).
+"""Public ``vardax.cycle`` API surface.
 
 Re-exports from ``vardax._src.cycle`` so ``vdx.cycle.VarDACycle(...)``
 works as advertised in the design docs.

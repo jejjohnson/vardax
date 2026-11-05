@@ -1,9 +1,8 @@
 """Convenience factories for ``pipekit_cycle.DACycle`` / ``SmootherCycle``.
 
-Per Decision D8, vardax models satisfy ``pipekit_cycle.AnalysisStep`` via
-``.as_analysis_step()``. The factories here are pure glue: they take a
-vardax model (any of the seven Layer 2 classes) plus a forward and obs
-operator, and return a configured pipekit-cycle object ready to call.
+Vardax models satisfy ``pipekit_cycle.AnalysisStep`` via ``.as_analysis_step()``.
+The factories are pure glue: they take a model, a forward model and an
+observation operator, and return a configured pipekit-cycle object.
 
 Typical operational wiring:
 
@@ -45,15 +44,15 @@ def VarDACycle(
     n_steps: int = 1,
     save_history: bool = True,
 ) -> DACycle:
-    r"""Build a ``pipekit_cycle.DACycle`` from a vardax model.
+    """Build a ``pipekit_cycle.DACycle`` from a vardax model.
+
+        μ_x,t|t−1 = f(μ_x,t−1|t−1)
+        μ_x,t|t = analysis(μ_x,t|t−1, y_t)
 
     Pulls ``model.as_analysis_step()`` and hands it to pipekit-cycle.
-    The same orchestration code works for any of the seven Layer 2
-    classes — `OptimalInterpolation`, `ThreeDVar`, `StrongFourDVar`,
-    `WeakFourDVar`, `IncrementalFourDVar`, `FourDVarNet`,
-    `AmortizedPosterior`. Each call alternates forecast and analysis,
-
-    $$ x^f_k = \mathcal M(x^a_{k-1}), \qquad x^a_k = \mathrm{analysis}(x^f_k, y_k) $$
+    The same orchestration code works for `OptimalInterpolation`, `ThreeDVar`,
+    `StrongFourDVar`, `WeakFourDVar`, `IncrementalFourDVar`, `FourDVarNet`
+    and `AmortizedPosterior`. Each call alternates forecast and analysis.
 
     Algorithm:
         1. Check that ``model`` exposes ``as_analysis_step``.
@@ -62,10 +61,10 @@ def VarDACycle(
            analyses with that step, ``n_steps`` times per call.
 
     Args:
-        forward: Forward model satisfying ``pipekit_cycle.ForwardModel``.
-        obs_op: Observation operator satisfying
+        forward: Forward model f, satisfying ``pipekit_cycle.ForwardModel``.
+        obs_op: Observation operator h, satisfying
             ``pipekit_cycle.ObservationOperator``.
-        model: Vardax Layer 2 model exposing ``.as_analysis_step()``.
+        model: Vardax model exposing ``.as_analysis_step()``.
         obs_source: Optional ``pipekit.Operator`` invoked as
             ``obs_source(step_index)`` to load observations per cycle.
             If ``None``, the analysis step is skipped and the forecast
@@ -148,6 +147,9 @@ def VarSmootherCycle(
 ) -> SmootherCycle:
     """Build a ``pipekit_cycle.SmootherCycle`` from a vardax model.
 
+        μ_x,t|t−1 = f(μ_x,t−1|t−1)   for each step of a window of ``window`` steps
+        μ_x,t|t = analysis(μ_x,t|t−1, y_t)   once the window's observations are in
+
     Retrospective windowed smoothing: each call processes ``stride``
     consecutive ``window``-step windows back to back, analysing each one
     once all of its observations are in.
@@ -159,9 +161,9 @@ def VarSmootherCycle(
            forecast steps, analyses once all observations are in.
 
     Args:
-        forward: Forward model.
-        obs_op: Observation operator.
-        model: Vardax Layer 2 model exposing ``.as_analysis_step()``.
+        forward: Forward model f.
+        obs_op: Observation operator h.
+        model: Vardax model exposing ``.as_analysis_step()``.
         window: Number of forecast steps per smoother window.
         stride: Number of consecutive windows processed per call (the
             windows are adjacent, not overlapping; this mirrors

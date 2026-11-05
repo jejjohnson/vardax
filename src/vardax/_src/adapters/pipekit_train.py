@@ -1,8 +1,7 @@
 """Integration adapters for ``pipekit-train``.
 
-Provides minimal glue so a vardax model + a ``pipekit_train.Loss``
-implementation compose into a ``pipekit_train.TrainingLoop`` without
-the user reimplementing the inner training step.
+Minimal glue that lets a vardax model and a loss compose into a
+``pipekit_train.TrainingLoop``, with ``VardaxReconLoss`` unwrapping ``batch.target``.
 
 Typical usage:
 
@@ -24,10 +23,8 @@ loop = TrainingLoop(
 trained_op, state = loop(model_op, TrainerCarryState(...))
 ```
 
-The adapter is intentionally thin — ``pipekit_train.MSE()`` already
-works for the standard reconstruction-loss case. ``VardaxReconLoss``
-exists as a convenience that pulls ``batch.target`` out of the vardax
-``Batch*`` container automatically, so callers don't have to unwrap.
+``pipekit_train.MSE()`` already covers the standard reconstruction loss;
+``VardaxReconLoss`` only saves callers from unwrapping the ``Batch*`` container.
 """
 
 from __future__ import annotations
@@ -53,13 +50,12 @@ except ImportError as exc:  # pragma: no cover
 class VardaxReconLoss(Operator):
     """Reconstruction-loss adapter for ``pipekit_train.TrainingLoop``.
 
-    Equivalent to ``pipekit_train.MSE`` but unwraps the vardax
-    ``Batch*.target`` automatically: the loop hands the loss a
-    ``(prediction, batch)`` pair, and the adapter computes
-    ``mean((prediction - batch.target) ** 2)``.
+        ℒ_MSE(x̂, x) = mean((x̂ − x)²)
 
-    Returns ``(loss, {"recon_mse": loss})`` so the training loop sees the
-    standard ``(scalar, aux_dict)`` shape.
+    Equivalent to ``pipekit_train.MSE`` but unwraps the vardax ``Batch*.target``
+    x: the loop hands the loss a ``(prediction, batch)`` pair with prediction x̂.
+    The call returns ``(loss, {"recon_mse": loss})``, the standard
+    ``(scalar, aux_dict)`` shape.
     """
 
     def _apply(
@@ -74,5 +70,6 @@ class VardaxReconLoss(Operator):
                 "got batch with target=None. For operational (unlabelled) "
                 "data, evaluate the model directly without a loss adapter."
             )
+        # ℒ_MSE = mean((x̂ − x)²)
         loss = jnp.mean((predicted - target) ** 2)
         return loss, {"recon_mse": loss}

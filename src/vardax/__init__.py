@@ -226,7 +226,7 @@ __all__ = [
     "linear_basis",
     "rbf_basis",
     "wavelet_basis",
-    # Observation operators (Decision D9)
+    # Observation operators
     "AveragingKernel",
     "CallableObs",
     "InstrumentRegistry",
@@ -239,7 +239,7 @@ __all__ = [
     "FieldPointObs",
     "GridPointObs",
     "point_obs_cost",
-    # Posterior adapters (Decision D10)
+    # Posterior adapters
     "EnsembleCovariance",
     "GaussNewtonHessian",
     "GaussianMarkLikelihood",
@@ -270,7 +270,7 @@ __all__ = [
     # Gradient modulators
     "ConvLSTMGradMod1D",
     "ConvLSTMGradMod2D",
-    # Adjoints (Decision D15 — replaces v0.1 grad_mode enum)
+    # Adjoints
     "ImplicitAdjoint",
     "KStepAdjoint",
     "OneStepAdjoint",
@@ -296,7 +296,7 @@ __all__ = [
     # Model
     "FourDVarNet1D",
     "FourDVarNet2D",
-    # Classical DA methods (Decision D14)
+    # Classical DA methods
     "IncrementalConfig",
     "IncrementalFourDVar",
     "OptimalInterpolation",
@@ -308,7 +308,7 @@ __all__ = [
     "StrongFourDVar",
     "ThreeDVar",
     "WeakFourDVar",
-    # Amortized inference (Epic 8 / Decision D12)
+    # Amortized inference
     "AmortizedConfig",
     "AmortizedPosterior",
     "ConditionalFlowHead",
@@ -316,10 +316,10 @@ __all__ = [
     "MLPObsEncoder",
     "RegressionHead",
     "ScoreDiffusionHead",
-    # pipekit cycle integration (Epic 7 / Decision D8)
+    # pipekit cycle integration
     "VarDACycle",
     "VarSmootherCycle",
-    # Six-step validation gates (Decision D12)
+    # Six-step validation gates
     "assert_adjoint_calibrated",
     "assert_posterior_agreement",
     "simulation_based_calibration",
