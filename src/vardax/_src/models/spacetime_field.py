@@ -139,12 +139,12 @@ class SpaceTimeFieldVar(eqx.Module):
 
         𝒥(θ) = 𝒥_o(θ) + 𝒥_res(θ) + ½ β ‖θ‖²
         𝒥_o(θ) = ½ ∑ᵢ mᵢ (yᵢ − x(tᵢ, sᵢ; θ))² / σᵢ²
-        𝒥_res(θ) = λ / (2 N_c) ∑ⱼ ‖𝒩[x(·; θ)](cⱼ)‖²
+        𝒥_res(θ) = β_res / (2 N_c) ∑ⱼ ‖r(cⱼ; θ)‖²
 
     The observations are those of a [`PointObsBatch`][vardax.PointObsBatch] (mᵢ = 0 on
     padding rows, which contribute nothing, ``NaN`` included), the physics term is an
-    optional [`ResidualPenalty`][vardax.ResidualPenalty] with PDE operator 𝒩, weight λ
-    and collocation points cⱼ, and β is the weight decay. There is no background
+    optional [`ResidualPenalty`][vardax.ResidualPenalty] with PDE residual r, weight
+    β_res and collocation points cⱼ, and β is the weight decay. There is no background
     covariance and no rollout: the whole window is the field, which can be queried and
     differentiated anywhere.
 
@@ -154,13 +154,13 @@ class SpaceTimeFieldVar(eqx.Module):
     field's single output (`FieldPointObs`); a multi-channel field needs its own
     wrapper.
 
-    Scale of λ: the observation term is a *sum* over the N_obs valid observations, each
-    weighted by 1 / σᵢ², while the residual term is a *mean* over the collocation
+    Scale of β_res: the observation term is a *sum* over the N_obs valid observations,
+    each weighted by 1 / σᵢ², while the residual term is a *mean* over the collocation
     points. A unit change of the field everywhere moves the first by about
-    N_obs / (2 σ²) and the second by about λ / 2 times the squared residual it causes,
-    so λ trades off against N_obs / (2 σ²) and must grow with it to keep the same
-    balance (the advection test uses λ = 10³ for 100 observations with σ = 0.05, where
-    N_obs / (2 σ²) = 2 × 10⁴).
+    N_obs / (2 σ²) and the second by about β_res / 2 times the squared residual it
+    causes, so β_res trades off against N_obs / (2 σ²) and must grow with it to keep
+    the same balance (the advection test uses β_res = 10³ for 100 observations with
+    σ = 0.05, where N_obs / (2 σ²) = 2 × 10⁴).
 
     The fit runs in one ``eqx.filter_jit``-compiled function of the model, the
     observations and the key, so repeated analyses with new observations (or a new
@@ -513,7 +513,7 @@ def _cost(
     decay_cost = weight_decay * parameterization.penalty(params)
     cost = obs_cost + decay_cost
     if residual is not None:
-        # 𝒥_res = λ / (2 N_c) ∑ⱼ ‖𝒩[x(·; θ)](cⱼ)‖²
+        # 𝒥_res = β_res / (2 N_c) ∑ⱼ ‖r(cⱼ; θ)‖²
         cost = cost + residual(field)
     return cost
 
