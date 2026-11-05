@@ -1,9 +1,7 @@
-"""Learned prior models for FourDVarNet.
+"""Learned autoencoder priors x̂ = g_ae(x; θ) for FourDVarNet, as Equinox modules.
 
-All priors are implemented as Equinox modules. They expose a single
-``__call__`` returning the reconstructed state; bilinear / MLP /
-convolutional autoencoder variants are provided for 1D and 2D spatial
-data with optional time and channel axes.
+Each prior's ``__call__`` returns the reconstruction x̂ of a state window; the
+variants are bilinear, MLP and convolutional autoencoders for 1-D and 2-D data.
 """
 
 from __future__ import annotations
@@ -22,7 +20,7 @@ from vardax._src.errors import ConfigurationError, ShapeError
 
 
 class _BilinearBlock(eqx.Module):
-    """Single bilinear block: relu(Ax) * tanh(Bx)."""
+    """Bilinear block relu(W_a x) ⊙ tanh(W_b x) applied to each row of a batch."""
 
     linear_a: eqx.nn.Linear
     linear_b: eqx.nn.Linear
@@ -36,9 +34,11 @@ class _BilinearBlock(eqx.Module):
 
     def __call__(self, x: Array) -> Array:
         # eqx.nn.Linear operates on a single sample, vmap over batch
+        # W_a x
         relu_input = jax.vmap(self.linear_a)(x)
+        # W_b x
         tanh_input = jax.vmap(self.linear_b)(x)
-        # relu(Ax) * tanh(Bx)
+        # relu(W_a x) ⊙ tanh(W_b x)
         return jax.nn.relu(relu_input) * jnp.tanh(tanh_input)
 
 
@@ -48,15 +48,16 @@ class _BilinearBlock(eqx.Module):
 
 
 class BilinAEPrior1D(eqx.Module):
-    r"""Bilinear autoencoder prior for 1-D data.
+    """Bilinear autoencoder prior for 1-D data.
 
-    The encoder maps the input to a low-dimensional latent code; the decoder
-    reconstructs the original space, $\varphi(x) = D(E(x))$.  The prior cost is
-    $\|x - \varphi(x)\|^2$.
+        x̂ = g_ae(x; θ) = g_dec(g_enc(x; ν); θ)
+
+    with encoder g_enc(x; ν) = relu(W_a x) ⊙ tanh(W_b x) and a dense decoder
+    g_dec(z; θ). The prior cost is 𝒥_p = mean((x − x̂)²).
 
     Algorithm:
         1. Flatten each sample over time and space.
-        2. Encode with the bilinear block $\mathrm{relu}(Ax) \odot \tanh(Bx)$.
+        2. Encode with the bilinear block to the latent code z.
         3. Decode with a dense layer and reshape to ``(T, N)``.
 
     Args:
@@ -116,41 +117,49 @@ class BilinAEPrior1D(eqx.Module):
         self._decode_dense = eqx.nn.Linear(latent_dim, n_time * state_dim, key=key_dec)
 
     def __call__(self, x: Float[Array, "B T N"]) -> Float[Array, "B T N"]:
+        # vec(x): flatten time and space
         state_flat = einx.id("b t n -> b (t n)", x)
+        # z = g_enc(x; ν)
         latent = self._bilin(state_flat)
+        # x̂ = g_dec(z; θ)
         decoded = jax.vmap(self._decode_dense)(latent)
         return einx.id("b (t n) -> b t n", decoded, t=x.shape[1])
 
     def encode(self, x: Float[Array, "B T N"]) -> Float[Array, "B Z"]:
-        """Encode input to latent space.
+        """Encode a state window to its latent code: z = g_enc(x; ν).
 
         Args:
             x: State window to encode.
 
         Returns:
-            Latent code $E(x)$ of dimension ``latent_dim`` per sample.
+            Latent code z of dimension ``latent_dim`` per sample.
         """
+        # vec(x): flatten time and space
         state_flat = einx.id("b t n -> b (t n)", x)
+        # z = g_enc(x; ν)
         return self._bilin(state_flat)
 
     def decode(self, z: Float[Array, "B Z"]) -> Float[Array, "B T N"]:
-        """Decode latent code to state space.
+        """Decode a latent code to a state window: x̂ = g_dec(z; θ).
 
         Args:
-            z: Latent code $z$.
+            z: Latent code z.
 
         Returns:
-            Decoded state window $D(z)$.
+            Decoded state window x̂.
         """
+        # x̂ = g_dec(z; θ)
         decoded = jax.vmap(self._decode_dense)(z)
         return einx.id("b (t n) -> b t n", decoded, t=self.n_time, n=self.state_dim)
 
 
 class MLPAEPrior1D(eqx.Module):
-    r"""MLP autoencoder prior for 1-D data.
+    """MLP autoencoder prior for 1-D data.
 
-    A two-layer MLP encoder and decoder around a latent code,
-    $\varphi(x) = D(E(x))$, applied to the flattened ``(T, N)`` window.
+        x̂ = g_ae(x; θ) = g_dec(g_enc(x; ν); θ)
+
+    with g_enc(x; ν) = W₂ relu(W₁ x) and g_dec(z; θ) = W₄ relu(W₃ z), each with a
+    bias, applied to the flattened ``(T, N)`` window.
 
     Algorithm:
         1. Flatten each sample over time and space.
@@ -209,20 +218,26 @@ class MLPAEPrior1D(eqx.Module):
         self.decoder_out = eqx.nn.Linear(hidden_dim, in_features, key=key_dec2)
 
     def __call__(self, x: Float[Array, "B T N"]) -> Float[Array, "B T N"]:
+        # vec(x): flatten time and space
         state_flat = einx.id("b t n -> b (t n)", x)
+        # relu(W₁ x)
         latent = jax.nn.relu(jax.vmap(self.encoder_hidden)(state_flat))
+        # z = W₂ relu(W₁ x)
         latent = jax.vmap(self.encoder_out)(latent)
+        # relu(W₃ z)
         hidden = jax.nn.relu(jax.vmap(self.decoder_hidden)(latent))
+        # x̂ = W₄ relu(W₃ z)
         decoded = jax.vmap(self.decoder_out)(hidden)
         return einx.id("b (t n) -> b t n", decoded, t=x.shape[1])
 
 
 class BilinAEPrior2D(eqx.Module):
-    r"""Bilinear autoencoder prior for 2-D data.
+    """Bilinear autoencoder prior for 2-D data.
 
-    The window is flattened, encoded with the bilinear block
-    $\mathrm{relu}(Ax) \odot \tanh(Bx)$ and decoded by a dense layer,
-    $\varphi(x) = D(E(x))$.
+        x̂ = g_ae(x; θ) = g_dec(g_enc(x; ν); θ)
+
+    with encoder g_enc(x; ν) = relu(W_a x) ⊙ tanh(W_b x) on the flattened window
+    and a dense decoder g_dec(z; θ).
 
     Algorithm:
         1. Flatten each sample over time and both spatial axes.
@@ -280,18 +295,22 @@ class BilinAEPrior2D(eqx.Module):
 
     def __call__(self, x: Float[Array, "B T H W"]) -> Float[Array, "B T H W"]:
         _, n_time, height, width = x.shape
+        # vec(x): flatten time and both spatial axes
         state_flat = einx.id("b t h w -> b (t h w)", x)
+        # z = g_enc(x; ν)
         latent = self._bilin(state_flat)
+        # x̂ = g_dec(z; θ)
         decoded = jax.vmap(self._decode_dense)(latent)
         return einx.id("b (t h w) -> b t h w", decoded, t=n_time, h=height, w=width)
 
 
 class BilinAEPrior2DMultivar(eqx.Module):
-    r"""Bilinear autoencoder prior for 2-D multivariate data.
+    """Bilinear autoencoder prior for 2-D multivariate data.
 
-    The window is flattened over time, channels and space, encoded with the
-    bilinear block $\mathrm{relu}(Ax) \odot \tanh(Bx)$ and decoded by a dense
-    layer, $\varphi(x) = D(E(x))$.
+        x̂ = g_ae(x; θ) = g_dec(g_enc(x; ν); θ)
+
+    with encoder g_enc(x; ν) = relu(W_a x) ⊙ tanh(W_b x) on the window flattened
+    over time, channels and space, and a dense decoder g_dec(z; θ).
 
     Algorithm:
         1. Flatten each sample over time, channel and both spatial axes.
@@ -354,8 +373,11 @@ class BilinAEPrior2DMultivar(eqx.Module):
 
     def __call__(self, x: Float[Array, "B T C H W"]) -> Float[Array, "B T C H W"]:
         _, n_time, n_channels, height, width = x.shape
+        # vec(x): flatten time, channel and both spatial axes
         state_flat = einx.id("b t c h w -> b (t c h w)", x)
+        # z = g_enc(x; ν)
         latent = self._bilin(state_flat)
+        # x̂ = g_dec(z; θ)
         decoded = jax.vmap(self._decode_dense)(latent)
         return einx.id(
             "b (t c h w) -> b t c h w",
@@ -373,7 +395,7 @@ class BilinAEPrior2DMultivar(eqx.Module):
 
 
 class IdentityPrior(eqx.Module):
-    r"""Trivial identity prior: $\varphi(x) = x$.
+    """Trivial identity prior: x̂ = g_ae(x; θ) = x.
 
     Zero parameters. Useful as a pure obs-driven baseline (the prior
     cost vanishes everywhere) and as a sanity-check building block in
@@ -387,10 +409,10 @@ class IdentityPrior(eqx.Module):
         >>> bool(jnp.all(prior(x) == x))
         True
 
-        The prior cost $\|x - \varphi(x)\|^2$ is therefore zero, for any shape:
+        The prior cost 𝒥_p = mean((x − x̂)²) is therefore zero, for any shape:
 
         >>> y = jnp.ones((4,))
-        >>> float(jnp.sum((y - prior(y)) ** 2))
+        >>> float(jnp.mean((y - prior(y)) ** 2))
         0.0
 
         It satisfies the [`Prior`][vardax.Prior] protocol:
@@ -401,13 +423,13 @@ class IdentityPrior(eqx.Module):
     """
 
     def __call__(self, x: Float[Array, ...]) -> Float[Array, ...]:
-        r"""Return the input unchanged.
+        """Return the input unchanged: x̂ = x.
 
         Args:
             x: State to project.
 
         Returns:
-            The same array, $\varphi(x) = x$.
+            The same array, x̂ = x.
         """
         return x
 
@@ -418,11 +440,12 @@ class IdentityPrior(eqx.Module):
 
 
 class L63Prior(eqx.Module):
-    r"""Learned prior for the Lorenz-63 system.
+    """Learned prior for the Lorenz-63 system.
 
-    A simple MLP autoencoder designed for the 3-dimensional Lorenz-63
-    attractor, $\varphi(x) = D(E(x))$. The state is treated as a flat vector of
-    length ``3``.
+        x̂ = g_ae(x; θ) = g_dec(g_enc(x; ν); θ)
+
+    with g_enc(x; ν) = W₂ tanh(W₁ x) and g_dec(z; θ) = W₄ tanh(W₃ z), each with a
+    bias. The state is treated as a flat vector of length ``3``.
 
     Algorithm:
         1. Encode with a tanh hidden layer and a linear map to the latent code.
@@ -468,18 +491,23 @@ class L63Prior(eqx.Module):
         self.decoder_out = eqx.nn.Linear(hidden_dim, state_dim, key=key_dec2)
 
     def __call__(self, x: Float[Array, "B N"]) -> Float[Array, "B N"]:
+        # tanh(W₁ x)
         latent = jnp.tanh(jax.vmap(self.encoder_hidden)(x))
+        # z = W₂ tanh(W₁ x)
         latent = jax.vmap(self.encoder_out)(latent)
+        # tanh(W₃ z)
         hidden = jnp.tanh(jax.vmap(self.decoder_hidden)(latent))
+        # x̂ = W₄ tanh(W₃ z)
         return jax.vmap(self.decoder_out)(hidden)
 
 
 class L96Prior(eqx.Module):
-    r"""Learned prior for the Lorenz-96 system.
+    """Learned prior for the Lorenz-96 system.
 
-    A simple MLP autoencoder designed for the N-dimensional Lorenz-96
-    attractor, $\varphi(x) = D(E(x))$. The state is treated as a flat vector of
-    length ``N``.
+        x̂ = g_ae(x; θ) = g_dec(g_enc(x; ν); θ)
+
+    with g_enc(x; ν) = W₂ tanh(W₁ x) and g_dec(z; θ) = W₄ tanh(W₃ z), each with a
+    bias. The state is treated as a flat vector of length ``N``.
 
     Algorithm:
         1. Encode with a tanh hidden layer and a linear map to the latent code.
@@ -524,18 +552,24 @@ class L96Prior(eqx.Module):
         self.decoder_out = eqx.nn.Linear(hidden_dim, state_dim, key=key_dec2)
 
     def __call__(self, x: Float[Array, "B N"]) -> Float[Array, "B N"]:
+        # tanh(W₁ x)
         latent = jnp.tanh(jax.vmap(self.encoder_hidden)(x))
+        # z = W₂ tanh(W₁ x)
         latent = jax.vmap(self.encoder_out)(latent)
+        # tanh(W₃ z)
         hidden = jnp.tanh(jax.vmap(self.decoder_hidden)(latent))
+        # x̂ = W₄ tanh(W₃ z)
         return jax.vmap(self.decoder_out)(hidden)
 
 
 class ConvAEPrior1D(eqx.Module):
-    r"""Convolutional autoencoder prior for 1-D spatially-structured data.
+    """Convolutional autoencoder prior for 1-D spatially-structured data.
 
-    Uses circular (periodic) padding suitable for systems with periodic
-    boundary conditions such as Lorenz-96, $\varphi(x) = D(E(x))$ with
-    convolutional $E$ and $D$.
+        x̂ = g_ae(x; θ) = g_dec(g_enc(x; ν); θ)
+
+    with g_enc(x; ν) = relu(W_e ⋆ pad(x)) and g_dec(z; θ) = W_d ⋆ pad(z), where
+    ⋆ is the convolution and pad(·) circular (periodic) padding of the spatial
+    axis, suited to periodic systems such as Lorenz-96.
 
     Algorithm:
         1. Pad the spatial axis periodically and apply the encoder convolution.
@@ -628,10 +662,15 @@ class ConvAEPrior1D(eqx.Module):
         def _forward(sample: Float[Array, "T N"]) -> Float[Array, "T N"]:
             # circular padding on the spatial axis only: the grid is periodic
             periodic_pad = ((0, 0), (pad, pad))
+            # pad(x)
             hidden = jnp.pad(sample, periodic_pad, mode="wrap")
+            # W_e ⋆ pad(x)
             hidden = self._enc_conv(hidden)
+            # z = relu(W_e ⋆ pad(x))
             hidden = jax.nn.relu(hidden)
+            # pad(z)
             hidden = jnp.pad(hidden, periodic_pad, mode="wrap")
+            # x̂ = W_d ⋆ pad(z)
             return self._dec_conv(hidden)
 
         return jax.vmap(_forward)(x)
