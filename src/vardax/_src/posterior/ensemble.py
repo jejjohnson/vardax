@@ -1,19 +1,6 @@
-r"""Ensemble-covariance posterior adapter.
+"""Ensemble posterior: the sample covariance of an ensemble of analyses x⁽ᵉ⁾.
 
-Builds the posterior covariance from an ensemble of analyses
-(per perturbed initial condition or observation realisation):
-
-$$
-P^* \approx \frac{1}{M-1} \sum_m (x^{(m)} - \bar x)(x^{(m)} - \bar x)^\top.
-$$
-
-When ``filterax`` is installed and used for the propagation, this
-adapter just packages the sample covariance into a ``Posterior``.
-Otherwise the user supplies the ensemble explicitly via the
-``analyses`` argument (shape ``(M, ...)``).
-
-Localisation and inflation are standard ensemble fixes — they live
-in ``filterax`` and aren't reimplemented here.
+Localisation and other ensemble fixes live in ``filterax``, not here.
 """
 
 from __future__ import annotations
@@ -29,23 +16,24 @@ from .container import Posterior
 
 
 class EnsembleCovariance(eqx.Module):
-    r"""Sample-covariance posterior from an ensemble of analyses.
+    """Sample-covariance posterior from an ensemble ℰ of analyses.
 
-    $$\bar x = \frac{1}{M} \sum_m x^{(m)}, \quad
-    P^* = \lambda \, \frac{1}{M-1} \sum_m (x^{(m)} - \bar x)(x^{(m)} - \bar x)^\top$$
+        x̄ = (1 / N_ℰ) ∑_e x⁽ᵉ⁾,   x̃⁽ᵉ⁾ = x⁽ᵉ⁾ − x̄
+        Σ_x|y ≈ ζ (1 / (N_ℰ − 1)) ∑_e x̃⁽ᵉ⁾ x̃⁽ᵉ⁾ᵀ
 
     Algorithm:
-        1. Average the analyses over the ensemble axis to get $\bar x$.
-        2. Flatten each member and form the Bessel-corrected sample
-           covariance as a low-rank operator (never dense).
-        3. Scale it by the inflation factor $\lambda$.
-        4. Package mean, covariance, the members as samples and the
+        1. Average the analyses over the member axis to get x̄.
+        2. Flatten each member and form the Bessel-corrected sample covariance as
+           a low-rank operator, never a dense matrix.
+        3. Scale it by the inflation factor ζ.
+        4. Package the mean, the covariance, the members as samples and the
            provenance into a [`Posterior`][vardax.Posterior].
 
     Attributes:
-        n_members: Expected ensemble size (used for diagnostics).
-        inflation: Multiplicative inflation factor $\lambda$ applied
-            to the sample covariance. Default 1.0 (no inflation).
+        n_members: Expected ensemble size N_ℰ, recorded in the configuration; the
+            stack's own size is what enters the covariance.
+        inflation: Multiplicative inflation factor ζ applied to the sample
+            covariance. Default 1.0, no inflation.
 
     Examples:
         Three scalar-pair analyses: the mean is the member average.
@@ -90,47 +78,38 @@ class EnsembleCovariance(eqx.Module):
         """Build the ensemble posterior from per-member analyses.
 
         Args:
-            analyses: Stack of the ``M`` member analyses, member axis
-                first.
-            model: AnalysisStep instance (not used directly; kept for
-                interface compatibility).
-            batch: The batch (not used directly; kept for interface
-                compatibility).
+            analyses: Stack of the members x⁽ᵉ⁾, member axis first.
+            model: The analysis model; unused, kept for the adapter interface.
+            batch: The batch; unused, kept for the adapter interface.
 
         Returns:
-            [`Posterior`][vardax.Posterior] with mean = ensemble mean,
-            ``cov`` = sample covariance as a dense
-            ``MatrixLinearOperator`` (only assembled if you ask for
-            it; safe for moderate M).
+            The [`Posterior`][vardax.Posterior] with mean x̄, the members as
+            samples, and ``cov`` the low-rank operator Σ_x|y.
         """
-        n_analyses = analyses.shape[0]
-        if n_analyses != self.n_members:
-            # Allow runtime mismatch; the configured ``n_members`` is
-            # advisory rather than enforced.
-            pass
+        # N_ℰ, from the stack: the configured n_members is advisory
+        num_members = analyses.shape[0]
 
-        # x̄ = (1/m) Σᵢ xᵢ
-        mean = einx.mean("[m] ...", analyses)
-        # Flatten everything but the leading ensemble dim; the
-        # Bessel-corrected sample covariance comes from gaussx as a
-        # rank-(m-1) LowRankUpdate operator (never dense), scaled by
-        # the multiplicative inflation factor.
-        flat_analyses = einx.id("m s... -> m (s...)", analyses)
-        # Σ = λ (1/(m−1)) Σᵢ (xᵢ − x̄)(xᵢ − x̄)ᵀ
-        cov_op = self.inflation * gaussx.ensemble_covariance(flat_analyses, bessel=True)
+        # x̄ = (1 / N_ℰ) ∑_e x⁽ᵉ⁾
+        ensemble_mean = einx.mean("[member] ...", analyses)
+        flat_analyses = einx.id("member state... -> member (state...)", analyses)
+        # (1 / (N_ℰ − 1)) ∑_e x̃⁽ᵉ⁾ x̃⁽ᵉ⁾ᵀ, of rank N_ℰ − 1
+        sample_covariance = gaussx.ensemble_covariance(flat_analyses, bessel=True)
+        # Σ_x|y ≈ ζ (1 / (N_ℰ − 1)) ∑_e x̃⁽ᵉ⁾ x̃⁽ᵉ⁾ᵀ
+        covariance = self.inflation * sample_covariance
 
         return Posterior(
-            mean=mean,
-            cov=cov_op,
+            mean=ensemble_mean,
+            cov=covariance,
             samples=analyses,
             provenance={
                 "adapter": "EnsembleCovariance",
-                "n_members": int(n_analyses),
+                "n_members": int(num_members),
                 "inflation": float(self.inflation),
             },
         )
 
     def get_config(self) -> dict[str, Any]:
+        """Return the fields that rebuild this adapter."""
         return {
             "n_members": self.n_members,
             "inflation": self.inflation,
@@ -138,4 +117,5 @@ class EnsembleCovariance(eqx.Module):
 
     @classmethod
     def from_config(cls, config: dict[str, Any]) -> EnsembleCovariance:
+        """Rebuild an adapter from ``get_config``'s output."""
         return cls(**config)

@@ -1,28 +1,14 @@
-r"""Rodgers optimal estimation: MAP retrieval with its diagnostics.
+"""Rodgers optimal estimation: the MAP retrieval x̂ of y = h(x) + ε, with diagnostics.
 
-Rodgers (2000), *Inverse Methods for Atmospheric Sounding*, chapters 2–5.
-With $K = \partial F / \partial x$ at the retrieval,
-
-$$
-J(x) = (y - F(x))^\top S_\varepsilon^{-1} (y - F(x)) + (x - x_a)^\top S_a^{-1} (x - x_a),
-$$
-
-$$
-\hat S = (K^\top S_\varepsilon^{-1} K + S_a^{-1})^{-1}, \quad
-A = \hat S K^\top S_\varepsilon^{-1} K, \quad
-d_s = \operatorname{tr} A, \quad
-H = \tfrac12 \ln\det(S_a \hat S^{-1}).
-$$
-
-The retrieval observes the true state through $\hat x \approx x_a + A (x - x_a)$,
-which is what ``OEResult.as_observation_operator`` returns for assimilating
-it downstream.
+The retrieval observes the true state through x̂ ≈ μ_x + J_x̂ (x − μ_x), which
+``OEResult.as_observation_operator`` returns for assimilating it downstream.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable
 
+import einx
 import equinox as eqx
 import gaussx
 import jax
@@ -35,30 +21,53 @@ from vardax._src.obs_operators.callable import CallableObs
 
 
 class OEResult(eqx.Module):
-    r"""The output of [`optimal_estimation`][vardax.optimal_estimation].
+    """The output of [`optimal_estimation`][vardax.optimal_estimation].
+
+        Σ_x|y = (Hᵀ Σ_ε⁻¹ H + Σ_x⁻¹)⁻¹,   G = Σ_x|y Hᵀ Σ_ε⁻¹,   J_x̂ = G H
+        d_s = tr J_x̂,   𝕀[x; y] = ½ ln det(Σ_x Σ_x|y⁻¹)
 
     Attributes:
-        x_hat: The retrieval $\hat x$, shape ``(n,)``.
-        S_hat: Its covariance $\hat S$, a PSD ``(n, n)`` operator.
-        averaging_kernel: $A = \hat S K^\top S_\varepsilon^{-1} K$,
-            shape ``(n, n)``.
-        dofs: Degrees of freedom for signal, $d_s = \operatorname{tr} A$.
-        information: Shannon information content,
-            $H = \tfrac12 \ln\det(S_a \hat S^{-1})$, in nats.
-        chi2: The cost $J(\hat x)$ (both terms, without the ½).
-        d2: Rodgers' convergence measure of one more Gauss–Newton step
-            $\delta x$ from $\hat x$: $d^2 = \delta x^\top \hat S^{-1} \delta x$.
+        x_hat: The retrieval x̂.
+        S_hat: Its posterior covariance Σ_x|y, a PSD operator.
+        averaging_kernel: The averaging kernel J_x̂ = G H.
+        dofs: Degrees of freedom for signal, d_s = tr J_x̂.
+        information: Shannon information content 𝕀[x; y], in nats.
+        chi2: The cost 𝒥(x̂), both terms, without the ½.
+        d2: Rodgers' convergence measure of one more Gauss–Newton step δx from x̂:
+            d² = δxᵀ Σ_x|y⁻¹ δx.
         n_iter: Levenberg–Marquardt steps taken.
-        converged: Rodgers' criterion $d^2 < \epsilon\, n$ holds and
-            $\hat x$ is finite. Levenberg–Marquardt's own tolerance may
-            still be unmet (``n_iter`` at ``max_steps``) once the step
-            left is this small in posterior units.
-        prior_mean: $x_a$, kept for ``as_observation_operator``.
-        retrieval_noise_cov: $S_m = G S_\varepsilon G^\top$ with the gain
-            $G = \hat S K^\top S_\varepsilon^{-1}$, which equals $A \hat S$:
-            the measurement-noise part of the retrieval error. It is the
-            $R$ to pair with ``as_observation_operator``, whose $A$ already
-            carries the smoothing error (Rodgers 2000, §3.2).
+        converged: Rodgers' criterion d² < ``convergence_tol`` · D_x holds and x̂ is
+            finite. Levenberg–Marquardt's own tolerance may still be unmet
+            (``n_iter`` at ``max_steps``) once the step left is this small in
+            posterior units.
+        prior_mean: μ_x, kept for ``as_observation_operator``.
+        retrieval_noise_cov: Σ_x̂,ε = G Σ_ε Gᵀ, which equals J_x̂ Σ_x|y: the
+            measurement-noise part of the retrieval error. It is the
+            observation-error covariance to pair with ``as_observation_operator``,
+            whose J_x̂ already carries the smoothing error (Rodgers 2000, §3.2).
+
+    Examples:
+        A scalar retrieval with H = Σ_x = Σ_ε = 1 halves the prior variance:
+
+        >>> import jax.numpy as jnp, lineax as lx
+        >>> import vardax as vdx
+        >>> one = lx.DiagonalLinearOperator(jnp.ones(1))
+        >>> result = vdx.optimal_estimation(
+        ...     lambda x: x, jnp.ones(1), jnp.zeros(1), one, one
+        ... )
+        >>> bool(jnp.allclose(result.S_hat.as_matrix(), 0.5))
+        True
+
+        One observation of one state carries half a degree of freedom, and the
+        retrieval noise is Σ_x̂,ε = ½ · 1 · ½ = ¼:
+
+        >>> bool(jnp.allclose(result.dofs, 0.5))
+        True
+        >>> bool(jnp.allclose(result.retrieval_noise_cov.as_matrix(), 0.25))
+        True
+
+    References:
+        Rodgers (2000), *Inverse Methods for Atmospheric Sounding*, chapters 2–5.
     """
 
     x_hat: Float[Array, " n"]
@@ -74,21 +83,40 @@ class OEResult(eqx.Module):
     retrieval_noise_cov: lx.AbstractLinearOperator
 
     def as_observation_operator(self) -> CallableObs:
-        r"""The retrieval as an observation of the state, $x \mapsto x_a + A (x - x_a)$.
+        """The retrieval as an observation of the state: x ↦ μ_x + J_x̂ (x − μ_x).
 
         Returns:
-            A [`CallableObs`][vardax.CallableObs] to assimilate $\hat x$
-            with $R = S_m$, ``retrieval_noise_cov``. Not $\hat S$: that
-            also counts the smoothing error $(A - I)(x - x_a)$, which the
-            operator models through $A$, so using it would underweight the
-            retrieval (Rodgers 2000, §3.2).
+            A [`CallableObs`][vardax.CallableObs] to assimilate x̂ with observation
+            error Σ_x̂,ε, ``retrieval_noise_cov``. Not Σ_x|y: that also counts the
+            smoothing error (J_x̂ − I)(x − μ_x), which the operator models through
+            J_x̂, so using it would underweight the retrieval (Rodgers 2000, §3.2).
+
+        Examples:
+            The prior mean maps to itself, whatever the averaging kernel:
+
+            >>> import jax.numpy as jnp, lineax as lx
+            >>> import vardax as vdx
+            >>> one = lx.DiagonalLinearOperator(jnp.ones(1))
+            >>> result = vdx.optimal_estimation(
+            ...     lambda x: x, jnp.ones(1), jnp.full(1, 0.5), one, one
+            ... )
+            >>> obs_op = result.as_observation_operator()
+            >>> bool(jnp.allclose(obs_op(jnp.full(1, 0.5)), 0.5))
+            True
+
+            A state away from the prior is damped by J_x̂ = ½:
+
+            >>> bool(jnp.allclose(obs_op(jnp.full(1, 2.5)), 1.5))
+            True
         """
         prior_mean = self.prior_mean
         kernel = self.averaging_kernel
 
         def retrieve(state: Float[Array, " n"]) -> Float[Array, " n"]:
-            # x_a + A (x − x_a)
-            return prior_mean + kernel @ (state - prior_mean)
+            # x − μ_x
+            anomaly = state - prior_mean
+            # μ_x + J_x̂ (x − μ_x)
+            return prior_mean + kernel @ anomaly
 
         return CallableObs(fn=retrieve)
 
@@ -105,66 +133,98 @@ def optimal_estimation(
     atol: float = 1e-8,
     convergence_tol: float = 1e-2,
 ) -> OEResult:
-    r"""Rodgers optimal estimation of $x$ from $y = F(x) + \varepsilon$.
+    """Rodgers optimal estimation of x from y = h(x) + ε.
+
+        𝒥(x) = (y − h(x))ᵀ Σ_ε⁻¹ (y − h(x)) + (x − μ_x)ᵀ Σ_x⁻¹ (x − μ_x)
+        x̂ = argmin_x 𝒥(x)
 
     Algorithm:
-        1. Whiten both terms of $J$ with Cholesky factors,
-           $S_\varepsilon = L_\varepsilon L_\varepsilon^\top$ and
-           $S_a = L_a L_a^\top$ by ``gaussx.cholesky``, which keeps diagonal,
-           Kronecker and block-diagonal structure.
-        2. Minimise $\|[L_\varepsilon^{-1}(y - F(x));\ L_a^{-1}(x - x_a)]\|^2$
-           from $x_a$ by Levenberg–Marquardt with ``ImplicitAdjoint``, so
-           $\hat x$ is differentiable in $y$ and in the parameters
-           ``forward`` closes over.
-        3. At $\hat x$, form $K$ by ``jax.jacfwd`` and the diagnostics
-           $\hat S$, $A$, $d_s$, $H$ and $\chi^2$.
-        4. Report Rodgers' (§5.6.3) $d^2 = g^\top \hat S g$ of one more
-           Gauss–Newton step, $g = \nabla \tfrac12 J(\hat x)$, and call the
-           retrieval converged when $d^2 <$ ``convergence_tol``
-           $\cdot\, n$.
+        1. Whiten both terms of 𝒥 with Cholesky factors, Σ_ε = L_ε L_εᵀ and
+           Σ_x = L_x L_xᵀ, by ``gaussx.cholesky``, which keeps diagonal, Kronecker
+           and block-diagonal structure.
+        2. Minimise ‖[L_ε⁻¹ (y − h(x)); L_x⁻¹ (x − μ_x)]‖² from μ_x by
+           Levenberg–Marquardt with ``ImplicitAdjoint``, so x̂ is differentiable in
+           y and in the parameters ``forward`` closes over.
+        3. At x̂, form H = J_h by ``jax.jacfwd`` and the diagnostics Σ_x|y, J_x̂, d_s,
+           𝕀[x; y] and 𝒥(x̂).
+        4. Report Rodgers' (§5.6.3) d² of one more Gauss–Newton step, and call the
+           retrieval converged when d² < ``convergence_tol`` · D_x.
 
-    A pixel swath is ``eqx.filter_vmap`` over pixels; the solver does not
-    raise on failure, so check ``converged``.
+    A pixel swath is ``eqx.filter_vmap`` over pixels; the solver does not raise on
+    failure, so check ``converged``.
 
     Args:
-        forward: $F$, the forward model, ``(n,) -> (m,)``.
-        y: Measurements, shape ``(m,)``.
-        x_a: Prior mean, shape ``(n,)``.
-        S_a: Prior covariance, a PSD ``(n, n)`` operator.
-        S_e: Measurement-error covariance, a PSD ``(m, m)`` operator.
+        forward: The forward model h, from the state to the measurements.
+        y: Measurements y.
+        x_a: Prior mean μ_x.
+        S_a: Prior covariance Σ_x, a PSD operator.
+        S_e: Measurement-error covariance Σ_ε, a PSD operator.
         max_steps: Levenberg–Marquardt step cap.
         rtol: Solver relative tolerance.
         atol: Solver absolute tolerance.
-        convergence_tol: $\epsilon$ in $d^2 < \epsilon\, n$.
+        convergence_tol: Threshold on d² / D_x.
 
     Returns:
         The retrieval and its diagnostics.
 
     Examples:
-        A linear forward is solved exactly, and its DOFS lie in $[0, n]$:
+        A linear forward h(x) = H x is solved exactly, and its DOFS lie in [0, D_x]:
 
-        >>> import jax.numpy as jnp, lineax as lx
+        >>> import jax, jax.numpy as jnp, lineax as lx
         >>> import vardax as vdx
-        >>> K = jnp.array([[1.0, 0.5], [0.0, 1.0], [1.0, 1.0]])
-        >>> S_a = lx.DiagonalLinearOperator(jnp.ones(2))
-        >>> S_e = lx.DiagonalLinearOperator(jnp.full(3, 0.1))
+        >>> obs_operator = jnp.array([[1.0, 0.5], [0.0, 1.0], [1.0, 1.0]])
+        >>> prior_cov = lx.DiagonalLinearOperator(jnp.ones(2))
+        >>> noise_cov = lx.DiagonalLinearOperator(jnp.full(3, 0.1))
+        >>> obs = jnp.array([1.0, 2.0, 3.0])
         >>> result = vdx.optimal_estimation(
-        ...     lambda x: K @ x, jnp.array([1.0, 2.0, 3.0]), jnp.zeros(2), S_a, S_e
+        ...     lambda x: obs_operator @ x, obs, jnp.zeros(2), prior_cov, noise_cov
         ... )
         >>> bool(result.converged), result.x_hat.shape
         (True, (2,))
         >>> bool(0.0 <= float(result.dofs) <= 2.0)
         True
+
+        A nonlinear forward iterates, and the diagnostics are taken at x̂:
+
+        >>> def nonlinear(x):
+        ...     return obs_operator @ x + 0.01 * (obs_operator @ x) ** 2
+        >>> curved = vdx.optimal_estimation(
+        ...     nonlinear, obs, jnp.zeros(2), prior_cov, noise_cov
+        ... )
+        >>> bool(curved.converged), int(curved.n_iter) > 1
+        (True, True)
+        >>> curved.averaging_kernel.shape
+        (2, 2)
+
+        A swath is a ``filter_vmap`` over pixels:
+
+        >>> import equinox as eqx
+        >>> swath = jnp.stack([obs, 2.0 * obs])
+        >>> eqx.filter_vmap(
+        ...     lambda pixel: vdx.optimal_estimation(
+        ...         nonlinear, pixel, jnp.zeros(2), prior_cov, noise_cov
+        ...     )
+        ... )(swath).x_hat.shape
+        (2, 2)
+
+    References:
+        Rodgers (2000), *Inverse Methods for Atmospheric Sounding*, chapters 2–5.
     """
-    n_state = x_a.shape[0]
-    whiten_e = _whitener(S_e)
-    whiten_a = _whitener(S_a)
+    state_size = x_a.shape[0]
+    whiten_obs = _whitener(S_e)
+    whiten_prior = _whitener(S_a)
 
     def residual(
         state: Float[Array, " n"], measurements: Float[Array, " m"]
     ) -> tuple[Array, Array]:
-        # [L_ε⁻¹ (y − F(x)); L_a⁻¹ (x − x_a)]
-        return whiten_e(measurements - forward(state)), whiten_a(state - x_a)
+        # y − h(x)
+        innovation = measurements - forward(state)
+        # r̃_ε = L_ε⁻¹ (y − h(x))
+        whitened_innovation = whiten_obs(innovation)
+        # x − μ_x
+        increment = state - x_a
+        # r̃_x = L_x⁻¹ (x − μ_x)
+        return whitened_innovation, whiten_prior(increment)
 
     solver = optx.LevenbergMarquardt(rtol=rtol, atol=atol)
     solution = optx.least_squares(
@@ -176,37 +236,54 @@ def optimal_estimation(
         max_steps=max_steps,
         throw=False,
     )
-    x_hat = solution.value
+    # x̂ = argmin_x 𝒥(x)
+    retrieval = solution.value
 
-    # K = ∂F/∂x at x̂, and its whitened form K̃ = L_ε⁻¹ K
-    jacobian = jax.jacfwd(forward)(x_hat)
-    whitened_jacobian = jax.vmap(whiten_e, in_axes=1, out_axes=1)(jacobian)
-    # L_a⁻¹, so that S_a⁻¹ = L_a⁻ᵀ L_a⁻¹
-    prior_root_inverse = jax.vmap(whiten_a, in_axes=1, out_axes=1)(
-        jnp.eye(n_state, dtype=x_hat.dtype)
-    )
-    # Ŝ, A, d_s, H and S_m at x̂, by gaussx's square-root formulation
-    diagnostics = gaussx.information_diagnostics(jacobian, S_e, S_a)
-    covariance = diagnostics.posterior_cov
+    # H = J_h at x̂
+    obs_jacobian = jax.jacfwd(forward)(retrieval)
+    # H̃ = L_ε⁻¹ H
+    whitened_jacobian = jax.vmap(whiten_obs, in_axes=1, out_axes=1)(obs_jacobian)
+    # L_x⁻¹, so that Σ_x⁻¹ = L_x⁻ᵀ L_x⁻¹
+    identity = jnp.eye(state_size, dtype=retrieval.dtype)
+    prior_root_inverse = jax.vmap(whiten_prior, in_axes=1, out_axes=1)(identity)
+    # Σ_x|y, J_x̂, d_s, 𝕀[x; y] and Σ_x̂,ε at x̂, by gaussx's square-root formulation
+    diagnostics = gaussx.information_diagnostics(obs_jacobian, S_e, S_a)
+    posterior_covariance = diagnostics.posterior_cov
 
-    data_residual, prior_residual = residual(x_hat, y)
-    # J(x̂) = ‖r̃_ε‖² + ‖r̃_a‖²
-    chi2 = jnp.sum(data_residual**2) + jnp.sum(prior_residual**2)
-    # g = ∇ ½ J = −K̃ᵀ r̃_ε + L_a⁻ᵀ r̃_a; δx = −Ŝ g; d² = δxᵀ Ŝ⁻¹ δx = gᵀ Ŝ g
-    gradient = (
-        -whitened_jacobian.T @ data_residual + prior_root_inverse.T @ prior_residual
-    )
-    d2 = gradient @ covariance @ gradient
+    data_residual, prior_residual = residual(retrieval, y)
+    # ‖r̃_ε‖²
+    data_cost = jnp.sum(data_residual**2)
+    # ‖r̃_x‖²
+    prior_cost = jnp.sum(prior_residual**2)
+    # 𝒥(x̂) = ‖r̃_ε‖² + ‖r̃_x‖²
+    cost = data_cost + prior_cost
+    # H̃ᵀ
+    jacobian_adjoint = einx.id("obs state -> state obs", whitened_jacobian)
+    # L_x⁻ᵀ
+    root_inverse_adjoint = einx.id("row state -> state row", prior_root_inverse)
+    # −H̃ᵀ r̃_ε; @, not einx.dot: the float bits differ
+    data_gradient = -jacobian_adjoint @ data_residual
+    # L_x⁻ᵀ r̃_x
+    prior_gradient = root_inverse_adjoint @ prior_residual
+    # ∇½𝒥 = −H̃ᵀ r̃_ε + L_x⁻ᵀ r̃_x; δx = −Σ_x|y ∇½𝒥
+    half_cost_gradient = data_gradient + prior_gradient
+    # d² = δxᵀ Σ_x|y⁻¹ δx = (∇½𝒥)ᵀ Σ_x|y (∇½𝒥)
+    step_measure = half_cost_gradient @ posterior_covariance @ half_cost_gradient
+    is_finite = jnp.all(jnp.isfinite(retrieval))
+    # d² < convergence_tol · D_x
+    is_small_step = step_measure < convergence_tol * state_size
     return OEResult(
-        x_hat=x_hat,
-        S_hat=lx.MatrixLinearOperator(covariance, lx.positive_semidefinite_tag),
+        x_hat=retrieval,
+        S_hat=lx.MatrixLinearOperator(
+            posterior_covariance, lx.positive_semidefinite_tag
+        ),
         averaging_kernel=diagnostics.averaging_kernel,
         dofs=diagnostics.dofs,
         information=diagnostics.information_content,
-        chi2=chi2,
-        d2=d2,
+        chi2=cost,
+        d2=step_measure,
         n_iter=jnp.asarray(solution.stats["num_steps"]),
-        converged=jnp.all(jnp.isfinite(x_hat)) & (d2 < convergence_tol * n_state),
+        converged=is_finite & is_small_step,
         prior_mean=x_a,
         retrieval_noise_cov=lx.MatrixLinearOperator(
             diagnostics.retrieval_noise_cov, lx.positive_semidefinite_tag
@@ -217,12 +294,12 @@ def optimal_estimation(
 def _whitener(
     covariance: lx.AbstractLinearOperator,
 ) -> Callable[[Array], Array]:
-    """v ↦ L⁻¹ v with L Lᵀ = S, keeping S's structure.
+    """Return v ↦ L⁻¹ v with L Lᵀ = Σ, keeping Σ's structure.
 
-    ``gaussx.cholesky`` keeps a diagonal, Kronecker or block-diagonal S
-    structured instead of materialising it.
+    ``gaussx.cholesky`` keeps a diagonal, Kronecker or block-diagonal Σ structured
+    instead of materialising it.
     """
-    # L Lᵀ = S, lower-triangular
+    # L Lᵀ = Σ, lower-triangular
     factor = gaussx.cholesky(covariance)
 
     def whiten(vector: Array) -> Array:
