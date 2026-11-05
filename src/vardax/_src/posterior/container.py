@@ -1,14 +1,14 @@
-"""``Posterior`` container — the standard output of every analysis.
+"""``Posterior``, the standard output of every analysis.
 
-Carries the posterior mean, covariance (as an ``AbstractLinearOperator``
-when a Gaussian / Laplace approximation is used), optional ensemble
-samples, and provenance metadata for downstream auditing.
+It carries the mean μ_x|y, the covariance Σ_x|y as a lazy operator when the
+approximation is Gaussian, optional samples and the provenance for auditing.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
+import einx
 import equinox as eqx
 import gaussx
 import jax
@@ -16,36 +16,35 @@ from jaxtyping import Array, Float, PRNGKeyArray
 import lineax as lx
 
 from vardax._src.errors import ShapeError, UnsupportedInputError
+from vardax._src.utils.shapes import flatten
 
 
 class Posterior(eqx.Module):
-    r"""Posterior container — Decision D10.
+    """Posterior of an analysis, with optional samples and provenance.
 
-    A plain container for $p(x \mid y) \approx \mathcal{N}(\text{mean}, \text{cov})$,
-    plus optional samples and provenance.
+        p(x ∣ y) ≈ 𝒩(x; μ_x|y, Σ_x|y)
+
+    A linear control x = x⋆ + Φ z also keeps its factors, Σ_x|y = Φ Σ_z|y Φᵀ.
 
     Attributes:
-        mean: Posterior mean / MAP estimate.
-        cov: Posterior covariance as ``lineax.AbstractLinearOperator``,
-            or ``None`` for amortized / sampling-only heads. Stored
-            lazily — never materialised into a dense matrix unless the
-            user asks.
-        samples: Optional posterior samples (from a flow head, ensemble,
-            or score-based diffusion). ``None`` for analytical adapters.
-        basis: $\Phi$ of a linear control $x = x^* + \Phi \theta$, as an
-            operator from coefficients to the state, or ``None``. Set by
-            the Gauss–Newton adapters together with ``coefficient_cov``,
-            so that ``cov`` $= \Phi P_\theta \Phi^\top$.
-        coefficient_cov: $P_\theta$, the coefficient-space covariance of
-            a linear control, or ``None``.
-        precision: $A = P^{-1}$ when an adapter built ``cov`` by inverting
-            it, or ``None``. It gives the marginal variances through
-            ``gaussx.diag_inv`` without forming the inverse.
-        provenance: Free-form dict carrying audit info — at minimum
-            ``{forward_model_id, n_iter, J_star, converged,
-            vardax_version}``. Consumed by
-            [`GaussianMarkLikelihood`][vardax.GaussianMarkLikelihood]
+        mean: Posterior mean μ_x|y, the analysis x⋆ for a variational model.
+        cov: Posterior covariance Σ_x|y as a ``lineax.AbstractLinearOperator``, or
+            ``None`` for amortized or sampling-only heads. It stays lazy and is
+            never materialised into a dense matrix unless the user asks.
+        samples: Optional posterior samples x⁽ᵉ⁾ from a flow head, an ensemble or
+            score-based diffusion; ``None`` for the analytical adapters.
+        provenance: Free-form dict of audit information, at minimum
+            ``{forward_model_id, n_iter, J_star, converged, vardax_version}``,
+            consumed by [`GaussianMarkLikelihood`][vardax.GaussianMarkLikelihood]
             when serialising for downstream population models.
+        basis: Φ of a linear control x = x⋆ + Φ z, as an operator from coefficients
+            to the state, or ``None``. The Gauss–Newton adapters set it together
+            with ``coefficient_cov``.
+        coefficient_cov: Σ_z|y, the coefficient-space posterior covariance of a
+            linear control, or ``None``.
+        precision: Λ_x|y = Σ_x|y⁻¹ when an adapter built ``cov`` by inverting it,
+            or ``None``. It gives the marginal variances through
+            ``gaussx.diag_inv`` without forming the inverse.
 
     Examples:
         >>> import jax.numpy as jnp
@@ -62,10 +61,9 @@ class Posterior(eqx.Module):
         metadata:
 
         >>> import jax, lineax as lx
-        >>> eye = lx.IdentityLinearOperator(jax.ShapeDtypeStruct((2,), jnp.float32))
-        >>> gauss = vdx.Posterior(
-        ...     mean=jnp.zeros(2), cov=eye, provenance={"adapter": "demo"}
-        ... )
+        >>> mean = jnp.zeros(2)
+        >>> eye = lx.IdentityLinearOperator(jax.ShapeDtypeStruct((2,), mean.dtype))
+        >>> gauss = vdx.Posterior(mean=mean, cov=eye, provenance={"adapter": "demo"})
         >>> gauss.cov.mv(jnp.ones(2)).shape, gauss.provenance["adapter"]
         ((2,), 'demo')
 
@@ -89,62 +87,77 @@ class Posterior(eqx.Module):
     def sample(
         self, key: PRNGKeyArray, n_samples: int
     ) -> Float[Array, "n_samples ..."]:
-        r"""Draw ``n_samples`` states from the posterior.
+        """Draw ``n_samples`` states from the posterior.
+
+            x⁽ᵉ⁾ = μ_x|y + L ξ⁽ᵉ⁾,   L Lᵀ = Σ_x|y,   ξ⁽ᵉ⁾ ~ 𝒩(0, I)
 
         Algorithm:
-            1. With ``basis`` and ``coefficient_cov`` (a linear control),
-               draw in coefficient space:
-               $x^{(e)} = x^* + \Phi P_\theta^{1/2} \xi^{(e)}$.
-            2. Else with ``cov``:
-               $x^{(e)} = x^* + P^{1/2} \xi^{(e)}$, $\xi^{(e)} \sim
-               \mathcal{N}(0, I)$, by ``gaussx.sample_mvn``: an FFT
-               circulant embedding for ``Toeplitz``, a block-banded
-               Cholesky for ``BlockTriDiag``, closed forms for other
-               structured operators and the symmetric square root
-               otherwise, so a singular $P$ still has finite gradients.
-            3. Else with ``samples``: a random subset of them, without
-               replacement.
+            1. With ``basis`` and ``coefficient_cov`` (a linear control), draw in
+               coefficient space: x⁽ᵉ⁾ = μ_x|y + Φ Σ_z|y^½ ξ⁽ᵉ⁾.
+            2. Else with ``cov``, use ``gaussx.sample_mvn``: an FFT circulant
+               embedding for ``Toeplitz``, a block-banded Cholesky for
+               ``BlockTriDiag``, closed forms for other structured operators and
+               the symmetric square root otherwise, so a singular Σ_x|y still has
+               finite gradients.
+            3. Else with ``samples``, take a random subset without replacement.
 
-        Any square root gives the same distribution; a different root
-        only changes which draws a key produces.
+        Any square root gives the same distribution; a different root only changes
+        which draws a key produces.
 
         Args:
             key: PRNG key.
-            n_samples: Number of draws $N_E$; static under ``jit``.
+            n_samples: Number of draws N_ℰ; static under ``jit``.
 
         Returns:
-            The draws, shape ``(n_samples, *mean.shape)``.
+            The draws, with the sample axis first and then ``mean``'s shape.
 
         Raises:
-            UnsupportedInputError: If the posterior has neither a
-                covariance nor samples.
+            UnsupportedInputError: If the posterior has neither a covariance nor
+                samples.
             ShapeError: If ``n_samples`` exceeds the stored samples.
         """
         basis = self.basis
         if basis is not None and self.coefficient_cov is not None:
-            # P_θ^{1/2}, then Φ maps it to the state
-            root = gaussx.sqrt(self.coefficient_cov)
+            # Σ_z|y^½
+            coefficient_root = gaussx.sqrt(self.coefficient_cov)
+            # ξ⁽ᵉ⁾ ~ 𝒩(0, I)
             noise = jax.random.normal(
-                key, (n_samples, *root.in_structure().shape), self.mean.dtype
+                key,
+                (n_samples, *coefficient_root.in_structure().shape),
+                self.mean.dtype,
             )
-            draws = jax.vmap(lambda xi: basis.mv(root.mv(xi)))(noise)
-            # x⁽ᵉ⁾ = x* + Φ P_θ^{1/2} ξ⁽ᵉ⁾
-            return self.mean + draws.reshape(n_samples, *self.mean.shape)
+
+            def draw_increment(noise_draw: Array) -> Array:
+                # Σ_z|y^½ ξ⁽ᵉ⁾
+                coefficient_draw = coefficient_root.mv(noise_draw)
+                # Φ Σ_z|y^½ ξ⁽ᵉ⁾
+                return basis.mv(coefficient_draw)
+
+            increments = jax.vmap(draw_increment)(noise)
+            # .reshape, not einx: einx cannot size an empty stack (n_samples = 0)
+            shaped_increments = increments.reshape(n_samples, *self.mean.shape)
+            # x⁽ᵉ⁾ = μ_x|y + Φ Σ_z|y^½ ξ⁽ᵉ⁾
+            return self.mean + shaped_increments
         if self.cov is not None:
-            # x⁽ᵉ⁾ = x* + L ξ⁽ᵉ⁾ with L Lᵀ = P, on the flattened state;
-            # sample_mvn picks L by P's structure
-            flat = gaussx.sample_mvn(
-                self.mean.ravel(), self.cov, key=key, num_samples=n_samples
+            flat_mean = flatten(self.mean)
+            # x⁽ᵉ⁾ = μ_x|y + L ξ⁽ᵉ⁾, on the flattened state; sample_mvn picks L by
+            # Σ_x|y's structure
+            flat_draws = gaussx.sample_mvn(
+                flat_mean, self.cov, key=key, num_samples=n_samples
             )
-            return flat.reshape(n_samples, *self.mean.shape)
+            return einx.id(
+                "member (state...) -> member state...",
+                flat_draws,
+                state=self.mean.shape,
+            )
         if self.samples is not None:
-            n_stored = self.samples.shape[0]
-            if n_samples > n_stored:
+            num_stored = self.samples.shape[0]
+            if n_samples > num_stored:
                 raise ShapeError(
                     f"Asked for {n_samples} draws but the posterior holds "
-                    f"{n_stored} samples."
+                    f"{num_stored} samples."
                 )
-            chosen = jax.random.choice(key, n_stored, (n_samples,), replace=False)
+            chosen = jax.random.choice(key, num_stored, (n_samples,), replace=False)
             return self.samples[chosen]
         raise UnsupportedInputError(
             "This posterior has neither a covariance nor samples to draw from."

@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 # Ceilings, as counted on the PR that introduced this test. Only ever lower them.
 CEILINGS = {
     "src/vardax": {
-        "method .reshape/.ravel": 9,
+        "method .reshape/.ravel": 7,
         "axis= keyword": 2,
         "None-index broadcast": 1,
         "jnp shape functions": 8,

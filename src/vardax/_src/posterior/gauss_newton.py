@@ -1,17 +1,7 @@
-r"""Gauss-Newton Hessian posterior (Decision D10).
+"""Gauss–Newton Hessian posterior: Λ_x|y at the analysis, inverted by capped CG.
 
-The posterior covariance at the MAP as the inverse Gauss–Newton Hessian of
-the 4DVar cost,
-
-$$
-P^* = \Big(B^{-1} + \sum_t (H'_t M'_{t\leftarrow 0})^\top R_t^{-1}
-             (H'_t M'_{t\leftarrow 0})\Big)^{-1},
-$$
-
-built matrix-free from the model's tangent-linear and adjoint rollouts and
-inverted lazily with a Krylov solver. It is the same operator as
-[`LaplaceCovariance`][vardax.LaplaceCovariance]; this adapter exposes the
-Krylov budget as ``n_krylov``.
+It is the same operator as [`LaplaceCovariance`][vardax.LaplaceCovariance]; this
+adapter exposes the Krylov budget as ``n_krylov``.
 """
 
 from __future__ import annotations
@@ -27,34 +17,35 @@ from .container import Posterior
 
 
 class GaussNewtonHessian(eqx.Module):
-    r"""Gauss-Newton Hessian inversion at MAP.
+    """Gauss–Newton posterior at the analysis, with a Krylov budget.
 
-    Computes $(B^{-1} + \sum_t (H'_t M'_t)^\top R_t^{-1} (H'_t M'_t))^{-1}$
-    for 4DVar models and $(B^{-1} + H'^\top R^{-1} H')^{-1}$ for
-    single-time ones, like
-    [`LaplaceCovariance`][vardax.LaplaceCovariance], with CG capped at
-    ``n_krylov`` iterations per covariance mat-vec.
+        Σ_x|y ≈ Λ_x|y⁻¹,   Λ_x|y = ∑ₜ Jₜᵀ Λ̃_ε,t Jₜ + Λ_x,   Jₜ = Mₜ J_h,t J_f,t
+
+    J_h,t is the Jacobian of h at xₜ, J_f,t = ∂xₜ/∂x₀ that of the rollout, Mₜ = diag(mₜ)
+    the mask and Λ̃_ε,t = Σ̃_ε,t⁻¹ the masked observation precision; a single-time model
+    has one term with J_f,t = I. It matches
+    [`LaplaceCovariance`][vardax.LaplaceCovariance], with CG capped at ``n_krylov``
+    iterations per covariance mat-vec.
 
     Algorithm:
-        1. Linearise the observation operator (and, for 4DVar, the model
-           rollout) at the analysis.
-        2. Assemble the precision $B^{-1} + \sum_t G_t^\top R_t^{-1} G_t$
-           matrix-free, with $G_t = H'_t M'_{t \leftarrow 0}$.
-        3. Return its inverse as a lazy operator applied by CG with at
-           most ``n_krylov`` steps.
+        1. Linearise h and, for 4D-Var, the rollout of f at the analysis.
+        2. Assemble the precision Λ_x|y matrix-free.
+        3. Return its inverse as a lazy operator applied by CG with at most
+           ``n_krylov`` steps.
 
     Attributes:
-        prior_cov_op: $B$. Default ``None``: the model's ``prior_cov_op``.
-            Unused for a linear control, whose prior is the basis's $Q$.
-        obs_cov_op: $R$ at one time. Default ``None``: the model's
-            ``obs_cov_op``.
+        prior_cov_op: Prior covariance Σ_x. Default ``None``: the model's
+            ``prior_cov_op``. Unused for a linear control, whose prior is the
+            basis's Σ_z.
+        obs_cov_op: Observation-error covariance Σ_ε at one time. Default ``None``:
+            the model's ``obs_cov_op``.
         n_krylov: Maximum CG iterations per covariance mat-vec.
         tol: CG absolute and relative tolerance.
 
     Examples:
-        Linear dynamics $x_{t+1} = a x_t$, a fully observed two-state
-        window, $B = R = I$: the observations at $t = 0, 1$ both inform
-        $x_0$, so $P^* = 1 / (1 + 1 + a^2)$.
+        Linear dynamics xₜ₊₁ = a xₜ, a fully observed two-state window and
+        Σ_x = Σ_ε = I: the observations at t = 0, 1 both inform x₀, so
+        Σ_x|y = 1 / (1 + 1 + a²).
 
         >>> import jax, jax.numpy as jnp, lineax as lx, vardax
         >>> class Decay:
@@ -106,27 +97,29 @@ class GaussNewtonHessian(eqx.Module):
         model: Any,
         batch: Any,
     ) -> Posterior:
-        r"""Build the Gauss–Newton posterior at ``analysis``.
+        """Build the Gauss–Newton posterior at ``analysis``.
 
         Args:
-            analysis: MAP of one window: $x_0^*$, or $(x_0^*, \eta^*)$ for
-                ``WeakFourDVar``.
+            analysis: Analysis of one window: x₀⋆, or (x₀⋆, η⋆) for ``WeakFourDVar``.
             model: The analysis model or its ``.as_analysis_step()`` wrapper.
             batch: The single window the analysis was computed from.
 
         Returns:
-            [`Posterior`][vardax.Posterior] with a lazy covariance.
+            The [`Posterior`][vardax.Posterior], with a lazy covariance.
 
         Raises:
             AttributeError: If the model exposes no ``obs_op``.
-            UnsupportedInputError: For a point batch, a non-``Batch1D``
-                batch, a ``basis=`` or ``parameterization=`` control, or
-                a ``WeakFourDVar`` analysis that is not ``(x0, eta)``.
-            ShapeError: If the batch holds several windows.
-            MissingInputError: If neither the adapter nor the model has
-                a covariance operator.
+            UnsupportedInputError: For a 4D-Var model given a point batch or a batch
+                that is not a ``Batch1D``, for a nonlinear parameterization, or for a
+                ``WeakFourDVar`` with a ``parameterization=``, a ``model_err_basis=``
+                or an analysis that is not ``(x0, eta)``.
+            ShapeError: For a 4D-Var model given several windows, or a single-time
+                model given several windows with missing entries.
+            MissingInputError: If neither the adapter nor the model has a covariance
+                operator.
         """
         solver = lx.CG(atol=self.tol, rtol=self.tol, max_steps=self.n_krylov)
+        # Σ_x|y = Λ_x|y⁻¹, or Φ Σ_z|y Φᵀ for a linear control
         mean, covariance, structure, coefficients, precision = gauss_newton_covariance(
             analysis,
             model,

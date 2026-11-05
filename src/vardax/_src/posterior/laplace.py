@@ -1,40 +1,7 @@
-r"""Laplace approximation at MAP.
+"""Laplace approximation at the analysis: Σ_x|y ≈ Λ_x|y⁻¹, the Gauss–Newton inverse.
 
-For Gaussian-likelihood / Gaussian-prior problems at the MAP, the
-posterior covariance is the inverse Gauss–Newton Hessian of the cost the
-analysis minimised. For a single analysis time (``OptimalInterpolation``,
-``ThreeDVar``):
-
-$$
-P^* \approx \big(B^{-1} + H'^\top R^{-1} H'\big)^{-1}.
-$$
-
-For a 4DVar analysis the window's observations depend on $x_0$ through
-the model, so the tangent-linear model $M'_{t \leftarrow 0}$ enters:
-
-$$
-P^* \approx \Big(B^{-1} + \sum_t (H'_t M'_{t\leftarrow 0})^\top R_t^{-1}
-              (H'_t M'_{t\leftarrow 0})\Big)^{-1},
-$$
-
-applied matrix-free through the model's own rollout (``jax.linearize`` /
-``jax.vjp``). For ``WeakFourDVar`` the control is $(x_0, \eta)$ and the
-returned covariance is the $x_0$ block of the inverse augmented
-precision, with $Q^{-1}$ on each $\eta_t$.
-
-The result is returned as an ``AbstractLinearOperator`` so mat-vecs
-(samples, marginals) compose lazily via ``lineax.CG`` without
-materialising $P^*$.
-
-Use when:
-
-- Gaussian likelihood + Gaussian prior + single posterior mode
-  (verified by SBC).
-- Default for ``ThreeDVar``, ``StrongFourDVar``, ``WeakFourDVar``,
-  ``IncrementalFourDVar``.
-
-For multimodal posteriors / non-Gaussian likelihoods, use
-``EnsembleCovariance``.
+The result is a lazy ``AbstractLinearOperator``, so samples and marginals compose
+through ``lineax.CG`` without materialising Σ_x|y.
 """
 
 from __future__ import annotations
@@ -48,7 +15,7 @@ import lineax as lx
 from ._precision import gauss_newton_covariance
 from .container import Posterior
 
-#: Step cap of the default CG solves (it bounds the Krylov space).
+#: Step cap of the default CG solves; it bounds the Krylov space.
 DEFAULT_MAX_STEPS = 200
 
 #: Default solver for the lazy inverses.
@@ -56,29 +23,36 @@ DEFAULT_SOLVER = lx.CG(atol=1e-6, rtol=1e-6, max_steps=DEFAULT_MAX_STEPS)
 
 
 class LaplaceCovariance(eqx.Module):
-    r"""Laplace approximation at MAP.
+    """Laplace approximation of the posterior at the analysis.
 
-    $$P^* \approx \big(B^{-1} + H'^\top R^{-1} H'\big)^{-1}$$
+        Σ_x|y ≈ Λ_x|y⁻¹,   Λ_x|y = Jᵀ Λ_ε J + Λ_x
+
+    J is the observation Jacobian of the control. A single analysis time has
+    J = J_h (``OptimalInterpolation``, ``ThreeDVar``). A 4D-Var window reaches x₀
+    through f, so J stacks Jₜ = Mₜ J_h,t J_f,t with J_f,t = ∂xₜ/∂x₀ and Mₜ = diag(mₜ),
+    and each time has its masked Λ̃_ε,t = Σ̃_ε,t⁻¹. For ``WeakFourDVar`` the control is
+    (x₀, η₁, …, η_T) with Λ_η on each ηₜ, and the covariance is the x₀ block of the
+    inverse.
+
+    This is the default adapter for ``ThreeDVar``, ``StrongFourDVar``,
+    ``WeakFourDVar`` and ``IncrementalFourDVar``, under a Gaussian likelihood, a
+    Gaussian prior and a single posterior mode (verified by SBC). For multimodal
+    posteriors or non-Gaussian likelihoods, use ``EnsembleCovariance``.
 
     Algorithm:
-        1. Linearise the observation operator (and, for 4DVar, the model
-           rollout) at the analysis.
-        2. Assemble the Gauss-Newton precision
-           $B^{-1} + \sum_t G_t^\top R_t^{-1} G_t$
-           matrix-free, with $G_t = H'_t M'_{t \leftarrow 0}$.
+        1. Linearise h and, for 4D-Var, the rollout of f at the analysis.
+        2. Assemble the Gauss–Newton precision Λ_x|y matrix-free.
         3. Return its inverse as a lazy operator applied by ``solver``.
 
     Attributes:
-        prior_cov_op: Background-error covariance $B$. Default ``None``:
-            the model's ``prior_cov_op``. Unused for a linear control,
-            whose prior is the basis's $Q$.
-        obs_cov_op: Observation-error covariance $R$ at one time. Default
-            ``None``: the model's ``obs_cov_op``.
-        solver: Linear solver for the lazy inverses (default CG,
-            ``atol = rtol = 1e-6``, 200 steps).
-
-    Pass $B$ and $R$ explicitly only to evaluate the posterior under
-    different error statistics from the ones the analysis used.
+        prior_cov_op: Prior covariance Σ_x. Default ``None``: the model's
+            ``prior_cov_op``. Unused for a linear control, whose prior is the
+            basis's Σ_z.
+        obs_cov_op: Observation-error covariance Σ_ε at one time. Default ``None``:
+            the model's ``obs_cov_op``. Pass Σ_x and Σ_ε explicitly only to evaluate
+            the posterior under other error statistics than the analysis used.
+        solver: Linear solver for the lazy inverses; by default CG with
+            ``atol = rtol = 1e-6`` and 200 steps.
 
     Examples:
         >>> import jax, jax.numpy as jnp, lineax as lx
@@ -90,12 +64,12 @@ class LaplaceCovariance(eqx.Module):
         >>> post = laplace(jnp.zeros(4), model, batch=None)
         >>> post.mean.shape
         (4,)
-        >>> # B = R = H = I, so P* = (I + I)^{-1} = I / 2
+        >>> # Σ_x = Σ_ε = H = I, so Σ_x|y = (I + I)⁻¹ = I / 2
         >>> bool(jnp.allclose(post.cov.mv(jnp.ones(4)), 0.5, atol=1e-2))
         True
 
-        Weaker observations (R = 3 I) leave a larger posterior,
-        $P^* = (1 + 1/3)^{-1} = 3/4$:
+        Weaker observations, Σ_ε = 3 I, leave a larger posterior,
+        Σ_x|y = (1 + ⅓)⁻¹ I = ¾ I:
 
         >>> weak = jnp.float32(3.0) * eye
         >>> post = vdx.LaplaceCovariance(prior_cov_op=eye, obs_cov_op=weak)(
@@ -121,34 +95,35 @@ class LaplaceCovariance(eqx.Module):
     def __call__(
         self,
         analysis: Float[Array, ...] | tuple[Array, Array],
-        model: Any,  # AnalysisStep-compliant
+        model: Any,
         batch: Any,
     ) -> Posterior:
-        r"""Build the Laplace posterior at ``analysis``.
+        """Build the Laplace posterior at ``analysis``.
 
         Args:
-            analysis: MAP of one window: $x_0^*$, or $(x_0^*, \eta^*)$ for
-                ``WeakFourDVar``.
-            model: The analysis model or its ``.as_analysis_step()``
-                wrapper. Its ``obs_op`` (and, for 4DVar, its rollout) build
-                the precision.
-            batch: The single window the analysis was computed from; 4DVar
-                models read its length and mask. A batch with a leading
-                sample axis must hold one sample.
+            analysis: Analysis of one window: x₀⋆, or (x₀⋆, η⋆) for ``WeakFourDVar``.
+            model: The analysis model or its ``.as_analysis_step()`` wrapper. Its
+                ``obs_op`` and, for 4D-Var, its rollout build the precision.
+            batch: The single window the analysis was computed from; 4D-Var models
+                read its length and mask. A batch with a leading sample axis must
+                hold one sample.
 
         Returns:
-            [`Posterior`][vardax.Posterior] with ``mean`` $= x_0^*$ and
-            ``cov`` a lazy ``AbstractLinearOperator`` representing $P^*$.
+            The [`Posterior`][vardax.Posterior] with ``mean`` x₀⋆ and ``cov`` a lazy
+            ``AbstractLinearOperator`` representing Σ_x|y.
 
         Raises:
             AttributeError: If the model exposes no ``obs_op``.
-            UnsupportedInputError: For a point batch, a non-``Batch1D``
-                batch, a ``basis=`` or ``parameterization=`` control, or
-                a ``WeakFourDVar`` analysis that is not ``(x0, eta)``.
-            ShapeError: If the batch holds several windows.
-            MissingInputError: If neither the adapter nor the model has
-                a covariance operator.
+            UnsupportedInputError: For a 4D-Var model given a point batch or a batch
+                that is not a ``Batch1D``, for a nonlinear parameterization, or for a
+                ``WeakFourDVar`` with a ``parameterization=``, a ``model_err_basis=``
+                or an analysis that is not ``(x0, eta)``.
+            ShapeError: For a 4D-Var model given several windows, or a single-time
+                model given several windows with missing entries.
+            MissingInputError: If neither the adapter nor the model has a covariance
+                operator.
         """
+        # Σ_x|y = Λ_x|y⁻¹, or Φ Σ_z|y Φᵀ for a linear control
         mean, covariance, structure, coefficients, precision = gauss_newton_covariance(
             analysis,
             model,
