@@ -232,10 +232,15 @@ class MultiInstrumentFusion(eqx.Module):
             masked_covariance = gaussx.masked_obs_covariance(
                 as_covariance(spec.obs_cov_op), spec.mask
             )
-            # Σ̃_ε,i⁻¹ rᵢ
-            whitened = gaussx.solve(masked_covariance, residual, solver=solver)
+            # ravel, not einx: an instrument may have no observations
+            flat_residual = jnp.ravel(residual)
+            # Σ̃_ε,i⁻¹ rᵢ on flat vectors, as gaussx's direct solve treats the columns of
+            # a 2-D right-hand side as separate systems
+            whitened = gaussx.solve(
+                _flat_covariance(masked_covariance), flat_residual, solver=solver
+            )
             # rᵢᵀ Σ̃_ε,i⁻¹ rᵢ; jnp, not einx: an instrument may have no observations
-            squared_norm = jnp.sum(residual * whitened)
+            squared_norm = jnp.sum(flat_residual * whitened)
             # 𝒥_o += αᵢ ½ rᵢᵀ Σ̃_ε,i⁻¹ rᵢ
             total = total + self.weight(instrument_id) * 0.5 * squared_norm
         return total
