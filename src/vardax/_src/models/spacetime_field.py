@@ -1,29 +1,8 @@
-r"""Neural-field 4D-Var: the whole window as one continuous field.
+"""Neural-field 4D-Var: the whole window is one continuous field x(t, s; θ).
 
-The analysis is a space-time field $u(t, s) = f_\theta(t, s)$, fitted to
-scattered observations with the physics as a soft constraint and no
-time-stepping rollout (Oh 2025). With observations $y_k$ at $(t_k, s_k)$
-with error standard deviations $\sigma_k$, a PDE operator $\mathcal N$
-($\mathcal N[u] = 0$ for the true flow), collocation points $c_j$ and
-weights $\lambda, \alpha \ge 0$,
-
-$$
-J(\theta) = \tfrac{1}{2}\sum_k \frac{\big(y_k - f_\theta(t_k, s_k)\big)^2}
-    {\sigma_k^2}
-  + \frac{\lambda}{2 N_c}\sum_j \big\lVert \mathcal N[f_\theta](c_j)
-    \big\rVert^2
-  + \frac{\alpha}{2}\lVert\theta\rVert^2 .
-$$
-
-There is no background term: the network's spectral bias plays the role
-of $B$. The pieces are the merged building blocks: the observation term
-is [`point_obs_cost`][vardax.point_obs_cost] of a
-[`FieldPointObs`][vardax.FieldPointObs], the physics term a
-[`ResidualPenalty`][vardax.ResidualPenalty], the weight decay and the
-control/frozen split a
-[`NeuralFieldParameterization`][vardax.NeuralFieldParameterization], and
-the minimisation an [`OptaxMinimiser`][vardax.OptaxMinimiser] (or an
-[`OptimistixMinimiser`][vardax.OptimistixMinimiser]).
+The field is fitted to scattered observations, with the physics as a soft constraint and
+no rollout (Oh 2025), so there is no background term and the network's spectral bias
+plays the role of Σ_x.
 """
 
 from __future__ import annotations
@@ -55,25 +34,26 @@ from vardax._src.utils.shapes import as_shape
 
 def _evaluate(field: Any, coords: Float[Array, "N P"]) -> Array:
     """``field`` at every row of ``coords``; a single channel is squeezed."""
-    param = NeuralFieldParameterization(field, coords, 0.0)
-    return param.decode(param.init_control())
+    parameterization = NeuralFieldParameterization(field, coords, 0.0)
+    params = parameterization.init_control()
+    return parameterization.decode(params)
 
 
 class SpaceTimeFieldResult(eqx.Module):
-    r"""A fitted space-time field and its minimisation diagnostics.
+    """A fitted space-time field and its minimisation diagnostics.
+
+    An [`ensemble`][vardax.SpaceTimeFieldVar.ensemble] returns one result whose array
+    leaves carry a leading member axis; evaluate it with
+    ``eqx.filter_vmap(lambda r: r.initial_condition(grid))(result)``.
 
     Attributes:
-        field: The analysis $f_{\theta^\star}$, a single-example callable
-            of one space-time point ``(t, *s)`` of shape ``(1 + D,)``.
-        t0: Start of the window, $t_0$, used by `initial_condition`.
-        cost: $J(\theta^\star)$.
-        grad_norm: $\lVert\nabla J(\theta^\star)\rVert_2$; a first-order
-            optimiser stopped by its step budget leaves it non-zero.
+        field: The analysis x(·; θ⋆), a single-example callable of one space-time point
+            ``(t, *s)``.
+        t0: Start of the window, t₀, used by `initial_condition`.
+        cost: 𝒥(θ⋆).
+        grad_norm: ‖∇_θ 𝒥(θ⋆)‖₂; a first-order optimiser stopped by its step budget
+            leaves it non-zero.
         num_steps: Optimiser steps taken.
-
-    An [`ensemble`][vardax.SpaceTimeFieldVar.ensemble] returns one result
-    whose array leaves carry a leading member axis; evaluate it with
-    ``eqx.filter_vmap(lambda r: r.initial_condition(grid))(result)``.
 
     Examples:
         Fit a line to three points, then query the fitted field:
@@ -83,7 +63,7 @@ class SpaceTimeFieldResult(eqx.Module):
         ...     w: jax.Array
         ...
         ...     def __call__(self, s):
-        ...         return (self.w[0] + self.w[1] * s[1])[None]
+        ...         return jnp.stack([self.w[0] + self.w[1] * s[1]])
         >>> obs = vardax.PointObsBatch(
         ...     coords=jnp.array([[0.0, -1.0], [0.5, 0.0], [1.0, 1.0]]),
         ...     values=jnp.array([-1.0, 0.0, 1.0]),
@@ -96,22 +76,17 @@ class SpaceTimeFieldResult(eqx.Module):
         ...     minimiser=vardax.OptimistixMinimiser(),
         ... )
         >>> result = ana(obs)
-        >>> result.evaluate(jnp.array([[0.0, 2.0], [0.0, 3.0]])).round(2)
-        Array([2., 3.], dtype=float32)
+        >>> query = jnp.array([[0.0, 2.0], [0.0, 3.0]])
+        >>> bool(jnp.allclose(result.evaluate(query), jnp.array([2.0, 3.0]), atol=1e-2))
+        True
         >>> bool(result.grad_norm < 1e-3)
         True
 
-        The analysis at the window start on a spatial grid is the initial
-        condition for a forecast, and a non-2-D grid is rejected:
+        The analysis at the window start on a spatial grid is the initial condition for
+        a forecast:
 
         >>> result.initial_condition(jnp.array([[0.5], [2.0]])).shape
         (2,)
-        >>> result.initial_condition(
-        ...     jnp.array([0.5, 2.0])
-        ... )  # doctest: +IGNORE_EXCEPTION_DETAIL
-        Traceback (most recent call last):
-        ...
-        GridError: grid must be 2-D (N, D); got shape (2,).
     """
 
     field: Any
@@ -121,28 +96,28 @@ class SpaceTimeFieldResult(eqx.Module):
     num_steps: Int[Array, ""]
 
     def evaluate(self, coords: Float[Array, "N P"]) -> Float[Array, "N ..."]:
-        """Evaluate the field at space-time points.
+        """Evaluate the field at space-time points: x(tₖ, sₖ; θ⋆).
 
         Args:
             coords: Space-time points ``(t, *s)``, one per row.
 
         Returns:
-            One value per point for a single-channel field, else one
-            row of ``K`` channels per point.
+            One value per point for a single-channel field, else one row of channels
+            per point.
         """
         return _evaluate(self.field, jnp.asarray(coords))
 
     def initial_condition(self, grid: Real[Array, "N D"]) -> Float[Array, "N ..."]:
-        r"""The analysis at the window start, $u(t_0, s_j)$, on a grid.
+        """The analysis at the window start on a grid: x(t₀, sₙ; θ⋆).
 
         This is the initial state for a forecast with a ``ForwardModel``.
 
         Args:
-            grid: Spatial points $s_j$, one per row.
+            grid: Spatial points sₙ, one per row.
 
         Returns:
-            One value per grid point for a single-channel field, else one
-            row of ``K`` channels per point.
+            One value per grid point for a single-channel field, else one row of
+            channels per point.
 
         Raises:
             GridError: If ``grid`` is not 2-D.
@@ -151,105 +126,98 @@ class SpaceTimeFieldResult(eqx.Module):
         if grid.ndim != 2:
             raise GridError(f"grid must be 2-D (N, D); got shape {grid.shape}.")
         if not jnp.issubdtype(grid.dtype, jnp.inexact):
-            # An integer grid would truncate t0 in the time column.
+            # an integer grid would truncate t₀ in the time column
             grid = grid.astype(jnp.result_type(float))
         time = jnp.full((grid.shape[0],), self.t0, dtype=grid.dtype)
+        # (t₀, sₙ), time first
         points = einx.id("n, n d -> n (1 + d)", time, grid)
         return _evaluate(self.field, points)
 
 
 class SpaceTimeFieldVar(eqx.Module):
-    r"""Neural-field 4D-Var: fit one continuous field $u(t, s) = f_\theta(t, s)$.
+    """Neural-field 4D-Var: fit one continuous field x(t, s; θ) to a whole window.
 
-    Minimises, over the network weights $\theta$,
+        𝒥(θ) = 𝒥_o(θ) + 𝒥_res(θ) + ½ β ‖θ‖²
+        𝒥_o(θ) = ½ ∑ᵢ mᵢ (yᵢ − x(tᵢ, sᵢ; θ))² / σᵢ²
+        𝒥_res(θ) = λ / (2 N_c) ∑ⱼ ‖𝒩[x(·; θ)](cⱼ)‖²
 
-    $$J(\theta) = J_o + J_\mathcal{N} + \tfrac{\alpha}{2} \lVert\theta\rVert^2$$
+    The observations are those of a [`PointObsBatch`][vardax.PointObsBatch] (mᵢ = 0 on
+    padding rows, which contribute nothing, ``NaN`` included), the physics term is an
+    optional [`ResidualPenalty`][vardax.ResidualPenalty] with PDE operator 𝒩, weight λ
+    and collocation points cⱼ, and β is the weight decay. There is no background
+    covariance and no rollout: the whole window is the field, which can be queried and
+    differentiated anywhere.
 
-    $$J_o(\theta) = \tfrac12 \sum_k m_k (y_k - f_\theta(t_k, s_k))^2 / \sigma_k^2$$
+    Coordinates put **time first**: the field maps a point ``(t, *s)`` to its channels
+    (or a scalar), and the observation coordinates and collocation points use the same
+    order, as the residuals of `vardax.examples` expect. The observed quantity is the
+    field's single output (`FieldPointObs`); a multi-channel field needs its own
+    wrapper.
 
-    $$J_\mathcal{N} = \tfrac{\lambda}{2 N_c} \sum_j \| \mathcal N[f_\theta](c_j) \|^2$$
+    Scale of λ: the observation term is a *sum* over the N_obs valid observations, each
+    weighted by 1 / σᵢ², while the residual term is a *mean* over the collocation
+    points. A unit change of the field everywhere moves the first by about
+    N_obs / (2 σ²) and the second by about λ / 2 times the squared residual it causes,
+    so λ trades off against N_obs / (2 σ²) and must grow with it to keep the same
+    balance (the advection test uses λ = 10³ for 100 observations with σ = 0.05, where
+    N_obs / (2 σ²) = 2 × 10⁴).
 
-    with the observations of a [`PointObsBatch`][vardax.PointObsBatch]
-    ($m_k = 0$ on padding rows, which contribute nothing, ``NaN``
-    included), the physics term of an optional
-    [`ResidualPenalty`][vardax.ResidualPenalty] and weight decay $\alpha$.
-    There is no background covariance and no rollout: the whole window
-    is the field, which can be queried and differentiated anywhere
-    (Oh 2025).
+    The fit runs in one ``eqx.filter_jit``-compiled function of the model, the
+    observations and the key, so repeated analyses with new observations (or a new
+    ``weight_decay`` or penalty weight, both array leaves) of the same shapes do not
+    recompile.
 
-    Coordinates put **time first**: the field maps a point
-    ``(t, *s)`` of shape ``(1 + D,)`` to ``(K,)`` (or a scalar), the
-    observation coordinates are ``(N_obs, 1 + D)`` in the same order, and
-    so are the collocation points, as the residuals of
-    `vardax.examples` expect. The observed quantity is the field's single
-    output (`FieldPointObs`); a multi-channel field needs its own wrapper.
-
-    Scale of $\lambda$: the observation term is a *sum* over the
-    $N_\text{obs}$ valid observations, each weighted by $1/\sigma_k^2$,
-    while the residual term is a *mean* over the collocation points. A
-    unit change of the field everywhere moves the first by about
-    $N_\text{obs}/(2\sigma^2)$ and the second by about $\lambda/2$ times
-    the squared residual it causes, so $\lambda$ trades off against
-    $N_\text{obs}/(2\sigma^2)$ and must grow with it to keep the same
-    balance (the advection test uses $\lambda = 10^3$ for 100
-    observations with $\sigma = 0.05$, where
-    $N_\text{obs}/(2\sigma^2) = 2 \times 10^4$).
-
-    The fit runs in one ``eqx.filter_jit``-compiled function of the model,
-    the observations and the key, so repeated analyses with new
-    observations (or a new ``weight_decay`` or penalty weight, both array
-    leaves) of the same shapes do not recompile.
-
-    The penalty's collocation points are fixed during a fit: a
-    ``ResidualPenalty`` with a ``sampler`` draws them once, from ``key``,
-    at the start of the analysis, so the cost the minimiser sees is
-    deterministic (its patience test, best-iterate tracking and implicit
-    adjoint all assume that). Draw more points, or refit with new keys,
-    for a better estimate of the expected residual.
+    The penalty's collocation points are fixed during a fit: a ``ResidualPenalty`` with
+    a ``sampler`` draws them once, from ``key``, at the start of the analysis, so the
+    cost the minimiser sees is deterministic (its patience test, best-iterate tracking
+    and implicit adjoint all assume that). Draw more points, or refit with new keys, for
+    a better estimate of the expected residual.
 
     Algorithm:
-        1. Split the field's leaves into the control $\theta$ (by
-           ``filter_spec``) and the frozen rest.
-        2. Draw the penalty's collocation points once from ``key`` when it
-           has a ``sampler``.
-        3. Evaluate the field at the observation coordinates and form the
-           masked, $\sigma$-weighted observation cost.
-        4. Add the weight decay $\tfrac{\alpha}{2}\lVert\theta\rVert^2$ and,
-           if present, the mean squared PDE residual at the collocation
-           points.
-        5. Minimise over $\theta$ with ``minimiser`` in one compiled
-           function and return the fitted field with the cost, gradient
-           norm and step count.
+        1. Split the field's leaves into the control θ (by ``filter_spec``) and the
+           frozen rest.
+        2. Draw the penalty's collocation points once from ``key`` when it has a
+           ``sampler``.
+        3. Evaluate the field at the observation coordinates and form 𝒥_o.
+        4. Add the weight decay ½ β ‖θ‖² and, if present, 𝒥_res.
+        5. Minimise over θ with ``minimiser`` in one compiled function and return the
+           fitted field with the cost, gradient norm and step count.
 
     Attributes:
-        field: The initial network, a single-example ``eqx.Module``
-            ``(1 + D,) -> (K,)`` such as `geonnax.SIREN` or
-            `geonnax.NeuralFieldMLP`. Its parameters are the initial
-            control.
-        residual: Optional [`ResidualPenalty`][vardax.ResidualPenalty]
-            (the physics term); ``None`` fits the observations alone.
-        weight_decay: $\alpha \ge 0$, stored as a 0-d array (a leaf: it
-            can be changed without recompiling and differentiated).
-        minimiser: An [`OptaxMinimiser`][vardax.OptaxMinimiser] (the
-            default, Adam with learning rate $10^{-3}$) or an
+        field: The initial network, a single-example ``eqx.Module`` of one point
+            ``(t, *s)``, such as `geonnax.SIREN` or `geonnax.NeuralFieldMLP`. Its
+            parameters are the initial control.
+        residual: Optional [`ResidualPenalty`][vardax.ResidualPenalty], the physics
+            term; ``None`` fits the observations alone.
+        weight_decay: β ≥ 0, stored as a 0-d array (a leaf: it can be changed without
+            recompiling and differentiated).
+        minimiser: An [`OptaxMinimiser`][vardax.OptaxMinimiser] (the default, Adam with
+            learning rate 10⁻³) or an
             [`OptimistixMinimiser`][vardax.OptimistixMinimiser].
         filter_spec: Which leaves of ``field`` are the control, as in
-            [`NeuralFieldParameterization`][vardax.NeuralFieldParameterization]:
-            exclude frozen arrays (random Fourier frequencies) so the weight
-            decay does not shrink them. Default ``eqx.is_inexact_array``.
-        t0: Start of the window, $t_0$ (default ``0.0``).
+            [`NeuralFieldParameterization`][vardax.NeuralFieldParameterization]: exclude
+            frozen arrays (random Fourier frequencies) so the weight decay does not
+            shrink them. Default ``eqx.is_inexact_array``.
+        t0: Start of the window, t₀ (default ``0.0``).
+
+    Raises:
+        ShapeError: If ``weight_decay`` is not a scalar.
+        ConfigurationError: If ``weight_decay`` is negative.
+        InputTypeError: If ``residual`` is not a ``ResidualPenalty`` or ``None``, or
+            ``minimiser`` is neither an ``OptaxMinimiser`` nor an
+            ``OptimistixMinimiser``.
 
     Examples:
-        A field linear in fixed features, $f_w(t, x) = w_0 + w_1 x$, with no
-        physics is Bayesian linear regression: the analysis is the ridge
-        solution, here $w^\star = (0, 1)$ to within the small weight decay.
+        A field linear in fixed features, x(t, s; w) = w₀ + w₁ s, with no physics is
+        Bayesian linear regression: the analysis is the ridge solution, here
+        w⋆ = (0, 1) to within the small weight decay.
 
         >>> import equinox as eqx, jax, jax.numpy as jnp, vardax
         >>> class Line(eqx.Module):
         ...     w: jax.Array
         ...
         ...     def __call__(self, s):
-        ...         return (self.w[0] + self.w[1] * s[1])[None]
+        ...         return jnp.stack([self.w[0] + self.w[1] * s[1]])
         >>> obs = vardax.PointObsBatch(
         ...     coords=jnp.array([[0.0, -1.0], [0.5, 0.0], [1.0, 1.0], [0.0, 9.0]]),
         ...     values=jnp.array([-1.0, 0.0, 1.0, jnp.nan]),  # last row: padding
@@ -262,11 +230,12 @@ class SpaceTimeFieldVar(eqx.Module):
         ...     minimiser=vardax.OptimistixMinimiser(),
         ... )
         >>> result = ana(obs)
-        >>> result.initial_condition(jnp.array([[0.5], [2.0]])).round(3)
-        Array([0.5, 2. ], dtype=float32)
+        >>> initial = result.initial_condition(jnp.array([[0.5], [2.0]]))
+        >>> bool(jnp.allclose(initial, jnp.array([0.5, 2.0]), atol=1e-2))
+        True
 
-        A deep ensemble refits from random initialisations; the result's
-        array leaves carry a member axis:
+        A deep ensemble refits from random initialisations; the result's array leaves
+        carry a member axis:
 
         >>> def init(key):
         ...     return Line(jax.random.normal(key, (2,)))
@@ -318,7 +287,8 @@ class SpaceTimeFieldVar(eqx.Module):
         try:
             negative = float(weight_decay) < 0
         except jax.errors.ConcretizationTypeError:
-            negative = False  # built under a transform: the sign is not known
+            # built under a transform: the sign is not known
+            negative = False
         if negative:
             raise ConfigurationError(f"weight_decay must be >= 0, got {weight_decay}.")
         if residual is not None and not isinstance(residual, ResidualPenalty):
@@ -342,10 +312,11 @@ class SpaceTimeFieldVar(eqx.Module):
 
     @property
     def _parameterization(self) -> NeuralFieldParameterization:
-        # Only the control split, `as_field` and the penalty are used: the
-        # space-time field is evaluated at the observation and collocation
-        # points, never on a grid, so the grid is empty. The weight is 1
-        # (penalty ½‖θ‖²): alpha multiplies it in the cost, as an array leaf.
+        """The control split of ``field``, with an empty grid and unit weight."""
+        # Only the control split, ``as_field`` and the penalty are used: the field is
+        # evaluated at the observation and collocation points, never on a grid, so the
+        # grid is empty. The weight is 1, for ℛ(θ) = ½ ‖θ‖², because β multiplies it in
+        # the cost as an array leaf.
         return NeuralFieldParameterization(
             self.field,
             jnp.zeros((0, 1)),
@@ -363,9 +334,11 @@ class SpaceTimeFieldVar(eqx.Module):
                 "The residual penalty has a sampler: pass key= to draw its "
                 "collocation points."
             )
+        # cⱼ, drawn once so that the cost is deterministic during a fit
+        collocation = residual.sampler(key)
         return ResidualPenalty(
             residual_fn=residual.residual_fn,
-            collocation=residual.sampler(key),
+            collocation=collocation,
             weight=residual.weight,
         )
 
@@ -410,28 +383,26 @@ class SpaceTimeFieldVar(eqx.Module):
         *,
         key: PRNGKeyArray,
     ) -> SpaceTimeFieldResult:
-        r"""A deep ensemble: refit from ``n_members`` random initialisations.
+        """A deep ensemble: refit from ``n_members`` random initialisations.
 
-        Each member re-initialises the field with ``field_init`` and draws
-        its own collocation points (when the penalty has a sampler), then
-        fits as `__call__` does; the members run under ``eqx.filter_vmap``.
-        The spread of the members is a heuristic uncertainty: small where
-        the observations pin the field down, large away from them. A
-        $\theta$-space Laplace push-forward $J \Sigma_\theta J^\top$
-        ($J = \partial u / \partial\theta$) is not implemented.
+        Each member re-initialises the field with ``field_init`` and draws its own
+        collocation points (when the penalty has a sampler), then fits as `__call__`
+        does; the members run under ``eqx.filter_vmap``. The spread of the members is a
+        heuristic uncertainty: small where the observations pin the field down, large
+        away from them. A θ-space Laplace push-forward J Σ_θ Jᵀ, with
+        J = ∂x/∂θ, is not implemented.
 
         Args:
             obs: The observations, one sample.
-            field_init: ``key -> field``, building a network with the
-                same structure as ``self.field`` (e.g.
+            field_init: ``key -> field``, building a network with the same structure as
+                ``self.field`` (e.g.
                 ``lambda k: geonnax.SIREN.init(2, 32, 1, depth=3, key=k)``).
             n_members: Number of members, at least 1.
-            key: Split into one initialisation key and one collocation key
-                per member.
+            key: Split into one initialisation key and one collocation key per member.
 
         Returns:
-            A [`SpaceTimeFieldResult`][vardax.SpaceTimeFieldResult] whose
-            array leaves carry a leading axis of size ``n_members``.
+            A [`SpaceTimeFieldResult`][vardax.SpaceTimeFieldResult] whose array leaves
+            carry a leading axis of size ``n_members``.
 
         Raises:
             ConfigurationError: If ``n_members < 1``.
@@ -452,39 +423,33 @@ class SpaceTimeFieldVar(eqx.Module):
         *,
         key: PRNGKeyArray | None = None,
     ) -> _SpaceTimeFieldAnalysisStep:
-        r"""Adapt to ``pipekit_cycle.AnalysisStep``.
+        """Adapt to ``pipekit_cycle.AnalysisStep``.
 
-        The step fits the field to the cycle's observations. With a
-        ``grid`` it returns the analysis at the window start on it,
-        $u(t_0, s_j)$ (`SpaceTimeFieldResult.initial_condition`), the
-        state a ``ForwardModel`` steps on; without one it returns the
+        The step fits the field to the cycle's observations. With a ``grid`` it returns
+        the analysis at the window start on it, x(t₀, sₙ; θ⋆)
+        (`SpaceTimeFieldResult.initial_condition`), the state a ``ForwardModel`` steps
+        on; without one it returns the
         [`SpaceTimeFieldResult`][vardax.SpaceTimeFieldResult] itself.
 
-        The collocation points are drawn **once**, here, from ``key``,
-        and reused by every cycle. ``pipekit_cycle.DACycle`` passes no
-        time: the times are the first column of each cycle's
-        ``PointObsBatch``, so they must be **window-relative**, in the
-        same window $[t_0, t_1]$ every cycle as the collocation points.
-        The step checks that (when the times are concrete): $t_0$ and the
-        valid observation times must lie in the collocation points' time
-        range, widened by 10 % on each side for the gaps a random draw
-        leaves at the ends.
+        The collocation points are drawn **once**, here, from ``key``, and reused by
+        every cycle. ``pipekit_cycle.DACycle`` passes no time: the times are the first
+        column of each cycle's ``PointObsBatch``, so they must be **window-relative**,
+        in the same window [t₀, t₁] every cycle as the collocation points. The step
+        checks that (when the times are concrete): t₀ and the valid observation times
+        must lie in the collocation points' time range, widened by 10 % on each side for
+        the gaps a random draw leaves at the ends.
 
         Args:
-            grid: Spatial points $s_j$ of the returned state, one per row,
-                or ``None``.
-            key: Collocation key; required when the penalty has a
-                ``sampler``.
+            grid: Spatial points sₙ of the returned state, one per row, or ``None``.
+            key: Collocation key; required when the penalty has a ``sampler``.
 
         Returns:
             The adapter.
 
         Raises:
             GridError: If ``grid`` is not 2-D.
-            MissingInputError: If the penalty has a sampler and ``key`` is
-                ``None``.
-            ConfigurationError: If $t_0$ is outside the collocation
-                window.
+            MissingInputError: If the penalty has a sampler and ``key`` is ``None``.
+            ConfigurationError: If t₀ is outside the collocation window.
         """
         if grid is not None:
             grid = jnp.asarray(grid)
@@ -522,12 +487,13 @@ def _collocation_window(residual: ResidualPenalty | None) -> tuple[float, float]
     except (jax.errors.TracerArrayConversionError, jax.errors.ConcretizationTypeError):
         return None
     time_min, time_max = float(times.min()), float(times.max())
+    # 10 % of the range, for the gaps a random draw leaves at the ends
     padding = 0.1 * (time_max - time_min)
     return time_min - padding, time_max + padding
 
 
 def _cost(
-    theta: PyTree[Array],
+    params: PyTree[Array],
     args: tuple[
         NeuralFieldParameterization,
         PointObsBatch,
@@ -535,15 +501,19 @@ def _cost(
         Float[Array, ""],
     ],
 ) -> Float[Array, ""]:
-    """$J(\theta)$; every input is a pytree argument (no closure)."""
-    param, obs, residual, weight_decay = args
-    field = param.as_field(theta)
-    # ½ Σₖ mₖ (yₖ - f_θ(tₖ, sₖ))² / σₖ² + α ½‖θ‖²: ()
-    cost = point_obs_cost(FieldPointObs()(field, obs), obs) + (
-        weight_decay * param.penalty(theta)
-    )
+    """𝒥(θ) = 𝒥_o(θ) + ½ β ‖θ‖² + 𝒥_res(θ); every input is a pytree argument."""
+    parameterization, obs, residual, weight_decay = args
+    # x(·; θ)
+    field = parameterization.as_field(params)
+    # ŷᵢ = x(tᵢ, sᵢ; θ)
+    predictions = FieldPointObs()(field, obs)
+    # 𝒥_o = ½ ∑ᵢ mᵢ (yᵢ − ŷᵢ)² / σᵢ²
+    obs_cost = point_obs_cost(predictions, obs)
+    # ½ β ‖θ‖²
+    decay_cost = weight_decay * parameterization.penalty(params)
+    cost = obs_cost + decay_cost
     if residual is not None:
-        # λ/(2 N_c) Σⱼ ‖N[f_θ](cⱼ)‖²: ()
+        # 𝒥_res = λ / (2 N_c) ∑ⱼ ‖𝒩[x(·; θ)](cⱼ)‖²
         cost = cost + residual(field)
     return cost
 
@@ -553,17 +523,19 @@ def _fit(
     model: SpaceTimeFieldVar, obs: PointObsBatch, key: PRNGKeyArray | None
 ) -> SpaceTimeFieldResult:
     """Fit ``model`` to one sample: compiled once per model structure and shapes."""
-    param = model._parameterization
+    parameterization = model._parameterization
     residual = model._fixed_residual(key)
     # __init__ skips the sign check when weight_decay is traced; catch it here
     weight_decay = eqx.error_if(
         model.weight_decay, model.weight_decay < 0, "weight_decay must be >= 0"
     )
     result = model.minimiser.run(
-        _cost, param.init_control(), (param, obs, residual, weight_decay)
+        _cost,
+        parameterization.init_control(),
+        (parameterization, obs, residual, weight_decay),
     )
     return SpaceTimeFieldResult(
-        field=param.as_field(result.value),
+        field=parameterization.as_field(result.value),
         t0=model.t0,
         cost=result.cost,
         grad_norm=result.grad_norm,
@@ -575,22 +547,22 @@ def _fit(
 def _fit_on_grid(
     model: SpaceTimeFieldVar, obs: PointObsBatch, grid: Float[Array, "N D"]
 ) -> Array:
-    r"""$u(t_0, \cdot)$ on ``grid`` of a fit with fixed collocation points."""
+    """x(t₀, ·; θ⋆) on ``grid``, from a fit with fixed collocation points."""
     return _fit(model, obs, None).initial_condition(grid)
 
 
 class _SpaceTimeFieldAnalysisStep(eqx.Module):
-    r"""``pipekit_cycle.AnalysisStep`` adapter for ``SpaceTimeFieldVar``.
+    """``pipekit_cycle.AnalysisStep`` adapter for ``SpaceTimeFieldVar``.
 
-    ``obs`` is a [`PointObsBatch`][vardax.PointObsBatch] (one sample, with
-    window-relative times), whose $\sigma_k$ are the observation errors:
-    ``obs_err_cov`` must be ``None``. ``obs_op`` is not used: the field is
-    evaluated at the observation coordinates directly (``DACycle`` passes
-    its gridded $H$, which does not apply to a field). There is no
-    background term, so ``forecast`` is not used in the cost; with a grid
-    and a ``forecast``, the analysis $u(t_0, \cdot)$ on the grid is
-    reshaped to the forecast's shape. The model's collocation points are
-    already drawn and fixed.
+    ``obs`` is one sample of a [`PointObsBatch`][vardax.PointObsBatch] with
+    window-relative times, whose σᵢ are the observation errors, so ``obs_err_cov`` must
+    be ``None``. There is no background term, so ``forecast`` is not used in the cost.
+    The model's collocation points are already drawn and fixed.
+
+    Attributes:
+        model: The model to fit with.
+        grid: Spatial points sₙ of the returned state, or ``None`` to return the fitted
+            result.
     """
 
     model: SpaceTimeFieldVar
@@ -604,7 +576,26 @@ class _SpaceTimeFieldAnalysisStep(eqx.Module):
         obs_op: Any = None,
         obs_err_cov: Any = None,
     ) -> Array | SpaceTimeFieldResult:
-        del obs_op  # the field is observed at the points (FieldPointObs)
+        """Fit the field to the cycle's observations.
+
+        Args:
+            forecast: With a grid, the shape and dtype of the returned analysis, or
+                ``None``.
+            obs: The observations, one sample.
+            obs_op: Not used: the field is evaluated at the observation coordinates
+                directly, and ``DACycle``'s gridded h does not apply to a field.
+            obs_err_cov: Must be ``None``.
+
+        Returns:
+            The analysis x(t₀, sₙ; θ⋆) on the grid, or the fitted result without one.
+
+        Raises:
+            ObservationError: If ``obs_err_cov`` is given, or a valid observation time
+                is outside the collocation window.
+            ShapeError: If ``forecast`` has a different size from the analysis.
+        """
+        # the field is observed at the points (FieldPointObs)
+        del obs_op
         if obs_err_cov is not None:
             raise ObservationError(
                 "A PointObsBatch carries its observation errors in sigma: "

@@ -1,45 +1,8 @@
-r"""Reduced-basis 4DVar with optional `ReducedBasis` control parameterisation.
+"""Strong-constraint 4D-Var on the full nonlinear cost, optionally in a reduced basis.
 
-Concrete `vardax.protocols.AnalysisStep` (via ``.as_analysis_step()``).
-Distinct from `vardax.IncrementalFourDVar` (the operational Gauss–Newton
-/ CG fast path): this class minimises the **full nonlinear** 4DVar cost
-via an ``optimistix.AbstractMinimiser``, with no linearisation, outer
-loop or inner CG, optionally parameterising the analysis increment
-through a reduced basis (Gaussian RBFs, Fourier modes, wavelets, EOFs) —
-the classical MASSH / Le Guillou shape.
-
-This class was called ``Incremental4DVar`` until vardax 0.1.10, after
-MASSH's name for the increment $\delta x_0 = \Phi X$. In vardax
-"incremental" means Gauss–Newton, so the old name is a deprecated alias.
-
-Cost (basis-less state-space mode):
-
-$$
-J(x_0) = \tfrac{1}{2} \|x_0 - x_b\|^2_{B^{-1}}
-       + \tfrac{1}{2} \sum_{t=0}^{T} \|m_t \odot
-                      (y_t - H(M^t(x_0)))\|^2_{R^{-1}}.
-$$
-
-With a `ReducedBasis` $\Phi$, the control becomes the coefficient vector
-$X$, the state increment is $\delta x_0 = \Phi X$, the prior is the
-separable $\tfrac{1}{2} X^\top Q^{-1} X$, and the forward integrates from
-$x_b + \Phi X$:
-
-$$
-J(X) = \tfrac{1}{2} X^\top Q^{-1} X
-     + \tfrac{1}{2} \sum_t \|m_t \odot
-                   (y_t - H(M^t(x_b + \Phi X)))\|^2_{R^{-1}}.
-$$
-
-Minimisation is delegated to ``optimistix`` (default
-``optx.BFGS(rtol=atol=1e-6)``); differentiating through the analysis is
-controlled by ``minimiser_adjoint`` (default ``optx.ImplicitAdjoint``)
-— matching `StrongFourDVar` / `WeakFourDVar` / `ThreeDVar`.
-
-References:
-- MASSH `mapping/src/tools_4Dvar.py:Variational` and
-  `mapping/src/inv.py:Inv_4Dvar` (reduced-basis 4DVar with L-BFGS-B).
-- vardax `StrongFourDVar` (state-space conventions, ``optx`` plumbing).
+There is no linearisation, outer loop or inner CG, which is what separates it from
+[`IncrementalFourDVar`][vardax.IncrementalFourDVar]; the control is x₀ or the
+coefficients z of a reduced basis with x₀ = μ_x + Φ z.
 """
 
 from __future__ import annotations
@@ -82,72 +45,74 @@ from vardax._src.utils.shapes import as_shape
 
 
 class ReducedBasisFourDVar(eqx.Module):
-    r"""Reduced-basis 4DVar.
+    """Strong-constraint 4D-Var with the control in a reduced basis.
 
-    $$J(X) = \tfrac12 X^\top Q^{-1} X + J_o(x_b + \Phi X)$$
+        𝒥(z) = ½ zᵀ Σ_z⁻¹ z + 𝒥_o(μ_x + Φ z)
+        𝒥_o(x₀) = ½ ∑ₜ ‖rₜ‖²_Σ̃_ε,t⁻¹
+        rₜ = mₜ ⊙ (yₜ − h(xₜ)),   xₜ = f(xₜ₋₁),   t = 0, …, T
+        Σ̃_ε,t = Mₜ Σ_ε Mₜ + (I − Mₜ),   Mₜ = diag(mₜ)
 
-    $$J_o(x_0) = \tfrac12 \sum_t \|m_t \odot (y_t - H(M^t(x_0)))\|^2_{R^{-1}}$$
-
-    Without a basis the control is $x_0$ itself and the first term is
-    $\tfrac12 \|x_0 - x_b\|^2_{B^{-1}}$.
+    Without a basis the control is x₀ itself and the first term is
+    ½ ‖x₀ − μ_x‖²_Σ_x⁻¹. The class was called ``Incremental4DVar`` until vardax 0.1.10,
+    after MASSH's name for the increment δx₀ = Φ z. In vardax "incremental" means
+    Gauss–Newton, so the old name is a deprecated alias.
 
     Algorithm:
-        1. Pick the control and its map to the initial state: $x_0$ itself,
-           the coefficients $X$ with $x_0 = x_b + \Phi X$ (``basis``), or
-           $\theta$ with $x_0 = \psi(\theta)$ (``parameterization``).
-        2. Roll the forward model out from $x_0$ for the window length.
-        3. Add the prior term ($B^{-1}$, ``basis.prior_inv`` or the
-           parameterization penalty) to the masked observation misfit
-           summed over the trajectory. Masked entries are marginalised out
-           of $R$, so a correlated $R$ is not biased by the gaps.
-        4. Minimise the full nonlinear cost with ``minimiser`` (no
-           linearisation or inner loop) and decode the minimiser to
-           $x_0^*$.
+        1. Pick the control and its map to the initial state: x₀ itself, the
+           coefficients z with x₀ = μ_x + Φ z (``basis``), or θ with x₀ = g_dec(θ)
+           (``parameterization``).
+        2. Roll f out from x₀ for T steps.
+        3. Add the prior term (Σ_x⁻¹, ``basis.prior_inv`` or the penalty ℛ(θ)) to the
+           observation term summed over the trajectory; Σ̃_ε,t marginalises masked
+           entries out, so a correlated Σ_ε is not biased by the gaps.
+        4. Minimise the full nonlinear cost with ``minimiser`` and decode the minimum
+           to x₀⋆.
 
     Attributes:
-        forward: ``pipekit_cycle.ForwardModel`` supplying
+        forward: Forward model f, a ``pipekit_cycle.ForwardModel`` supplying
             ``step(state, dt) -> state``.
-        obs_op: Observation operator (linear or nonlinear). Supplies
-            ``__call__`` and ``linearize``; ``__call__`` may accept a
-            ``mask`` kwarg (`MaskedIdentity` / `InterpObs` style).
-        prior_mean: Background $x_b$.
-        prior_cov_op: $B$. Used only when ``basis is None``.
-        obs_cov_op: $R$.
-        basis: Optional `ReducedBasis`. When supplied, the control is
-            the coefficient vector $X$ (``basis.nbasis`` entries)
-            and $B^{-1}$ is replaced by ``basis.prior_inv`` — the same as
+        obs_op: Observation operator h, linear or nonlinear. Supplies ``__call__`` and
+            ``linearize``; ``__call__`` may accept a ``mask`` keyword (`MaskedIdentity`
+            and `InterpObs` do).
+        prior_mean: Prior mean μ_x of the state at t = 0.
+        prior_cov_op: Prior covariance Σ_x, used only when ``basis`` is ``None``.
+        obs_cov_op: Observation-error covariance Σ_ε.
+        basis: Optional `ReducedBasis`. The control is then the coefficient vector z
+            (``basis.nbasis`` entries) and Σ_z⁻¹, applied by ``basis.prior_inv``,
+            replaces Σ_x⁻¹, the same as
             ``parameterization=LinearParameterization(basis, prior_mean)``.
         parameterization: Optional
-            [`StateParameterization`][vardax.StateParameterization]; the
-            control is $\theta$, $x_0 = \psi(\theta)$ and
-            $\mathrm{pen}(\theta)$ replaces the background term. Exclusive
-            with ``basis``.
-        minimiser: ``optimistix.AbstractMinimiser`` for the outer
-            optimisation (default ``optx.BFGS(rtol=1e-6, atol=1e-6)``), or
-            a [`Minimiser`][vardax.Minimiser] such as
+            [`StateParameterization`][vardax.StateParameterization]. The control is
+            then θ, with x₀ = g_dec(θ), and ℛ(θ) replaces the background term.
+            Exclusive with ``basis``.
+        minimiser: ``optimistix.AbstractMinimiser`` over the control, by default
+            ``optx.BFGS(rtol=1e-6, atol=1e-6)``, or a
+            [`Minimiser`][vardax.Minimiser] such as
             [`OptaxMinimiser`][vardax.OptaxMinimiser].
-        minimiser_adjoint: ``optimistix.AbstractAdjoint`` for
-            differentiating through the minimum. Default
-            ``optx.ImplicitAdjoint``.
-        max_steps: Iteration cap on the outer solver when ``minimiser``
-            is an ``optimistix`` solver; a vardax `Minimiser` keeps its own.
-        cov_solver: ``lineax`` solver for the covariance solves in the
-            cost ($B^{-1}$, $R^{-1}$). Default
-            ``lx.CG(atol=1e-6, rtol=1e-6)``, which suits large
-            matrix-free operators but is inexact on an ill-conditioned
-            covariance (for example a tiny $R$); pass
-            ``lx.AutoLinearSolver(well_posed=True)`` or ``lx.Cholesky()``
-            for an exact solve when the operator can be materialised.
-        forward_adjoint: As in [`StrongFourDVar`][vardax.StrongFourDVar]:
-            a ``diffrax.AbstractAdjoint`` for a forward implementing
+        minimiser_adjoint: ``optimistix.AbstractAdjoint`` for differentiating through
+            the minimum, by default ``optx.ImplicitAdjoint``.
+        max_steps: Iteration cap on the outer solver when ``minimiser`` is an
+            ``optimistix`` solver; a vardax `Minimiser` keeps its own.
+        cov_solver: ``lineax`` solver for Σ_x⁻¹ and Σ_ε⁻¹ in the cost. The default
+            ``lx.CG(atol=1e-6, rtol=1e-6)`` suits large matrix-free operators but is
+            inexact on an ill-conditioned covariance (for example a tiny Σ_ε); pass
+            ``lx.AutoLinearSolver(well_posed=True)`` or ``lx.Cholesky()`` for an exact
+            solve when the operator can be materialised.
+        forward_adjoint: As in [`StrongFourDVar`][vardax.StrongFourDVar]: a
+            ``diffrax.AbstractAdjoint`` for a forward implementing
             [`SupportsForwardAdjoint`][vardax.SupportsForwardAdjoint].
-        checkpoint: As in [`StrongFourDVar`][vardax.StrongFourDVar]:
-            ``False``, ``True`` or a block length ``k`` for
-            ``jax.checkpoint`` over the rollout.
+        checkpoint: As in [`StrongFourDVar`][vardax.StrongFourDVar]: ``False``, ``True``
+            or a block length k for ``jax.checkpoint`` over the rollout.
+
+    Raises:
+        ConfigurationError: If both ``basis`` and ``parameterization`` are given, or
+            ``checkpoint`` is neither a bool nor an int ≥ 1.
+        UnsupportedInputError: If ``forward_adjoint`` is set and ``forward`` has no
+            ``with_adjoint`` method.
 
     Examples:
-        Trivial dynamics, one timestep, $B = R = I$ and no basis: the
-        cost is that of 3DVar, so $x_0^* = y / 2$.
+        Trivial dynamics, one time, Σ_x = Σ_ε = I and no basis: the cost is that of
+        3D-Var, so x₀⋆ = y / 2:
 
         >>> import jax, jax.numpy as jnp, lineax as lx, vardax
         >>> class Identity:
@@ -170,17 +135,16 @@ class ReducedBasisFourDVar(eqx.Module):
         >>> bool(jnp.allclose(xa, 0.5, atol=1e-3))
         True
 
-        With a basis the increment is confined to $\mathrm{span}(\Phi)$.
-        A single unit-variance constant mode gives
-        $X^* = \tfrac{\sum_i y_i}{1 + N}$ and $x_0^* = X^* \mathbf{1}$:
+        With a basis the increment is confined to span(Φ). A single unit-variance
+        constant mode gives z⋆ = (∑ₙ yₙ) / (1 + D_x) and x₀⋆ = z⋆ 1:
 
         >>> basis = vardax.linear_basis(jnp.ones((4, 1)))
         >>> xa = vardax.ReducedBasisFourDVar(**common, basis=basis)(batch)
         >>> bool(jnp.allclose(xa, 4.0 / 5.0, atol=1e-3))
         True
 
-        Composed with a Fourier basis from [`fourier_basis`][vardax.fourier_basis],
-        the analysis is still a state-space array:
+        Composed with a Fourier basis from [`fourier_basis`][vardax.fourier_basis], the
+        analysis is still a state-space array:
 
         >>> fb = vardax.fourier_basis([jnp.linspace(0.0, 1.0, 4)], 2)
         >>> xb = vardax.ReducedBasisFourDVar(**common, basis=fb)(batch)
@@ -196,6 +160,10 @@ class ReducedBasisFourDVar(eqx.Module):
         Traceback (most recent call last):
         ...
         ConfigurationError: Pass basis= or parameterization=, not both; ...
+
+    References:
+        MASSH ``mapping/src/tools_4Dvar.py`` (``Variational``) and
+        ``mapping/src/inv.py`` (``Inv_4Dvar``), reduced-basis 4D-Var with L-BFGS-B.
     """
 
     forward: Any
@@ -256,131 +224,157 @@ class ReducedBasisFourDVar(eqx.Module):
         initial_state: Float[Array, " N"],
         n_steps: int,
     ) -> Float[Array, "T_plus_1 N"]:
-        """Step the forward ``n_steps`` times, returning the ``T+1``-long trajectory."""
+        """Step f for T = ``n_steps`` steps from x₀, returning x₀, …, x_T.
+
+        Args:
+            initial_state: Initial state x₀.
+            n_steps: Number of steps T.
+
+        Returns:
+            The trajectory, including x₀.
+        """
         forward = resolve_forward(self.forward, self.forward_adjoint)
         return rollout(forward, initial_state, n_steps, checkpoint=self.checkpoint)
 
     def __call__(self, batch: Batch1D | PointObsBatch) -> Float[Array, "*batch N"]:
-        r"""Reduced-basis 4DVar analysis: minimise over ``x_0`` (or ``X``).
+        """Analyse each window: minimise over x₀, z or θ, and return x₀⋆.
 
-        A [`PointObsBatch`][vardax.PointObsBatch] needs
-        ``obs_op=GridPointObs(...)``: observation $i$ is compared with the
-        trajectory state at ``time_index[i]`` over a window of ``n_times``
-        states, with error variance $\sigma_i^2$ (``obs_cov_op`` must
-        be ``None`` or an identity).
+        A [`PointObsBatch`][vardax.PointObsBatch] needs ``obs_op=GridPointObs(...)``:
+        observation i is compared with the trajectory state x_τᵢ,
+        τᵢ = ``time_index[i]``, over a window of ``n_times`` states, with error
+        variance σᵢ² (``obs_cov_op`` must be ``None`` or an identity).
 
         Args:
-            batch: A gridded [`Batch1D`][vardax.Batch1D] whose time axis
-                holds the window, or a
-                [`PointObsBatch`][vardax.PointObsBatch].
+            batch: A gridded [`Batch1D`][vardax.Batch1D] whose time axis holds the
+                window, or a [`PointObsBatch`][vardax.PointObsBatch].
 
         Returns:
-            The analysed initial state $x_0^*$ of every window.
+            The analysed initial state x₀⋆ of every window.
 
         Raises:
-            ObservationError: For a point batch with a non-trivial
-                ``obs_cov_op`` or an out-of-range ``time_index``.
-            MissingInputError: For a gridded batch when ``obs_cov_op`` is
-                ``None``, or a point batch with ``time_index`` but no
-                ``n_times``.
+            ObservationError: For a point batch with a non-trivial ``obs_cov_op`` or an
+                out-of-range ``time_index``.
+            MissingInputError: For a gridded batch when ``obs_cov_op`` is ``None``, or a
+                point batch with ``time_index`` but no ``n_times``.
             InputTypeError: For a point batch whose ``obs_op`` is not a
                 ``GridPointObs``.
         """
         if isinstance(batch, PointObsBatch):
             check_point_obs_cov(self.obs_cov_op)
-            n_steps = window_steps(batch)
+            num_steps = window_steps(batch)
 
-            def _one_points(window: PointObsBatch) -> Float[Array, " N"]:
-                def _obs_cost(
+            def analyse_points(window: PointObsBatch) -> Float[Array, " N"]:
+                def obs_cost(
                     trajectory: Float[Array, "T_plus_1 N"],
                 ) -> Float[Array, ""]:
+                    # 𝒥_o = ½ ∑ᵢ ‖rᵢ / σᵢ‖²
                     return grid_point_obs_cost(self.obs_op, trajectory, window)
 
-                return self._solve(_obs_cost, n_steps)
+                return self._solve(obs_cost, num_steps)
 
-            return map_point_batch(_one_points, batch)
+            return map_point_batch(analyse_points, batch)
 
-        obs_cov_op = require_obs_cov(self.obs_cov_op)
-        n_steps = batch.input.shape[1] - 1
+        obs_covariance = require_obs_cov(self.obs_cov_op)
+        # the window holds T + 1 times, so T steps
+        num_steps = batch.input.shape[1] - 1
 
-        def _one(
+        def analyse_window_obs(
             window_obs: Float[Array, "T_plus_1 M"],
             window_mask: Float[Array, "T_plus_1 M"],
         ) -> Float[Array, " N"]:
-            def _obs_cost(
+            def obs_cost(
                 trajectory: Float[Array, "T_plus_1 N"],
             ) -> Float[Array, ""]:
-                def _per_step(state, observation, step_mask):
+                def step_cost(state, observation, step_mask):
+                    # h(xₜ)
                     predicted_obs = (
                         self.obs_op(state, mask=step_mask)
                         if accepts_mask(self.obs_op)
                         else self.obs_op(state)
                     )
-                    # r = m ⊙ (y − H(x))
+                    # rₜ = mₜ ⊙ (yₜ − h(xₜ))
                     residual = step_mask * (observation - predicted_obs)
-                    # J_o,t = ½ rᵀ R̃⁻¹ r with R̃ = M R M + (I − M), so masked
-                    # entries drop out of the likelihood
+                    # Σ̃_ε,t = Mₜ Σ_ε Mₜ + (I − Mₜ), so masked entries drop out
+                    # of the likelihood
+                    masked_covariance = gaussx.masked_obs_covariance(
+                        obs_covariance, step_mask
+                    )
+                    # 𝒥_o,t = ½ rₜᵀ Σ̃_ε,t⁻¹ rₜ
                     return half_weighted_norm(
-                        gaussx.masked_obs_covariance(obs_cov_op, step_mask),
-                        residual,
-                        self.cov_solver,
+                        masked_covariance, residual, self.cov_solver
                     )
 
-                per_step_costs = jax.vmap(_per_step)(
-                    trajectory, window_obs, window_mask
-                )
-                return jnp.sum(per_step_costs)
+                step_costs = jax.vmap(step_cost)(trajectory, window_obs, window_mask)
+                # 𝒥_o = ∑ₜ 𝒥_o,t
+                return jnp.sum(step_costs)
 
-            return self._solve(_obs_cost, n_steps)
+            return self._solve(obs_cost, num_steps)
 
-        return jax.vmap(_one)(fill_gaps(batch.input, batch.mask), batch.mask)
+        return jax.vmap(analyse_window_obs)(
+            fill_gaps(batch.input, batch.mask), batch.mask
+        )
 
     def _solve(
-        self, _obs_cost: Callable[[Array], Array], n_steps: int
+        self, obs_cost: Callable[[Array], Array], num_steps: int
     ) -> Float[Array, " N"]:
-        """Minimise background (or penalty) plus the trajectory ``_obs_cost``."""
-        param = self.parameterization
+        """Minimise the prior term or penalty, plus 𝒥_o of the trajectory.
+
+        Args:
+            obs_cost: The observation term of a trajectory, x₀, …, x_T ↦ 𝒥_o.
+            num_steps: Number of steps T.
+
+        Returns:
+            The analysed initial state x₀⋆.
+        """
+        parameterization = self.parameterization
         if self.basis is not None:
-            # The reduced-basis path, unchanged; it equals
-            # LinearParameterization(basis, prior_mean) mathematically.
+            # the same cost as LinearParameterization(basis, prior_mean)
             def cost(coefficients: Float[Array, " M"], _args: Any) -> Float[Array, ""]:
-                # J_b = ½ Xᵀ P⁻¹ X
-                background_cost = 0.5 * jnp.sum(
-                    coefficients * self.basis.prior_inv(coefficients)
-                )
-                basis_increment = self.basis.operg(0.0, coefficients)
-                # x₀ = x_b + Φ X
+                # Σ_z⁻¹ z
+                precision_product = self.basis.prior_inv(coefficients)
+                # 𝒥_b = ½ zᵀ Σ_z⁻¹ z
+                background_cost = 0.5 * jnp.sum(coefficients * precision_product)
+                # δx₀ = Φ z, with a basis evaluated at t = 0
+                increment = self.basis.operg(0.0, coefficients)
+                # x₀ = μ_x + δx₀
                 initial_state = self.prior_mean + as_shape(
-                    basis_increment, self.prior_mean.shape
+                    increment, self.prior_mean.shape
                 )
-                return background_cost + _obs_cost(
-                    self._rollout(initial_state, n_steps=n_steps)
-                )
+                # xₜ = f(xₜ₋₁)
+                trajectory = self._rollout(initial_state, n_steps=num_steps)
+                # 𝒥(z) = 𝒥_b + 𝒥_o(x₀)
+                return background_cost + obs_cost(trajectory)
 
             initial_control = jnp.zeros(
                 (self.basis.nbasis,), dtype=self.prior_mean.dtype
             )
-        elif param is not None:
+        elif parameterization is not None:
 
-            def cost(theta: Any, _args: Any) -> Float[Array, ""]:
-                initial_state = as_shape(param.decode(theta), self.prior_mean.shape)
-                return param.penalty(theta) + _obs_cost(
-                    self._rollout(initial_state, n_steps=n_steps)
-                )
+            def cost(params: Any, _args: Any) -> Float[Array, ""]:
+                # x₀ = g_dec(θ)
+                decoded = parameterization.decode(params)
+                initial_state = as_shape(decoded, self.prior_mean.shape)
+                # ℛ(θ)
+                penalty = parameterization.penalty(params)
+                # xₜ = f(xₜ₋₁)
+                trajectory = self._rollout(initial_state, n_steps=num_steps)
+                # 𝒥(θ) = ℛ(θ) + 𝒥_o(g_dec(θ))
+                return penalty + obs_cost(trajectory)
 
-            initial_control = param.init_control()
+            initial_control = parameterization.init_control()
         else:
 
             def cost(initial_state: Float[Array, " N"], _args: Any) -> Float[Array, ""]:
-                # δx = x₀ − x_b
+                # δx₀ = x₀ − μ_x
                 increment = initial_state - self.prior_mean
-                # J_b = ½ δxᵀ B⁻¹ δx
+                # 𝒥_b = ½ δx₀ᵀ Σ_x⁻¹ δx₀
                 background_cost = half_weighted_norm(
                     self.prior_cov_op, increment, self.cov_solver
                 )
-                return background_cost + _obs_cost(
-                    self._rollout(initial_state, n_steps=n_steps)
-                )
+                # xₜ = f(xₜ₋₁)
+                trajectory = self._rollout(initial_state, n_steps=num_steps)
+                # 𝒥(x₀) = 𝒥_b + 𝒥_o(x₀)
+                return background_cost + obs_cost(trajectory)
 
             initial_control = self.prior_mean
 
@@ -392,19 +386,22 @@ class ReducedBasisFourDVar(eqx.Module):
             max_steps=self.max_steps,
         )
         if self.basis is not None:
+            # δx₀⋆ = Φ z⋆
             increment = self.basis.operg(0.0, control_star)
-            # x₀* = x_b + Φ X*
+            # x₀⋆ = μ_x + δx₀⋆
             return self.prior_mean + as_shape(increment, self.prior_mean.shape)
-        if param is not None:
-            return as_shape(param.decode(control_star), self.prior_mean.shape)
+        if parameterization is not None:
+            # x₀⋆ = g_dec(θ⋆)
+            decoded = parameterization.decode(control_star)
+            return as_shape(decoded, self.prior_mean.shape)
         return control_star
 
     def posterior(self, batch: Batch1D, adapter: Any = None) -> Any:
         """Analyse one window and return its [`Posterior`][vardax.Posterior].
 
-        Runs the analysis, then ``adapter(analysis, self, batch)``; the
-        default adapter is [`LaplaceCovariance`][vardax.LaplaceCovariance]
-        with this model's $B$ and $R$.
+        Runs the analysis, then ``adapter(analysis, self, batch)``; the default adapter
+        is [`LaplaceCovariance`][vardax.LaplaceCovariance] with this model's Σ_x and
+        Σ_ε, or Σ_x|y = Φ Σ_z|y Φᵀ with a ``basis``.
 
         Args:
             batch: A ``Batch1D`` holding one window.
@@ -416,21 +413,21 @@ class ReducedBasisFourDVar(eqx.Module):
 
         Raises:
             ShapeError: If ``batch`` holds more than one window.
-            UnsupportedInputError: For a point batch, or for a model with
-                ``basis=`` or ``parameterization=``, whose prior is not
-                $B$.
+            UnsupportedInputError: For a point batch, or a ``parameterization`` whose
+                decode is not affine.
         """
+        # lazy: the posterior adapters import the models
         from vardax._src.posterior._precision import model_posterior
 
         return model_posterior(self, batch, adapter)
 
     def as_analysis_step(self) -> _ReducedBasisFourDVarAnalysisStep:
-        """Adapt to ``pipekit_cycle.AnalysisStep`` (Decision D8).
+        """Adapt to ``pipekit_cycle.AnalysisStep``.
 
         Returns:
-            An analysis step that accepts single arrays or windowed lists,
-            swaps in the supplied forecast and operators, and returns the
-            analysis (rolled to the window end for a smoother).
+            An analysis step that accepts single arrays or windowed lists, swaps in the
+            supplied forecast and operators, and returns the analysis rolled to the end
+            of the window.
         """
         return _ReducedBasisFourDVarAnalysisStep(self)
 
@@ -438,16 +435,12 @@ class ReducedBasisFourDVar(eqx.Module):
 class _ReducedBasisFourDVarAnalysisStep(eqx.Module):
     """``pipekit_cycle.AnalysisStep`` adapter for ``ReducedBasisFourDVar``.
 
-    Handles both calling conventions: ``DACycle`` hands in single
-    ``(N,)`` arrays, ``SmootherCycle`` hands in length-``window`` lists
-    of ``(N,)`` arrays. Either way the adapter stacks to
-    ``(1, T+1, N)`` for the model's batched ``__call__`` and threads
-    the supplied ``forecast`` / ``obs_op`` / ``obs_err_cov`` into the
-    model via ``eqx.tree_at``, so windowed cycles no longer regularise
-    against the stale construction-time fields and runtime operator
-    swaps are honoured. For ``SmootherCycle(window > 1)`` the optimised
-    initial state is rolled forward to the end of the window before
-    being returned as the next carrier.
+    Analyses the window around the cycle's forecast, with the cycle's h and Σ_ε when
+    given, and returns the analysed state at the end of the window, the state the cycle
+    steps forward from (``analyse_window``).
+
+    Attributes:
+        model: The model to analyse with.
     """
 
     model: ReducedBasisFourDVar
@@ -460,6 +453,19 @@ class _ReducedBasisFourDVarAnalysisStep(eqx.Module):
         obs_op: Any,
         obs_err_cov: Any,
     ) -> Float[Array, ...]:
+        """Analyse a window around ``forecast``.
+
+        Args:
+            forecast: The cycle's forecast over the window: a list from
+                ``SmootherCycle``, or one state from ``DACycle``.
+            obs: Observations over the window, shaped the same way; non-finite entries
+                are missing.
+            obs_op: The cycle's observation operator h, or ``None``.
+            obs_err_cov: The cycle's observation-error covariance Σ_ε, or ``None``.
+
+        Returns:
+            The analysed state at the end of the window.
+        """
         return analyse_window(
             self.model,
             rollout_end,
