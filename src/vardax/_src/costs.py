@@ -1,4 +1,8 @@
-"""Cost functions for 4DVarNet variational data assimilation."""
+"""Mean-square costs for 4DVarNet-style variational data assimilation.
+
+𝒥_o and 𝒥_b are masked or plain mean squares, not Gaussian negative log-densities,
+and 𝒥_res is the weak-PDE-constraint penalty of a continuous field.
+"""
 
 from __future__ import annotations
 
@@ -15,32 +19,38 @@ from vardax._src.errors import ConfigurationError, MissingInputError, ShapeError
 from ._types import Batch1D
 
 
+def _masked_mean_square(
+    state: Float[Array, ...], obs: Float[Array, ...], mask: Float[Array, ...]
+) -> Float[Array, ""]:
+    """Masked mean square mean((m ⊙ (x − y))²) shared by the observation costs."""
+    # m ⊙ (x − y)
+    departure = mask * (state - obs)
+    # mean((m ⊙ (x − y))²)
+    return jnp.mean(departure**2)
+
+
 def obs_cost_1d(
     state: Float[Array, "B T N"],
     obs: Float[Array, "B T N"],
     mask: Float[Array, "B T N"],
     nan_to_num: bool = False,
 ) -> Float[Array, ""]:
-    r"""Observation cost for 1-D data.
+    """Observation cost for 1-D data: the masked mean-squared error.
 
-    Computes the masked mean-squared error between the state and observations:
+        𝒥_o = mean((m ⊙ (x − y))²)
 
-    $$ J_{obs} = \operatorname{mean}\big((m \odot (x - y))^2\big) $$
-
-    with state $x$, observations $y$ and observation mask $m$ (``1`` where
-    observed, ``0`` elsewhere). The mean runs over all elements, so it is
-    the masked squared error divided by the total element count, not by
-    the number of observed locations.
+    The mean runs over all elements, so it is the masked squared error divided by
+    the total element count, not by the number of observed locations.
 
     Algorithm:
-        1. Optionally replace ``NaN`` entries of ``obs`` by zero.
-        2. Form the masked departure $m \odot (x - y)$.
+        1. Optionally replace ``NaN`` entries of y by zero.
+        2. Form the masked departure m ⊙ (x − y).
         3. Return the mean of its square.
 
     Args:
-        state: Current state estimate $x$.
-        obs: Observations $y$.
-        mask: Binary observation mask $m$.
+        state: Current state estimate x.
+        obs: Observations y.
+        mask: Binary observation mask m.
             A value of ``1`` indicates an observed location.
         nan_to_num: When ``True``, replace ``NaN`` entries in ``obs`` with
             zero (via :func:`jax.numpy.nan_to_num`) *before* masking. Use this
@@ -51,7 +61,7 @@ def obs_cost_1d(
             ``NaN`` in JAX. Ported from ``mfourdvar``'s ``ObsOperator.loss``.
 
     Returns:
-        Scalar observation cost.
+        Scalar observation cost 𝒥_o.
 
     Examples:
         >>> import jax.numpy as jnp
@@ -77,9 +87,9 @@ def obs_cost_1d(
         (1, 1, 4)
     """
     if nan_to_num:
+        # a NaN at a masked-out location would still poison 0 ⊙ NaN
         obs = jnp.nan_to_num(obs)
-    diff = mask * (state - obs)
-    return jnp.mean(diff**2)
+    return _masked_mean_square(state, obs, mask)
 
 
 def obs_cost_2d(
@@ -88,30 +98,28 @@ def obs_cost_2d(
     mask: Float[Array, "B T H W"],
     nan_to_num: bool = False,
 ) -> Float[Array, ""]:
-    r"""Observation cost for 2-D data.
+    """Observation cost for 2-D data: the masked mean-squared error.
 
-    Computes the masked mean-squared error between the state and observations:
+        𝒥_o = mean((m ⊙ (x − y))²)
 
-    $$ J_{obs} = \operatorname{mean}\big((m \odot (x - y))^2\big) $$
-
-    with state $x$, observations $y$ and observation mask $m$ (``1`` where
-    observed, ``0`` elsewhere), as in [`obs_cost_1d`][vardax.obs_cost_1d].
+    The mask m is ``1`` where observed and ``0`` elsewhere, as in
+    [`obs_cost_1d`][vardax.obs_cost_1d].
 
     Algorithm:
-        1. Optionally replace ``NaN`` entries of ``obs`` by zero.
-        2. Form the masked departure $m \odot (x - y)$.
+        1. Optionally replace ``NaN`` entries of y by zero.
+        2. Form the masked departure m ⊙ (x − y).
         3. Return the mean of its square.
 
     Args:
-        state: Current state estimate $x$.
-        obs: Observations $y$.
-        mask: Binary observation mask $m$.
+        state: Current state estimate x.
+        obs: Observations y.
+        mask: Binary observation mask m.
         nan_to_num: When ``True``, replace ``NaN`` entries in ``obs`` with
             zero before masking (see [`obs_cost_1d`][vardax.obs_cost_1d]
             for the rationale).
 
     Returns:
-        Scalar observation cost.
+        Scalar observation cost 𝒥_o.
 
     Examples:
         >>> import jax.numpy as jnp
@@ -127,33 +135,30 @@ def obs_cost_2d(
         0.0
     """
     if nan_to_num:
+        # a NaN at a masked-out location would still poison 0 ⊙ NaN
         obs = jnp.nan_to_num(obs)
-    diff = mask * (state - obs)
-    return jnp.mean(diff**2)
+    return _masked_mean_square(state, obs, mask)
 
 
 def prior_cost(
     state: Float[Array, ...],
     prior_reconstruction: Float[Array, ...],
 ) -> Float[Array, ""]:
-    r"""Prior cost based on learned autoencoder reconstruction.
+    """Prior cost of a learned autoencoder: the reconstruction mean square.
 
-    Computes the mean-squared error between the state and its reconstruction
-    through the learned prior (autoencoder):
-
-    $$ J_{prior} = \operatorname{mean}\big((x - \varphi(x))^2\big) $$
+        x̂ = g_ae(x; θ) = g_dec(g_enc(x; ν); θ)
+        𝒥_p = mean((x − x̂)²)
 
     Algorithm:
-        1. Take the reconstruction $\varphi(x)$ of the state.
-        2. Return the mean squared difference $x - \varphi(x)$.
+        1. Take the reconstruction x̂ = g_ae(x; θ) of the state.
+        2. Return the mean square of the departure x − x̂.
 
     Args:
-        state: Current state estimate $x$.
-        prior_reconstruction: Autoencoder reconstruction $\varphi(x)$ of
-            the state.
+        state: Current state estimate x.
+        prior_reconstruction: Autoencoder reconstruction x̂ of the state.
 
     Returns:
-        Scalar prior cost.
+        Scalar prior cost 𝒥_p.
 
     Examples:
         >>> import jax.numpy as jnp
@@ -167,7 +172,10 @@ def prior_cost(
         >>> float(prior_cost(x, x + 2.0))
         4.0
     """
-    return jnp.mean((state - prior_reconstruction) ** 2)
+    # x − x̂
+    departure = state - prior_reconstruction
+    # 𝒥_p = mean((x − x̂)²)
+    return jnp.mean(departure**2)
 
 
 # ---------------------------------------------------------------------------
@@ -182,28 +190,25 @@ def variational_cost(
     alpha_obs: float = 0.5,
     alpha_prior: float = 0.5,
 ) -> Float[Array, ""]:
-    r"""Compute the variational cost $U(x)$.
+    """Variational cost, the weighted sum of observation and prior mean squares.
 
-    $$ U(x) = \alpha_{obs} J_o + \alpha_{prior} J_p $$
-
-    with $J_o = \operatorname{mean}\big((m \odot (x - y))^2\big)$ and
-    $J_p = \operatorname{mean}\big((x - \varphi(x))^2\big)$.
+        𝒥(x) = α_o 𝒥_o + α_p 𝒥_p
+        𝒥_o = mean((m ⊙ (x − y))²),   𝒥_p = mean((x − x̂)²),   x̂ = g_ae(x; θ)
 
     Algorithm:
-        1. Form the masked departure $m \odot (x - y)$ from the batch.
-        2. Form the prior departure $x - \varphi(x)$ with ``prior_fn``.
+        1. Form the masked departure m ⊙ (x − y) from the batch.
+        2. Form the prior departure x − x̂ with ``prior_fn``.
         3. Return the weighted sum of the two mean squares.
 
     Args:
-        x: Current state estimate.
-        batch: Observed data batch with ``input`` (``y``) and ``mask``
-            (``m``).
-        prior_fn: Callable ``x -> x_prior``.
-        alpha_obs: Weight for the observation term (default ``0.5``).
-        alpha_prior: Weight for the prior term (default ``0.5``).
+        x: Current state estimate x.
+        batch: Observed data batch with ``input`` (y) and ``mask`` (m).
+        prior_fn: Callable ``x -> x̂``, the learned prior g_ae(·; θ).
+        alpha_obs: Weight α_o of the observation term (default ``0.5``).
+        alpha_prior: Weight α_p of the prior term (default ``0.5``).
 
     Returns:
-        Scalar cost value.
+        Scalar cost 𝒥.
 
     Examples:
         With the trivial [`IdentityPrior`][vardax.IdentityPrior] the
@@ -230,12 +235,15 @@ def variational_cost(
         >>> g.shape
         (1, 2, 4)
     """
-    obs_diff = batch.mask * (x - batch.input)
-    # J_o = mean((m ⊙ (x − y))²)
-    observation_term_cost = jnp.mean(obs_diff**2)
-    # J_p = mean((x − φ(x))²)
-    prior_term_cost = jnp.mean((x - prior_fn(x)) ** 2)
-    return alpha_obs * observation_term_cost + alpha_prior * prior_term_cost
+    # 𝒥_o = mean((m ⊙ (x − y))²)
+    observation_cost = _masked_mean_square(x, batch.input, batch.mask)
+    # x̂ = g_ae(x; θ)
+    reconstruction = prior_fn(x)
+    # 𝒥_p = mean((x − x̂)²)
+    prior_departure = x - reconstruction
+    prior_term_cost = jnp.mean(prior_departure**2)
+    # 𝒥 = α_o 𝒥_o + α_p 𝒥_p
+    return alpha_obs * observation_cost + alpha_prior * prior_term_cost
 
 
 def variational_cost_grad(
@@ -245,9 +253,9 @@ def variational_cost_grad(
     alpha_obs: float = 0.5,
     alpha_prior: float = 0.5,
 ) -> Float[Array, ...]:
-    r"""Gradient of [`variational_cost`][vardax.variational_cost] w.r.t. ``x``.
+    """Gradient of [`variational_cost`][vardax.variational_cost] w.r.t. ``x``.
 
-    $$ g = \nabla_x U(x) $$
+        g = ∇ₓ 𝒥(x)
 
     Algorithm:
         1. Differentiate [`variational_cost`][vardax.variational_cost]
@@ -255,14 +263,14 @@ def variational_cost_grad(
         2. Return the resulting array.
 
     Args:
-        x: Current state estimate.
+        x: Current state estimate x.
         batch: Observed data batch.
-        prior_fn: Callable ``x -> x_prior``.
-        alpha_obs: Weight for the observation term.
-        alpha_prior: Weight for the prior term.
+        prior_fn: Callable ``x -> x̂``, the learned prior g_ae(·; θ).
+        alpha_obs: Weight α_o of the observation term.
+        alpha_prior: Weight α_p of the prior term.
 
     Returns:
-        The gradient $\nabla_x U(x)$, shaped like ``x``.
+        The gradient ∇ₓ 𝒥, shaped like ``x``.
 
     Examples:
         >>> import jax.numpy as jnp, vardax
@@ -289,28 +297,24 @@ def decomposed_loss(
     alpha_obs: float = 0.5,
     alpha_prior: float = 0.5,
 ) -> dict[str, Float[Array, ""]]:
-    r"""Compute the decomposed variational loss.
+    """Decomposed variational loss: the weighted terms alongside their sum.
 
-    Returns individual observation and prior components alongside the
-    total, matching the ``ModelLoss`` pattern from the legacy codebase.
+        𝒥 = α_o 𝒥_o + α_p 𝒥_p
 
-    $$ U = \alpha_{obs} J_o + \alpha_{prior} J_p $$
-
-    with $J_o = \operatorname{mean}\big((m \odot (x - y))^2\big)$ and
-    $J_p = \operatorname{mean}\big((x - \varphi(x))^2\big)$ as in
-    [`variational_cost`][vardax.variational_cost].
+    The terms 𝒥_o and 𝒥_p are those of [`variational_cost`][vardax.variational_cost].
+    The dictionary matches the ``ModelLoss`` pattern from the legacy codebase.
 
     Algorithm:
-        1. Compute the weighted observation term.
-        2. Compute the weighted prior term.
+        1. Compute the weighted observation term α_o 𝒥_o.
+        2. Compute the weighted prior term α_p 𝒥_p.
         3. Return both and their sum.
 
     Args:
-        x: Current state estimate.
+        x: Current state estimate x.
         batch: Observed data batch.
-        prior_fn: Callable ``x -> x_prior``.
-        alpha_obs: Weight for the observation term.
-        alpha_prior: Weight for the prior term.
+        prior_fn: Callable ``x -> x̂``, the learned prior g_ae(·; θ).
+        alpha_obs: Weight α_o of the observation term.
+        alpha_prior: Weight α_p of the prior term.
 
     Returns:
         Dictionary with keys ``"obs"``, ``"prior"``, and ``"total"``.
@@ -331,9 +335,15 @@ def decomposed_loss(
         >>> bool(jnp.allclose(parts["total"], total))
         True
     """
-    obs_diff = batch.mask * (x - batch.input)
-    obs = alpha_obs * jnp.mean(obs_diff**2)
-    prior = alpha_prior * jnp.mean((x - prior_fn(x)) ** 2)
+    # α_o 𝒥_o = α_o mean((m ⊙ (x − y))²)
+    observation_cost = _masked_mean_square(x, batch.input, batch.mask)
+    obs = alpha_obs * observation_cost
+    # x̂ = g_ae(x; θ)
+    reconstruction = prior_fn(x)
+    # α_p 𝒥_p = α_p mean((x − x̂)²)
+    prior_departure = x - reconstruction
+    prior = alpha_prior * jnp.mean(prior_departure**2)
+    # 𝒥 = α_o 𝒥_o + α_p 𝒥_p
     return {"obs": obs, "prior": prior, "total": obs + prior}
 
 
@@ -346,25 +356,25 @@ def background_cost(
     initial_state: Float[Array, ...],
     background: Float[Array, ...],
 ) -> Float[Array, ""]:
-    r"""Background cost $\operatorname{mean}\big((x_0 - x_b)^2\big)$.
+    """Background cost: the mean square of the departure from the first guess.
 
-    Penalises departure of the initial state $x_0$ (the control variable
-    in strong-constraint 4DVar) from the background / first guess $x_b$.
-    Uses the same mean-squared convention as the other functional costs in
-    this module.
+        𝒥_b = mean((x₀ − μ_x)²)
 
-    $$ J_b = \operatorname{mean}\big((x_0 - x_b)^2\big) $$
+    Penalises departure of the initial state x₀ (the control variable in
+    strong-constraint 4DVar) from the background / first guess μ_x. It is a mean
+    square like the other functional costs in this module, not a Gaussian
+    negative log-density.
 
     Algorithm:
-        1. Form the departure $x_0 - x_b$.
+        1. Form the departure x₀ − μ_x.
         2. Return the mean of its square.
 
     Args:
-        initial_state: Initial state estimate $x_0$.
-        background: Background state $x_b$.
+        initial_state: Initial state estimate x₀.
+        background: Background state μ_x.
 
     Returns:
-        Scalar background cost.
+        Scalar background cost 𝒥_b.
 
     Examples:
         >>> import jax.numpy as jnp
@@ -378,7 +388,10 @@ def background_cost(
         >>> float(background_cost(x0, x0 - 0.5))
         0.25
     """
-    return jnp.mean((initial_state - background) ** 2)
+    # x₀ − μ_x
+    departure = initial_state - background
+    # 𝒥_b = mean((x₀ − μ_x)²)
+    return jnp.mean(departure**2)
 
 
 def strong_variational_cost(
@@ -392,12 +405,10 @@ def strong_variational_cost(
     alpha_bg: float = 0.5,
     nan_to_num: bool = False,
 ) -> Float[Array, ""]:
-    r"""Strong-constraint variational cost $U(x_0)$.
+    """Strong-constraint variational cost of the initial state.
 
-    $$ U(x_0) = \alpha_{obs} J_o + \alpha_{bg} J_b $$
-
-    with $J_o = \operatorname{mean}\big((m \odot (\varphi(x_0) - y))^2\big)$
-    and $J_b = \operatorname{mean}\big((x_0 - x_b)^2\big)$.
+        𝒥(x₀) = α_o 𝒥_o + α_b 𝒥_b
+        𝒥_o = mean((m ⊙ (f_{1:T}(x₀) − y))²),   𝒥_b = mean((x₀ − μ_x)²)
 
     The dynamical model is enforced as a **hard** constraint: the initial
     state ``initial_state`` is propagated through the dynamics
@@ -411,34 +422,33 @@ def strong_variational_cost(
     form that mirrors [`variational_cost`][vardax.variational_cost].
 
     Algorithm:
-        1. Propagate $x_0$ through ``forward_fn(initial_state, ts)`` to get the
-           trajectory $\varphi(x_0)$.
+        1. Propagate x₀ through ``forward_fn(initial_state, ts)`` to get the
+           trajectory f_{1:T}(x₀).
         2. Score the trajectory against the observations with the mask.
         3. Add the background term, defaulting to zero when ``background`` is
            omitted.
         4. Return the weighted sum.
 
     Args:
-        initial_state: Initial state $x_0$ (the control variable), whatever
+        initial_state: Initial state x₀ (the control variable), whatever
             ``forward_fn`` expects.
-        ts: Time coordinates $t$ passed to ``forward_fn``.
-        batch: Observed data batch supplying ``input`` (``y``) and ``mask``
-            (``m``), matching ``forward_fn``'s trajectory output.
-        forward_fn: Callable ``(initial_state, ts) -> trajectory`` producing a state
+        ts: Time coordinates t passed to ``forward_fn``.
+        batch: Observed data batch supplying ``input`` (y) and ``mask`` (m),
+            matching ``forward_fn``'s trajectory output.
+        forward_fn: Callable ``(initial_state, ts) -> f_{1:T}(x₀)`` producing a state
             trajectory the same shape as ``batch.input``. A
             [`DynTrajectory`][vardax.DynTrajectory] (optionally ``vmap``-ed
             over the batch axis) is the canonical choice.
-        background: Background state for the background term. Defaults to
-            ``initial_state``
-            (i.e. no background penalty).
-        alpha_obs: Weight for the observation term (default ``0.5``).
-        alpha_bg: Weight for the background term (default ``0.5``).
+        background: Background state μ_x for the background term. Defaults to
+            ``initial_state`` (i.e. no background penalty).
+        alpha_obs: Weight α_o of the observation term (default ``0.5``).
+        alpha_bg: Weight α_b of the background term (default ``0.5``).
         nan_to_num: When ``True``, replace ``NaN`` entries in the
             observations with zero before masking (see
             [`obs_cost_1d`][vardax.obs_cost_1d]).
 
     Returns:
-        Scalar strong-constraint variational cost.
+        Scalar strong-constraint variational cost 𝒥.
 
     Examples:
         A persistence model repeats the initial state over the window.
@@ -468,15 +478,17 @@ def strong_variational_cost(
     """
     if background is None:
         background = initial_state
+    # f_{1:T}(x₀): the hard constraint, only the rollout meets the observations
     trajectory = forward_fn(initial_state, ts)
     obs = batch.input
     if nan_to_num:
         obs = jnp.nan_to_num(obs)
-    # J_o = mean((m ⊙ (φ(x₀) − y))²)
-    observation_term_cost = jnp.mean((batch.mask * (trajectory - obs)) ** 2)
-    # J_b = mean((x₀ − x_b)²)
+    # 𝒥_o = mean((m ⊙ (f_{1:T}(x₀) − y))²)
+    observation_cost = _masked_mean_square(trajectory, obs, batch.mask)
+    # 𝒥_b = mean((x₀ − μ_x)²)
     background_term_cost = background_cost(initial_state, background)
-    return alpha_obs * observation_term_cost + alpha_bg * background_term_cost
+    # 𝒥 = α_o 𝒥_o + α_b 𝒥_b
+    return alpha_obs * observation_cost + alpha_bg * background_term_cost
 
 
 # ---------------------------------------------------------------------------
@@ -485,27 +497,22 @@ def strong_variational_cost(
 
 
 class ResidualPenalty(eqx.Module):
-    r"""PDE residual of a continuous field at collocation points, as a cost.
+    """PDE residual of a continuous field at collocation points, as a cost.
 
-    For a field $f_\theta$ (a callable of one point, e.g. a neural field),
-    a PDE operator $\mathcal N$ supplied as ``residual_fn`` and collocation
-    points $c_1, \dots, c_{N_c}$,
+        𝒥_res(θ) = β_res / (2 N_c) ∑ⱼ ‖r(cⱼ; θ)‖²
+        r(s; θ) = ``residual_fn(field, s)``
 
-    $$
-    J_{\text{res}}(\theta) = \frac{\lambda}{2 N_c} \sum_{j=1}^{N_c}
-        \big\lVert \mathcal N[f_\theta](c_j) \big\rVert^2 .
-    $$
-
-    Added to an observation cost it imposes the physics as a weak
-    constraint, without a time-stepping model. Residuals are callables built
+    Here r(s; θ) is the PDE residual of the field x(·; θ) (a callable of one point,
+    e.g. a neural field) at the point s, cⱼ are the N_c collocation points and
+    β_res is the ``weight``. Added to an observation cost it imposes the physics as
+    a weak constraint, without a time-stepping model. Residuals are callables built
     on `geonnax.diffops` (see `vardax.examples` for advection–diffusion and
     vorticity-form Navier–Stokes); vardax does not import a PDE library.
 
-    With a ``sampler``, the points are redrawn from a key on every call. If
-    each point is drawn from a distribution $p$, the resampled cost is an
-    unbiased estimate of
-    $\tfrac{\lambda}{2}\,\mathbb E_{c \sim p} \lVert \mathcal N[f_\theta](c) \rVert^2$,
-    so its gradient is a stochastic gradient of that expected penalty.
+    With a ``sampler``, the points are redrawn from a key on every call. If each
+    point is drawn from a distribution p, the resampled cost is an unbiased
+    estimate of ½ β_res 𝔼_{c ∼ p} ‖r(c; θ)‖², so its gradient is a stochastic
+    gradient of that expected penalty.
 
     The field must be smooth enough for the derivatives the residual takes
     (twice differentiable for advection–diffusion, four times for the
@@ -516,14 +523,14 @@ class ResidualPenalty(eqx.Module):
 
     ``residual_fn`` and ``sampler`` are static fields, so they must be
     hashable (functions and closures are); ``collocation`` and ``weight``
-    are array leaves, so changing the weight (e.g. annealing $\lambda$)
+    are array leaves, so changing the weight (e.g. annealing β_res)
     does not recompile a jitted cost.
 
     Algorithm:
-        1. Obtain the points $c_j$, from ``collocation`` or by calling
+        1. Obtain the points cⱼ, from ``collocation`` or by calling
            ``sampler(key)``.
-        2. Evaluate the residual $\mathcal N[f_\theta](c_j)$ at every point.
-        3. Return $\lambda / (2 N_c)$ times the sum of squared residuals.
+        2. Evaluate the residual r(cⱼ; θ) at every point.
+        3. Return β_res / (2 N_c) times the sum of squared residual norms.
 
     Raises:
         MissingInputError: If neither ``collocation`` nor ``sampler`` is
@@ -533,18 +540,18 @@ class ResidualPenalty(eqx.Module):
         ConfigurationError: If ``weight`` is negative.
 
     Attributes:
-        residual_fn: ``(field, s) -> (R,)``, the residual $\mathcal N[f](s)$
-            at one point ``s`` of shape ``(D,)``, where ``field`` maps
+        residual_fn: ``(field, s) -> (R,)``, the residual r(s; θ) of the field
+            x(·; θ) at one point ``s`` of shape ``(D,)``, where ``field`` maps
             ``(D,) -> (K,)``. A scalar return is treated as ``(1,)``.
-        collocation: Fixed collocation points of shape ``(N_c, D)``. May be
+        collocation: Fixed collocation points cⱼ of shape ``(N_c, D)``. May be
             ``None`` when ``sampler`` is given.
-        weight: Penalty weight $\lambda \ge 0$, stored as a 0-d array.
+        weight: Penalty weight β_res ≥ 0, stored as a 0-d array.
         sampler: Optional ``key -> (N_c, D)``; when given, the points are
             resampled on every call and ``collocation`` is not used.
 
     Examples:
         A residual that is the field itself gives
-        $J = \tfrac{\lambda}{2} \lVert f \rVert^2$ for a constant field:
+        𝒥_res = ½ β_res ‖x‖² for a constant field:
 
         >>> import jax.numpy as jnp
         >>> import vardax
@@ -620,7 +627,7 @@ class ResidualPenalty(eqx.Module):
                 ignored otherwise.
 
         Returns:
-            The scalar penalty $J_{\text{res}}$.
+            The scalar penalty 𝒥_res.
 
         Raises:
             MissingInputError: If a sampler is set and ``key`` is ``None``.
@@ -639,12 +646,16 @@ class ResidualPenalty(eqx.Module):
             )
 
         # __check_init__ skips the sign check when the weight is traced
-        weight = eqx.error_if(
+        residual_weight = eqx.error_if(
             self.weight, self.weight < 0, "weight must be non-negative"
         )
-        # N[f](c_j) for every point: (N_c, R)
+        # r(cⱼ; θ) for every point: (N_c, R)
         residuals = jax.vmap(
             lambda point: jnp.atleast_1d(self.residual_fn(field, point))
         )(points)
-        # J = λ/(2 N_c) Σⱼ ‖N[f](c_j)‖²: ()
-        return weight / (2 * points.shape[0]) * jnp.sum(residuals**2)
+        # β_res / (2 N_c)
+        scale = residual_weight / (2 * points.shape[0])
+        # ∑ⱼ ‖r(cⱼ; θ)‖²
+        squared_norms = jnp.sum(residuals**2)
+        # 𝒥_res = β_res / (2 N_c) ∑ⱼ ‖r(cⱼ; θ)‖²
+        return scale * squared_norms
