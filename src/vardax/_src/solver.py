@@ -1,7 +1,7 @@
-"""4DVarNet iterative solver.
+"""4DVarNet iterative solver: x⁽ⁱ⁺¹⁾ = x⁽ⁱ⁾ − α Δx⁽ⁱ⁾ on 𝒥 = 𝒥_o + β_p 𝒥_p.
 
-Implements the gradient-descent-like solver that unrolls fixed iterations of
-the variational cost minimisation, guided by the learned gradient modulator.
+Unrolls N_iter iterations of the variational cost minimisation, with the descent
+direction Δx given by the learned gradient modulator g_mod.
 """
 
 from __future__ import annotations
@@ -15,26 +15,21 @@ from jaxtyping import Array, Float
 
 from ._types import Batch1D, Batch2D, LSTMState1D, LSTMState2D
 
-# v0.4 removes the `GradMode` enum (`"unrolled" | "implicit" | "one_step"`).
-# Differentiation strategy is now selected via ``solver_adjoint`` on the
-# model — an ``optimistix.AbstractAdjoint`` instance. See
-# ``vardax.adjoints`` (Decision D15).
-
 # ---------------------------------------------------------------------------
 # Solver state containers
 # ---------------------------------------------------------------------------
 
 
 class SolverState1D(eqx.Module):
-    r"""Carry of the 1-D solver loop: iterate, ConvLSTM memory and step counter.
+    """Carry of the 1-D solver loop: iterate, ConvLSTM carry and iteration index.
 
-    The state is the triple $(u_k, (h_k, c_k), k)$ threaded through the unrolled
-    iteration $u_{k+1} = u_k - \alpha\, \mathcal{G}(\nabla J(u_k), u_k, h_k, c_k)$.
+        (x⁽ⁱ⁾, c⁽ⁱ⁾, i),   c = (c_hid, c_cell)
+        x⁽ⁱ⁺¹⁾ = x⁽ⁱ⁾ − α Δx⁽ⁱ⁾,   (Δx⁽ⁱ⁾, c⁽ⁱ⁺¹⁾) = g_mod(∇ₓ𝒥(x⁽ⁱ⁾), x⁽ⁱ⁾, c⁽ⁱ⁾)
 
     Attributes:
-        x: Current state estimate $u_k$.
-        lstm: Current LSTM hidden/cell state $(h_k, c_k)$ of the gradient modulator.
-        step: Current iteration index $k$.
+        x: Current iterate x⁽ⁱ⁾.
+        lstm: Current ConvLSTM carry c⁽ⁱ⁾ = (c_hid, c_cell) of the gradient modulator.
+        step: Current iteration index i.
 
     Examples:
         A state built by hand:
@@ -47,7 +42,7 @@ class SolverState1D(eqx.Module):
         >>> state.x.shape, state.lstm.hidden.shape, state.step
         ((2, 3, 4), (2, 5, 4), 0)
 
-        It is an Equinox module, so it is a pytree (x, hidden, cell and the step counter):
+        It is an Equinox module, so it is a pytree of x, hidden, cell and the step:
 
         >>> import jax
         >>> len(jax.tree_util.tree_leaves(state))
@@ -60,15 +55,15 @@ class SolverState1D(eqx.Module):
 
 
 class SolverState2D(eqx.Module):
-    r"""Carry of the 2-D solver loop: iterate, ConvLSTM memory and step counter.
+    """Carry of the 2-D solver loop: iterate, ConvLSTM carry and iteration index.
 
-    The state is the triple $(u_k, (h_k, c_k), k)$ threaded through the unrolled
-    iteration $u_{k+1} = u_k - \alpha\, \mathcal{G}(\nabla J(u_k), u_k, h_k, c_k)$.
+        (x⁽ⁱ⁾, c⁽ⁱ⁾, i),   c = (c_hid, c_cell)
+        x⁽ⁱ⁺¹⁾ = x⁽ⁱ⁾ − α Δx⁽ⁱ⁾,   (Δx⁽ⁱ⁾, c⁽ⁱ⁺¹⁾) = g_mod(∇ₓ𝒥(x⁽ⁱ⁾), x⁽ⁱ⁾, c⁽ⁱ⁾)
 
     Attributes:
-        x: Current state estimate $u_k$.
-        lstm: Current LSTM hidden/cell state $(h_k, c_k)$ of the gradient modulator.
-        step: Current iteration index $k$.
+        x: Current iterate x⁽ⁱ⁾.
+        lstm: Current ConvLSTM carry c⁽ⁱ⁾ = (c_hid, c_cell) of the gradient modulator.
+        step: Current iteration index i.
 
     Examples:
         A state built by hand:
@@ -98,19 +93,18 @@ def init_solver_state_1d(
     batch: Batch1D,
     hidden_dim: int,
 ) -> SolverState1D:
-    r"""Initialise a 1-D solver state from a batch.
+    """Initialise a 1-D solver state from a batch.
 
-    The iterate starts at the masked observations, $u_0 = m \odot y$, with a zero
-    ConvLSTM memory and step counter zero.
+        x⁽⁰⁾ = m ⊙ y,   c⁽⁰⁾ = (0, 0),   i = 0
 
     Args:
-        batch: Input batch $(y, m)$.  The initial state is set to the masked
-            input (zeros where unobserved).
-        hidden_dim: Hidden dimension of the ConvLSTM gradient modulator.
+        batch: Input batch (y, m). The initial iterate is the masked input, zero
+            where unobserved.
+        hidden_dim: Number of hidden channels of the ConvLSTM gradient modulator.
 
     Returns:
-        Initial [`SolverState1D`][vardax.SolverState1D] holding $u_0$, a zero LSTM
-        state and ``step=0``.
+        Initial [`SolverState1D`][vardax.SolverState1D] holding x⁽⁰⁾, a zero carry
+        c⁽⁰⁾ and ``step=0``.
 
     Examples:
         A typical call, with everything observed:
@@ -129,29 +123,29 @@ def init_solver_state_1d(
         True
     """
     batch_size, _, n_space = batch.input.shape
-    # u₀ = m ⊙ y
+    # x⁽⁰⁾ = m ⊙ y
     initial_state = batch.input * batch.mask
-    lstm = LSTMState1D.zeros(batch_size, hidden_dim, n_space)
-    return SolverState1D(x=initial_state, lstm=lstm, step=0)
+    # c⁽⁰⁾ = (0, 0)
+    carry = LSTMState1D.zeros(batch_size, hidden_dim, n_space)
+    return SolverState1D(x=initial_state, lstm=carry, step=0)
 
 
 def init_solver_state_2d(
     batch: Batch2D,
     hidden_dim: int,
 ) -> SolverState2D:
-    r"""Initialise a 2-D solver state from a batch.
+    """Initialise a 2-D solver state from a batch.
 
-    The iterate starts at the masked observations, $u_0 = m \odot y$, with a zero
-    ConvLSTM memory and step counter zero.
+        x⁽⁰⁾ = m ⊙ y,   c⁽⁰⁾ = (0, 0),   i = 0
 
     Args:
-        batch: Input batch $(y, m)$.  The initial state is set to the masked
-            input (zeros where unobserved).
-        hidden_dim: Hidden dimension of the ConvLSTM gradient modulator.
+        batch: Input batch (y, m). The initial iterate is the masked input, zero
+            where unobserved.
+        hidden_dim: Number of hidden channels of the ConvLSTM gradient modulator.
 
     Returns:
-        Initial [`SolverState2D`][vardax.SolverState2D] holding $u_0$, a zero LSTM
-        state and ``step=0``.
+        Initial [`SolverState2D`][vardax.SolverState2D] holding x⁽⁰⁾, a zero carry
+        c⁽⁰⁾ and ``step=0``.
 
     Examples:
         A typical call, with everything observed:
@@ -174,10 +168,11 @@ def init_solver_state_2d(
         True
     """
     batch_size, _, height, width = batch.input.shape
-    # u₀ = m ⊙ y
+    # x⁽⁰⁾ = m ⊙ y
     initial_state = batch.input * batch.mask
-    lstm = LSTMState2D.zeros(batch_size, hidden_dim, height, width)
-    return SolverState2D(x=initial_state, lstm=lstm, step=0)
+    # c⁽⁰⁾ = (0, 0)
+    carry = LSTMState2D.zeros(batch_size, hidden_dim, height, width)
+    return SolverState2D(x=initial_state, lstm=carry, step=0)
 
 
 # ---------------------------------------------------------------------------
@@ -193,43 +188,39 @@ def solver_step_1d(
     alpha: float = 1.0,
     prior_weight: float = 1.0,
 ) -> SolverState1D:
-    r"""Perform a single 1-D solver iteration.
+    """Perform a single 1-D solver iteration.
 
-    With the variational cost
+        𝒥(x) = 𝒥_o(x) + β_p 𝒥_p(x)
+        𝒥_o = ‖m ⊙ (x − y)‖²,   𝒥_p = ‖x − x̂‖²,   x̂ = g_ae(x; θ)
+        x⁽ⁱ⁺¹⁾ = x⁽ⁱ⁾ − α Δx⁽ⁱ⁾,   (Δx⁽ⁱ⁾, c⁽ⁱ⁺¹⁾) = g_mod(∇ₓ𝒥(x⁽ⁱ⁾), x⁽ⁱ⁾, c⁽ⁱ⁾)
 
-    $$
-    J(u) = \|m \odot (u - y)\|^2 + \lambda \|u - \varphi(u)\|^2
-    $$
-
-    one iteration moves the state along the learned, modulated gradient,
-    $u \leftarrow u - \alpha\, \mathcal{G}(\nabla J(u), u, h)$.
+    The costs are sums of squares over all entries, not means.
 
     Algorithm:
-        1. Evaluate the observation term $\|m \odot (u - y)\|^2$ and the prior
-           term $\lambda \|u - \varphi(u)\|^2$ at the current state.
-        2. Differentiate the sum with ``jax.grad`` to obtain $\nabla J(u)$.
-        3. Pass $(\nabla J, u, h)$ through ``grad_mod_fn`` to get the update and
-           the new LSTM state.
-        4. Set $u \leftarrow u - \alpha \cdot \text{update}$ and increment ``step``.
+        1. Evaluate the observation term 𝒥_o and the prior term β_p 𝒥_p at the
+           current iterate.
+        2. Differentiate their sum with ``jax.grad`` to obtain ∇ₓ𝒥(x⁽ⁱ⁾).
+        3. Pass (∇ₓ𝒥, x⁽ⁱ⁾, c⁽ⁱ⁾) through ``grad_mod_fn`` to get Δx⁽ⁱ⁾ and c⁽ⁱ⁺¹⁾.
+        4. Set x⁽ⁱ⁺¹⁾ = x⁽ⁱ⁾ − α Δx⁽ⁱ⁾ and increment ``step``.
 
     Args:
-        solver_state: Current solver state $(u, h, c, k)$.
-        batch: Observed data batch $(y, m)$.
-        prior_fn: Callable ``x -> x_prior`` giving $\varphi(u)$ (prior
-            autoencoder forward pass).
-        grad_mod_fn: Callable ``(grad, x, lstm) -> (update, new_lstm)``, the
-            gradient modulator $\mathcal{G}$.
-        alpha: Step-size scaling factor $\alpha$.
-        prior_weight: Weighting factor $\lambda$ for the prior cost term.
+        solver_state: Current solver state (x⁽ⁱ⁾, c⁽ⁱ⁾, i).
+        batch: Observed data batch (y, m).
+        prior_fn: Callable ``x -> x̂``, the learned prior g_ae(·; θ) (autoencoder
+            forward pass).
+        grad_mod_fn: Callable ``(∇ₓ𝒥, x, c) -> (Δx, c′)``, the gradient modulator
+            g_mod.
+        alpha: Step size α on the state.
+        prior_weight: Weight β_p of the prior cost term 𝒥_p.
 
     Returns:
-        Updated [`SolverState1D`][vardax.SolverState1D]: new iterate, new LSTM state
-        and ``step`` incremented by one.
+        Updated [`SolverState1D`][vardax.SolverState1D]: iterate x⁽ⁱ⁺¹⁾, carry
+        c⁽ⁱ⁺¹⁾ and ``step`` incremented by one.
 
     Examples:
         With an identity prior and a pass-through modulator, one step with
         ``alpha=0.5`` moves a zero state halfway to the observations (the
-        observation gradient is $-2$):
+        observation gradient is −2):
 
         >>> import jax.numpy as jnp
         >>> import vardax as vdx
@@ -252,23 +243,32 @@ def solver_step_1d(
         >>> bool(jnp.allclose(new.x, 0.0))
         True
     """
-    state = solver_state.x
+    iterate = solver_state.x
 
-    def cost_fn(current_state):
-        prior_state = prior_fn(current_state)
-        obs_diff = batch.mask * (current_state - batch.input)
-        # J_obs = ‖m ⊙ (u − y)‖²
-        obs_cost = jnp.sum(obs_diff**2)
-        # J_prior = λ ‖u − φ(u)‖²
-        prior_cost = prior_weight * jnp.sum((current_state - prior_state) ** 2)
-        return obs_cost + prior_cost
+    def cost_fn(x):
+        # x̂ = g_ae(x; θ)
+        reconstruction = prior_fn(x)
+        # m ⊙ (x − y)
+        obs_residual = batch.mask * (x - batch.input)
+        # 𝒥_o = ‖m ⊙ (x − y)‖²
+        obs_cost = jnp.sum(obs_residual**2)
+        # x − x̂
+        prior_residual = x - reconstruction
+        # 𝒥_p = ‖x − x̂‖²
+        prior_cost = jnp.sum(prior_residual**2)
+        # β_p 𝒥_p
+        weighted_prior_cost = prior_weight * prior_cost
+        # 𝒥 = 𝒥_o + β_p 𝒥_p
+        return obs_cost + weighted_prior_cost
 
-    grad = jax.grad(cost_fn)(state)
-    update, new_lstm = grad_mod_fn(grad, state, solver_state.lstm)
-    # u ← u − α · update
-    new_state = state - alpha * update
+    # ∇ₓ𝒥(x⁽ⁱ⁾)
+    cost_gradient = jax.grad(cost_fn)(iterate)
+    # (Δx⁽ⁱ⁾, c⁽ⁱ⁺¹⁾) = g_mod(∇ₓ𝒥(x⁽ⁱ⁾), x⁽ⁱ⁾, c⁽ⁱ⁾)
+    state_update, new_carry = grad_mod_fn(cost_gradient, iterate, solver_state.lstm)
+    # x⁽ⁱ⁺¹⁾ = x⁽ⁱ⁾ − α Δx⁽ⁱ⁾
+    new_iterate = iterate - alpha * state_update
 
-    return SolverState1D(x=new_state, lstm=new_lstm, step=solver_state.step + 1)
+    return SolverState1D(x=new_iterate, lstm=new_carry, step=solver_state.step + 1)
 
 
 def solver_step_2d(
@@ -279,43 +279,39 @@ def solver_step_2d(
     alpha: float = 1.0,
     prior_weight: float = 1.0,
 ) -> SolverState2D:
-    r"""Perform a single 2-D solver iteration.
+    """Perform a single 2-D solver iteration.
 
-    With the variational cost
+        𝒥(x) = 𝒥_o(x) + β_p 𝒥_p(x)
+        𝒥_o = ‖m ⊙ (x − y)‖²,   𝒥_p = ‖x − x̂‖²,   x̂ = g_ae(x; θ)
+        x⁽ⁱ⁺¹⁾ = x⁽ⁱ⁾ − α Δx⁽ⁱ⁾,   (Δx⁽ⁱ⁾, c⁽ⁱ⁺¹⁾) = g_mod(∇ₓ𝒥(x⁽ⁱ⁾), x⁽ⁱ⁾, c⁽ⁱ⁾)
 
-    $$
-    J(u) = \|m \odot (u - y)\|^2 + \lambda \|u - \varphi(u)\|^2
-    $$
-
-    one iteration moves the state along the learned, modulated gradient,
-    $u \leftarrow u - \alpha\, \mathcal{G}(\nabla J(u), u, h)$.
+    The costs are sums of squares over all entries, not means.
 
     Algorithm:
-        1. Evaluate the observation term $\|m \odot (u - y)\|^2$ and the prior
-           term $\lambda \|u - \varphi(u)\|^2$ at the current state.
-        2. Differentiate the sum with ``jax.grad`` to obtain $\nabla J(u)$.
-        3. Pass $(\nabla J, u, h)$ through ``grad_mod_fn`` to get the update and
-           the new LSTM state.
-        4. Set $u \leftarrow u - \alpha \cdot \text{update}$ and increment ``step``.
+        1. Evaluate the observation term 𝒥_o and the prior term β_p 𝒥_p at the
+           current iterate.
+        2. Differentiate their sum with ``jax.grad`` to obtain ∇ₓ𝒥(x⁽ⁱ⁾).
+        3. Pass (∇ₓ𝒥, x⁽ⁱ⁾, c⁽ⁱ⁾) through ``grad_mod_fn`` to get Δx⁽ⁱ⁾ and c⁽ⁱ⁺¹⁾.
+        4. Set x⁽ⁱ⁺¹⁾ = x⁽ⁱ⁾ − α Δx⁽ⁱ⁾ and increment ``step``.
 
     Args:
-        solver_state: Current solver state $(u, h, c, k)$.
-        batch: Observed data batch $(y, m)$.
-        prior_fn: Callable ``x -> x_prior`` giving $\varphi(u)$ (prior
-            autoencoder forward pass).
-        grad_mod_fn: Callable ``(grad, x, lstm) -> (update, new_lstm)``, the
-            gradient modulator $\mathcal{G}$.
-        alpha: Step-size scaling factor $\alpha$.
-        prior_weight: Weighting factor $\lambda$ for the prior cost term.
+        solver_state: Current solver state (x⁽ⁱ⁾, c⁽ⁱ⁾, i).
+        batch: Observed data batch (y, m).
+        prior_fn: Callable ``x -> x̂``, the learned prior g_ae(·; θ) (autoencoder
+            forward pass).
+        grad_mod_fn: Callable ``(∇ₓ𝒥, x, c) -> (Δx, c′)``, the gradient modulator
+            g_mod.
+        alpha: Step size α on the state.
+        prior_weight: Weight β_p of the prior cost term 𝒥_p.
 
     Returns:
-        Updated [`SolverState2D`][vardax.SolverState2D]: new iterate, new LSTM state
-        and ``step`` incremented by one.
+        Updated [`SolverState2D`][vardax.SolverState2D]: iterate x⁽ⁱ⁺¹⁾, carry
+        c⁽ⁱ⁺¹⁾ and ``step`` incremented by one.
 
     Examples:
         With an identity prior and a pass-through modulator, one step with
         ``alpha=0.5`` moves a zero state halfway to the observations (the
-        observation gradient is $-2$):
+        observation gradient is −2):
 
         >>> import jax.numpy as jnp
         >>> import vardax as vdx
@@ -344,23 +340,32 @@ def solver_step_2d(
         >>> bool(jnp.allclose(new.x, 0.0))
         True
     """
-    state = solver_state.x
+    iterate = solver_state.x
 
-    def cost_fn(current_state):
-        prior_state = prior_fn(current_state)
-        obs_diff = batch.mask * (current_state - batch.input)
-        # J_obs = ‖m ⊙ (u − y)‖²
-        obs_cost = jnp.sum(obs_diff**2)
-        # J_prior = λ ‖u − φ(u)‖²
-        prior_cost = prior_weight * jnp.sum((current_state - prior_state) ** 2)
-        return obs_cost + prior_cost
+    def cost_fn(x):
+        # x̂ = g_ae(x; θ)
+        reconstruction = prior_fn(x)
+        # m ⊙ (x − y)
+        obs_residual = batch.mask * (x - batch.input)
+        # 𝒥_o = ‖m ⊙ (x − y)‖²
+        obs_cost = jnp.sum(obs_residual**2)
+        # x − x̂
+        prior_residual = x - reconstruction
+        # 𝒥_p = ‖x − x̂‖²
+        prior_cost = jnp.sum(prior_residual**2)
+        # β_p 𝒥_p
+        weighted_prior_cost = prior_weight * prior_cost
+        # 𝒥 = 𝒥_o + β_p 𝒥_p
+        return obs_cost + weighted_prior_cost
 
-    grad = jax.grad(cost_fn)(state)
-    update, new_lstm = grad_mod_fn(grad, state, solver_state.lstm)
-    # u ← u − α · update
-    new_state = state - alpha * update
+    # ∇ₓ𝒥(x⁽ⁱ⁾)
+    cost_gradient = jax.grad(cost_fn)(iterate)
+    # (Δx⁽ⁱ⁾, c⁽ⁱ⁺¹⁾) = g_mod(∇ₓ𝒥(x⁽ⁱ⁾), x⁽ⁱ⁾, c⁽ⁱ⁾)
+    state_update, new_carry = grad_mod_fn(cost_gradient, iterate, solver_state.lstm)
+    # x⁽ⁱ⁺¹⁾ = x⁽ⁱ⁾ − α Δx⁽ⁱ⁾
+    new_iterate = iterate - alpha * state_update
 
-    return SolverState2D(x=new_state, lstm=new_lstm, step=solver_state.step + 1)
+    return SolverState2D(x=new_iterate, lstm=new_carry, step=solver_state.step + 1)
 
 
 # ---------------------------------------------------------------------------
@@ -376,29 +381,32 @@ def solve_4dvarnet_1d(
     hidden_dim: int,
     alpha: float = 1.0,
 ) -> Float[Array, "B T N"]:
-    r"""Run the full 1-D 4DVarNet solver for ``n_steps`` iterations.
+    """Run the full 1-D 4DVarNet solver for ``n_steps`` iterations.
 
-    Unrolls $u_{k+1} = u_k - \alpha\, \mathcal{G}(\nabla J(u_k), u_k, h_k)$ from
-    $u_0 = m \odot y$, with $J$ the variational cost of
-    [`solver_step_1d`][vardax.solver_step_1d].
+        x⁽ⁱ⁺¹⁾ = x⁽ⁱ⁾ − α Δx⁽ⁱ⁾,   (Δx⁽ⁱ⁾, c⁽ⁱ⁺¹⁾) = g_mod(∇ₓ𝒥(x⁽ⁱ⁾), x⁽ⁱ⁾, c⁽ⁱ⁾)
+        x⁽⁰⁾ = m ⊙ y,   i = 0, …, N_iter − 1
+
+    The cost 𝒥 is that of [`solver_step_1d`][vardax.solver_step_1d], with its
+    default prior weight β_p = 1.
 
     Algorithm:
         1. Initialise the state with
            [`init_solver_state_1d`][vardax.init_solver_state_1d].
-        2. Repeat ``n_steps`` times: apply
-           [`solver_step_1d`][vardax.solver_step_1d] to the state.
-        3. Return the final iterate.
+        2. Repeat N_iter times: apply [`solver_step_1d`][vardax.solver_step_1d] to
+           the state.
+        3. Return the final iterate x^(N_iter).
 
     Args:
-        batch: Observed data batch $(y, m)$.
-        prior_fn: Callable ``x -> x_prior`` giving $\varphi(u)$.
-        grad_mod_fn: Callable ``(grad, x, lstm) -> (update, new_lstm)``.
-        n_steps: Number of gradient-descent steps to unroll.
-        hidden_dim: Hidden dimension of the ConvLSTM gradient modulator.
-        alpha: Step-size scaling factor $\alpha$.
+        batch: Observed data batch (y, m).
+        prior_fn: Callable ``x -> x̂``, the learned prior g_ae(·; θ).
+        grad_mod_fn: Callable ``(∇ₓ𝒥, x, c) -> (Δx, c′)``, the gradient modulator
+            g_mod.
+        n_steps: Number of gradient-descent iterations N_iter to unroll.
+        hidden_dim: Number of hidden channels of the ConvLSTM gradient modulator.
+        alpha: Step size α on the state.
 
     Returns:
-        Final state estimate $u_{n}$ after ``n_steps`` iterations.
+        Final iterate x^(N_iter) after ``n_steps`` iterations.
 
     Examples:
         Fully observed data is already a minimiser for an identity prior, so
@@ -465,29 +473,32 @@ def solve_4dvarnet_2d(
     hidden_dim: int,
     alpha: float = 1.0,
 ) -> Float[Array, "B T H W"]:
-    r"""Run the full 2-D 4DVarNet solver for ``n_steps`` iterations.
+    """Run the full 2-D 4DVarNet solver for ``n_steps`` iterations.
 
-    Unrolls $u_{k+1} = u_k - \alpha\, \mathcal{G}(\nabla J(u_k), u_k, h_k)$ from
-    $u_0 = m \odot y$, with $J$ the variational cost of
-    [`solver_step_2d`][vardax.solver_step_2d].
+        x⁽ⁱ⁺¹⁾ = x⁽ⁱ⁾ − α Δx⁽ⁱ⁾,   (Δx⁽ⁱ⁾, c⁽ⁱ⁺¹⁾) = g_mod(∇ₓ𝒥(x⁽ⁱ⁾), x⁽ⁱ⁾, c⁽ⁱ⁾)
+        x⁽⁰⁾ = m ⊙ y,   i = 0, …, N_iter − 1
+
+    The cost 𝒥 is that of [`solver_step_2d`][vardax.solver_step_2d], with its
+    default prior weight β_p = 1.
 
     Algorithm:
         1. Initialise the state with
            [`init_solver_state_2d`][vardax.init_solver_state_2d].
-        2. Repeat ``n_steps`` times: apply
-           [`solver_step_2d`][vardax.solver_step_2d] to the state.
-        3. Return the final iterate.
+        2. Repeat N_iter times: apply [`solver_step_2d`][vardax.solver_step_2d] to
+           the state.
+        3. Return the final iterate x^(N_iter).
 
     Args:
-        batch: Observed data batch $(y, m)$.
-        prior_fn: Callable ``x -> x_prior`` giving $\varphi(u)$.
-        grad_mod_fn: Callable ``(grad, x, lstm) -> (update, new_lstm)``.
-        n_steps: Number of gradient-descent steps to unroll.
-        hidden_dim: Hidden dimension of the ConvLSTM gradient modulator.
-        alpha: Step-size scaling factor $\alpha$.
+        batch: Observed data batch (y, m).
+        prior_fn: Callable ``x -> x̂``, the learned prior g_ae(·; θ).
+        grad_mod_fn: Callable ``(∇ₓ𝒥, x, c) -> (Δx, c′)``, the gradient modulator
+            g_mod.
+        n_steps: Number of gradient-descent iterations N_iter to unroll.
+        hidden_dim: Number of hidden channels of the ConvLSTM gradient modulator.
+        alpha: Step size α on the state.
 
     Returns:
-        Final state estimate $u_{n}$ after ``n_steps`` iterations.
+        Final iterate x^(N_iter) after ``n_steps`` iterations.
 
     Examples:
         Fully observed data is already a minimiser for an identity prior, so
@@ -559,30 +570,25 @@ def fp_solver_step_1d(
     batch: Batch1D,
     prior_fn: Any,
 ) -> Float[Array, "B T N"]:
-    r"""Perform a single 1-D fixed-point projection step.
+    """Perform a single 1-D fixed-point projection step.
 
-    Applies the prior projection then re-inserts observations at observed
-    locations:
-
-    $$
-    x \leftarrow \varphi(x), \quad
-    x \leftarrow m \odot y + (1 - m) \odot x
-    $$
+        x̂ = g_ae(x; θ)
+        x ← m ⊙ y + (1 − m) ⊙ x̂
 
     Algorithm:
-        1. Project the state with the prior, $\varphi(x)$.
+        1. Project the iterate with the prior, x̂ = g_ae(x; θ).
         2. Overwrite observed entries with the data and keep the projection
-           elsewhere, $m \odot y + (1 - m) \odot \varphi(x)$.
+           elsewhere, m ⊙ y + (1 − m) ⊙ x̂.
 
     Args:
-        x: Current state estimate $x$.
-        batch: Observed data batch containing ``input`` (observations $y$)
-            and ``mask`` ($m$).
-        prior_fn: Callable ``x -> x_prior`` giving $\varphi(x)$ (prior
-            autoencoder forward pass).
+        x: Current iterate x.
+        batch: Observed data batch holding ``input`` (observations y) and ``mask``
+            (m).
+        prior_fn: Callable ``x -> x̂``, the learned prior g_ae(·; θ) (autoencoder
+            forward pass).
 
     Returns:
-        Updated state estimate $m \odot y + (1 - m) \odot \varphi(x)$.
+        Updated iterate m ⊙ y + (1 − m) ⊙ x̂.
 
     Examples:
         Observed entries are reinserted, unobserved ones come from the prior:
@@ -604,9 +610,14 @@ def fp_solver_step_1d(
         >>> bool(jnp.all(vdx.fp_solver_step_1d(jnp.zeros((1, 2, 3)), full, prior) == 1))
         True
     """
-    prior_state = prior_fn(x)
-    # u ← m ⊙ y + (1 − m) ⊙ φ(u)
-    return batch.mask * batch.input + (1 - batch.mask) * prior_state
+    # x̂ = g_ae(x; θ)
+    reconstruction = prior_fn(x)
+    # m ⊙ y
+    observed = batch.mask * batch.input
+    # (1 − m) ⊙ x̂
+    unobserved = (1 - batch.mask) * reconstruction
+    # x ← m ⊙ y + (1 − m) ⊙ x̂
+    return observed + unobserved
 
 
 def solve_4dvarnet_1d_fixedpoint(
@@ -614,24 +625,25 @@ def solve_4dvarnet_1d_fixedpoint(
     prior_fn: Any,
     n_fp_steps: int,
 ) -> Float[Array, "B T N"]:
-    r"""Run ``n_fp_steps`` fixed-point projection steps using ``jax.lax.scan``.
+    """Run ``n_fp_steps`` fixed-point projection steps using ``jax.lax.scan``.
 
-    Iterates $x_{k+1} = m \odot y + (1 - m) \odot \varphi(x_k)$ from the masked
-    observations, the projection used by the implicit-adjoint path.
+        x⁽ⁱ⁺¹⁾ = m ⊙ y + (1 − m) ⊙ x̂⁽ⁱ⁾,   x̂⁽ⁱ⁾ = g_ae(x⁽ⁱ⁾; θ),   x⁽⁰⁾ = m ⊙ y
+
+    This is the projection used by the implicit-adjoint path.
 
     Algorithm:
-        1. Initialise $x_0 = m \odot y$.
-        2. Scan [`fp_solver_step_1d`][vardax.fp_solver_step_1d] for
-           ``n_fp_steps`` steps.
+        1. Initialise x⁽⁰⁾ = m ⊙ y.
+        2. Scan [`fp_solver_step_1d`][vardax.fp_solver_step_1d] for ``n_fp_steps``
+           steps.
         3. Return the final iterate.
 
     Args:
-        batch: Observed data batch $(y, m)$.
-        prior_fn: Callable ``x -> x_prior`` giving $\varphi(x)$.
+        batch: Observed data batch (y, m).
+        prior_fn: Callable ``x -> x̂``, the learned prior g_ae(·; θ).
         n_fp_steps: Number of fixed-point iterations.
 
     Returns:
-        Final state estimate $x_{n}$ after ``n_fp_steps`` projections.
+        Final iterate x⁽ⁿ⁾ after ``n_fp_steps`` projections.
 
     Examples:
         With an identity prior the unobserved entries stay at zero:
@@ -656,12 +668,13 @@ def solve_4dvarnet_1d_fixedpoint(
         >>> out[0, 0].tolist()
         [1.0, 2.0, 1.0]
     """
-    # u₀ = m ⊙ y
+    # x⁽⁰⁾ = m ⊙ y
     initial_state = batch.input * batch.mask
 
-    def scan_fn(carry: Float[Array, "B T N"], _: None) -> tuple:
-        new_state = fp_solver_step_1d(carry, batch, prior_fn)
-        return new_state, None
+    def scan_fn(iterate: Float[Array, "B T N"], _: None) -> tuple:
+        # x⁽ⁱ⁺¹⁾ = m ⊙ y + (1 − m) ⊙ g_ae(x⁽ⁱ⁾; θ)
+        new_iterate = fp_solver_step_1d(iterate, batch, prior_fn)
+        return new_iterate, None
 
     final_state, _ = jax.lax.scan(scan_fn, initial_state, None, length=n_fp_steps)
     return final_state
@@ -682,38 +695,41 @@ def one_step_solve_4dvarnet_1d(
     prior_weight: float = 1.0,
     k: int = 1,
 ) -> Float[Array, "B T N"]:
-    r"""Solve 4DVarNet-1D using k-step differentiation (Bolte et al., 2023).
+    """Solve 4DVarNet-1D using k-step differentiation (Bolte et al., 2023).
 
-    Runs the same iteration as [`solve_4dvarnet_1d`][vardax.solve_4dvarnet_1d],
-    $u_{j+1} = u_j - \alpha\, \mathcal{G}(\nabla J(u_j), u_j, h_j)$, but
-    only the last ``k`` steps carry gradients.  This gives O(k) memory cost
-    (k=1 matches implicit differentiation) while being as simple to
-    implement as unrolled backprop.
+        x⁽ⁱ⁺¹⁾ = x⁽ⁱ⁾ − α Δx⁽ⁱ⁾,   (Δx⁽ⁱ⁾, c⁽ⁱ⁺¹⁾) = g_mod(∇ₓ𝒥(x⁽ⁱ⁾), x⁽ⁱ⁾, c⁽ⁱ⁾)
+        x^(N_iter − k) held fixed, so ∂x^(N_iter)/∂θ spans the last k iterations
+
+    This is the iteration of [`solve_4dvarnet_1d`][vardax.solve_4dvarnet_1d], but
+    only the last k steps carry gradients. This gives O(k) memory cost (k = 1
+    matches implicit differentiation) while being as simple to implement as
+    unrolled backprop.
 
     Algorithm:
-        1. Initialise the state from the masked observations.
-        2. Run ``n_steps - k`` warm-up steps and apply ``jax.lax.stop_gradient``
-           to the iterate and LSTM state (skipped when there is no warm-up).
-        3. Run the remaining ``k`` steps through which gradients flow.
-        4. Return the final iterate.
+        1. Initialise the state from the masked observations, x⁽⁰⁾ = m ⊙ y.
+        2. Run N_iter − k warm-up steps and apply ``jax.lax.stop_gradient`` to the
+           iterate and the carry (skipped when there is no warm-up).
+        3. Run the remaining k steps through which gradients flow.
+        4. Return the final iterate x^(N_iter).
+
+    Args:
+        batch: Observed data batch (y, m).
+        prior_fn: Callable ``x -> x̂``, the learned prior g_ae(·; θ).
+        grad_mod_fn: Callable ``(∇ₓ𝒥, x, c) -> (Δx, c′)``, the gradient modulator
+            g_mod.
+        n_steps: Total number of solver iterations N_iter (warm-up N_iter − k, then
+            k differentiable steps).
+        hidden_dim: Number of hidden channels of the ConvLSTM gradient modulator.
+        alpha: Step size α on the state.
+        prior_weight: Weight β_p of the prior cost term 𝒥_p.
+        k: Number of trailing differentiable steps (clipped to N_iter).
+
+    Returns:
+        Final iterate x^(N_iter) after ``n_steps`` iterations.
 
     References:
         Bolte, Pauwels & Vaiter (NeurIPS 2023). "One-step differentiation of
         iterative algorithms." https://arxiv.org/abs/2305.13768
-
-    Args:
-        batch: Observed data batch $(y, m)$.
-        prior_fn: Callable ``x -> x_prior`` giving $\varphi(u)$.
-        grad_mod_fn: Callable ``(grad, x, lstm) -> (update, new_lstm)``.
-        n_steps: Total number of solver iterations (warmup = n_steps - k,
-            then k differentiable steps).
-        hidden_dim: Hidden dimension of the ConvLSTM gradient modulator.
-        alpha: Step-size scaling factor $\alpha$.
-        prior_weight: Weighting factor $\lambda$ for the prior cost term.
-        k: Number of trailing differentiable steps (clipped to n_steps).
-
-    Returns:
-        Final state estimate after ``n_steps`` iterations.
 
     Examples:
         The forward value equals the fully unrolled solve; only the gradient
@@ -765,17 +781,17 @@ def one_step_solve_4dvarnet_1d(
         >>> bool(jnp.allclose(fast(batch), one, atol=1e-5))
         True
     """
-    # --- warmup: run n_steps-k steps without tracking gradients ---
+    # --- warm-up: N_iter − k steps whose gradients are cut ---
     state = init_solver_state_1d(batch, hidden_dim)
     live_steps = min(max(k, 1), n_steps) if n_steps >= 1 else 0
     warmup_steps = max(n_steps - live_steps, 0)
     for _ in range(warmup_steps):
         state = solver_step_1d(state, batch, prior_fn, grad_mod_fn, alpha, prior_weight)
 
-    # detach the iterate so earlier steps don't contribute to the
-    # gradient — but only when there was a warmup to detach: with
-    # k >= n_steps the solve is fully differentiable, including
-    # gradients with respect to the batch through the initial state.
+    # Detach the iterate so earlier steps do not contribute to the gradient, but
+    # only when there was a warm-up to detach: with k >= N_iter the solve is fully
+    # differentiable, including gradients with respect to the batch through the
+    # initial state.
     if warmup_steps > 0:
         state = SolverState1D(
             x=jax.lax.stop_gradient(state.x),
@@ -800,38 +816,41 @@ def one_step_solve_4dvarnet_2d(
     prior_weight: float = 1.0,
     k: int = 1,
 ) -> Float[Array, "B T H W"]:
-    r"""Solve 4DVarNet-2D using k-step differentiation (Bolte et al., 2023).
+    """Solve 4DVarNet-2D using k-step differentiation (Bolte et al., 2023).
 
-    Runs the same iteration as [`solve_4dvarnet_2d`][vardax.solve_4dvarnet_2d],
-    $u_{j+1} = u_j - \alpha\, \mathcal{G}(\nabla J(u_j), u_j, h_j)$, but
-    only the last ``k`` steps carry gradients.  This gives O(k) memory cost
-    (k=1 matches implicit differentiation) while being as simple to
-    implement as unrolled backprop.
+        x⁽ⁱ⁺¹⁾ = x⁽ⁱ⁾ − α Δx⁽ⁱ⁾,   (Δx⁽ⁱ⁾, c⁽ⁱ⁺¹⁾) = g_mod(∇ₓ𝒥(x⁽ⁱ⁾), x⁽ⁱ⁾, c⁽ⁱ⁾)
+        x^(N_iter − k) held fixed, so ∂x^(N_iter)/∂θ spans the last k iterations
+
+    This is the iteration of [`solve_4dvarnet_2d`][vardax.solve_4dvarnet_2d], but
+    only the last k steps carry gradients. This gives O(k) memory cost (k = 1
+    matches implicit differentiation) while being as simple to implement as
+    unrolled backprop.
 
     Algorithm:
-        1. Initialise the state from the masked observations.
-        2. Run ``n_steps - k`` warm-up steps and apply ``jax.lax.stop_gradient``
-           to the iterate and LSTM state (skipped when there is no warm-up).
-        3. Run the remaining ``k`` steps through which gradients flow.
-        4. Return the final iterate.
+        1. Initialise the state from the masked observations, x⁽⁰⁾ = m ⊙ y.
+        2. Run N_iter − k warm-up steps and apply ``jax.lax.stop_gradient`` to the
+           iterate and the carry (skipped when there is no warm-up).
+        3. Run the remaining k steps through which gradients flow.
+        4. Return the final iterate x^(N_iter).
+
+    Args:
+        batch: Observed data batch (y, m).
+        prior_fn: Callable ``x -> x̂``, the learned prior g_ae(·; θ).
+        grad_mod_fn: Callable ``(∇ₓ𝒥, x, c) -> (Δx, c′)``, the gradient modulator
+            g_mod.
+        n_steps: Total number of solver iterations N_iter (warm-up N_iter − k, then
+            k differentiable steps).
+        hidden_dim: Number of hidden channels of the ConvLSTM gradient modulator.
+        alpha: Step size α on the state.
+        prior_weight: Weight β_p of the prior cost term 𝒥_p.
+        k: Number of trailing differentiable steps (clipped to N_iter).
+
+    Returns:
+        Final iterate x^(N_iter) after ``n_steps`` iterations.
 
     References:
         Bolte, Pauwels & Vaiter (NeurIPS 2023). "One-step differentiation of
         iterative algorithms." https://arxiv.org/abs/2305.13768
-
-    Args:
-        batch: Observed data batch $(y, m)$.
-        prior_fn: Callable ``x -> x_prior`` giving $\varphi(u)$.
-        grad_mod_fn: Callable ``(grad, x, lstm) -> (update, new_lstm)``.
-        n_steps: Total number of solver iterations (warmup = n_steps - k,
-            then k differentiable steps).
-        hidden_dim: Hidden dimension of the ConvLSTM gradient modulator.
-        alpha: Step-size scaling factor $\alpha$.
-        prior_weight: Weighting factor $\lambda$ for the prior cost term.
-        k: Number of trailing differentiable steps (clipped to n_steps).
-
-    Returns:
-        Final state estimate after ``n_steps`` iterations.
 
     Examples:
         The forward value equals the fully unrolled solve; only the gradient
@@ -887,17 +906,17 @@ def one_step_solve_4dvarnet_2d(
         >>> bool(jnp.allclose(fast(batch), one, atol=1e-5))
         True
     """
-    # --- warmup: run n_steps-k steps without tracking gradients ---
+    # --- warm-up: N_iter − k steps whose gradients are cut ---
     state = init_solver_state_2d(batch, hidden_dim)
     live_steps = min(max(k, 1), n_steps) if n_steps >= 1 else 0
     warmup_steps = max(n_steps - live_steps, 0)
     for _ in range(warmup_steps):
         state = solver_step_2d(state, batch, prior_fn, grad_mod_fn, alpha, prior_weight)
 
-    # detach the iterate so earlier steps don't contribute to the
-    # gradient — but only when there was a warmup to detach: with
-    # k >= n_steps the solve is fully differentiable, including
-    # gradients with respect to the batch through the initial state.
+    # Detach the iterate so earlier steps do not contribute to the gradient, but
+    # only when there was a warm-up to detach: with k >= N_iter the solve is fully
+    # differentiable, including gradients with respect to the batch through the
+    # initial state.
     if warmup_steps > 0:
         state = SolverState2D(
             x=jax.lax.stop_gradient(state.x),
