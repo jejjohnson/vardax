@@ -8,6 +8,7 @@ give a model the same weighted likelihood.
 
 from __future__ import annotations
 
+import einx
 import gaussx
 import jax
 import jax.numpy as jnp
@@ -159,7 +160,8 @@ def test_default_solver_handles_a_non_diagonal_covariance_on_a_2d_observation(
     covariance_matrix = jnp.eye(4) + 0.2
 
     def covariance_mv(vector):
-        return (covariance_matrix @ vector.reshape(-1)).reshape(2, 2)
+        flat = einx.id("a b -> (a b)", vector)
+        return einx.id("(a b) -> a b", covariance_matrix @ flat, a=2, b=2)
 
     covariance = lx.FunctionLinearOperator(
         covariance_mv,
@@ -172,7 +174,7 @@ def test_default_solver_handles_a_non_diagonal_covariance_on_a_2d_observation(
     cost = fusion.cost(jnp.zeros((2, 2)), {"a": jnp.ones((2, 2))})
 
     # ½ rᵀ Σ̃_ε⁻¹ r, with Σ̃_ε = M Σ_ε M + (I − M)
-    flat_mask = mask.reshape(-1)
+    flat_mask = einx.id("a b -> (a b)", mask)
     masked_matrix = jnp.diag(flat_mask) @ covariance_matrix @ jnp.diag(
         flat_mask
     ) + jnp.diag(1.0 - flat_mask)

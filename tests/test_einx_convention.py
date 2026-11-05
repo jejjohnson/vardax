@@ -23,7 +23,7 @@ CEILINGS = {
         "method .reshape/.ravel": 7,
         "axis= keyword": 2,
         "None-index broadcast": 1,
-        "jnp shape functions": 8,
+        "jnp shape functions": 7,
     },
     "tests": {
         "method .reshape/.ravel": 51,
