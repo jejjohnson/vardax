@@ -1,10 +1,4 @@
-"""Masked-identity observation operator.
-
-The default operator for "we observe the state with gaps" use cases:
-SSH altimetry along-track gaps, SST with cloud masks, sparse in-situ.
-
-Satisfies ``pipekit_cycle.ObservationOperator``.
-"""
+"""Masked-identity observation operator, for a state observed with gaps."""
 
 from __future__ import annotations
 
@@ -15,18 +9,24 @@ import lineax as lx
 
 
 class MaskedIdentity(eqx.Module):
-    r"""$H(x) = m \odot x$ with optional element-wise mask.
+    """Identity observation operator with an optional element-wise mask m.
 
-    Stateless: no parameters. The mask can be supplied at call time
-    (per-batch) rather than baked in.
+        h(x) = m ⊙ x
+
+    The default operator when the state is observed with gaps: along-track SSH
+    altimetry, SST under cloud masks, sparse in-situ data. It has no parameters, as
+    the mask arrives at call time, per batch. It satisfies
+    ``pipekit_cycle.ObservationOperator``.
 
     Examples:
+        A mask zeroes the entries it drops:
+
         >>> import jax.numpy as jnp
         >>> import vardax as vdx
         >>> op = vdx.MaskedIdentity()
         >>> x = jnp.array([1.0, 2.0, 3.0])
-        >>> op(x, mask=jnp.array([1.0, 0.0, 1.0]))
-        Array([1., 0., 3.], dtype=float32)
+        >>> op(x, mask=jnp.array([1.0, 0.0, 1.0])).tolist()
+        [1.0, 0.0, 3.0]
         >>> type(op.linearize(x)).__name__
         'IdentityLinearOperator'
 
@@ -38,8 +38,8 @@ class MaskedIdentity(eqx.Module):
         A per-batch mask broadcasts over the batch axis:
 
         >>> xb = jnp.ones((2, 3))
-        >>> op(xb, mask=jnp.array([1.0, 0.0, 1.0])).sum(axis=-1)
-        Array([2., 2.], dtype=float32)
+        >>> op(xb, mask=jnp.array([1.0, 0.0, 1.0])).tolist()[1]
+        [1.0, 0.0, 1.0]
     """
 
     def __call__(
@@ -47,15 +47,25 @@ class MaskedIdentity(eqx.Module):
         x: Float[Array, ...],
         mask: Float[Array, ...] | None = None,
     ) -> Float[Array, ...]:
+        """Apply the mask to the state: h(x) = m ⊙ x.
+
+        Args:
+            x: State x.
+            mask: Mask m, broadcastable to ``x``. ``None`` leaves ``x`` unchanged.
+
+        Returns:
+            The predicted observations.
+        """
         if mask is None:
             return x
+        # h(x) = m ⊙ x
         return x * mask
 
     def linearize(self, x: Float[Array, ...]) -> lx.AbstractLinearOperator:
-        """Tangent-linear operator at ``x``: identity (since $H$ is linear).
+        """Tangent-linear operator at ``x``: the identity, J_h = I.
 
         Args:
-            x: State at which to linearise.
+            x: State x at which to linearise.
 
         Returns:
             The identity operator on the shape of ``x``.

@@ -334,8 +334,9 @@ def simulate_lorenz96(
         The result feeds a plotting helper directly:
 
         >>> import matplotlib
+        >>> import numpy as np
         >>> matplotlib.use("Agg")
-        >>> fig, ax = vdx.plot_l96_grid(states, t)
+        >>> fig, ax = vdx.plot_l96_grid(np.asarray(states), np.asarray(t))
         >>> type(ax).__name__
         'Axes'
     """
