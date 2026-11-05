@@ -19,7 +19,7 @@ import optimistix as optx
 from vardax._src._types import Batch1D, PointObsBatch
 from vardax._src.errors import InputTypeError
 from vardax._src.minimisers import MinimiseResult, minimise, minimise_with_result
-from vardax._src.models._analysis_step import analyse_forecast
+from vardax._src.models._analysis_step import analyse_forecast, centred_on
 from vardax._src.models._observations import fill_gaps
 from vardax._src.models._rollout import accepts_mask
 from vardax._src.obs_operators.point import (
@@ -448,8 +448,12 @@ class _ThreeDVarAnalysisStep(eqx.Module):
         Returns:
             The analysis x⋆, with the shape of ``forecast``.
         """
+
+        def analyse_one(prior_mean: Array, *args: Any) -> Array:
+            return centred_on(self.model, prior_mean)._analyse(prior_mean, *args)
+
         return analyse_forecast(
-            self.model._analyse,
+            analyse_one,
             state_shape=self.model.prior_mean.shape,
             default_obs_op=self.model.obs_op,
             default_obs_cov_op=self.model.obs_cov_op,

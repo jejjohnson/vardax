@@ -31,10 +31,15 @@ import pytest
 
 from vardax import (
     LinearObs,
+    LinearParameterization,
     MaskedIdentity,
     OptimalInterpolation,
+    ReducedBasisFourDVar,
+    StrongFourDVar,
     ThreeDVar,
     VarDACycle,
+    WeakFourDVar,
+    linear_basis,
 )
 
 N, M = 5, 3  # state and observation sizes
@@ -287,3 +292,62 @@ class TestTwoCycleVarDACycle:
             # gives a different second analysis.
             stale = _blue(p["B"], p["H"], p["R"], p["prior_mean"], ys[1])
             assert not jnp.allclose(final, stale, atol=1e-3)
+
+
+class _StaticForward(eqx.Module):
+    """x_{t+1} = x_t, so a one-time window has a closed-form analysis."""
+
+    @property
+    def dt(self):
+        return 1.0
+
+    @property
+    def state_signature(self):
+        return None
+
+    def step(self, state, dt):
+        return state
+
+
+def _parameterized_model(name):
+    identity = lx.IdentityLinearOperator(jax.eval_shape(lambda: jnp.zeros(2)))
+    parameterization = LinearParameterization(
+        linear_basis(jnp.eye(2), variance=1.0), background=jnp.zeros(2)
+    )
+    common = {
+        "obs_op": MaskedIdentity(),
+        "prior_mean": jnp.zeros(2),
+        "prior_cov_op": identity,
+        "obs_cov_op": identity,
+        "parameterization": parameterization,
+    }
+    if name == "threedvar":
+        return ThreeDVar(**common)
+    common["forward"] = _StaticForward()
+    if name == "weak":
+        return WeakFourDVar(**common, model_err_cov_op=identity)
+    if name == "strong":
+        return StrongFourDVar(**common)
+    return ReducedBasisFourDVar(**common)
+
+
+@pytest.mark.parametrize("name", ["threedvar", "strong", "weak", "reduced_basis"])
+def test_linear_parameterization_analyses_around_the_forecast(x64, name):
+    step = _parameterized_model(name).as_analysis_step()
+    forecast = jnp.full(2, 5.0)
+    obs = jnp.ones(2)
+
+    analysis = step(forecast, obs, obs_op=None, obs_err_cov=None)
+
+    # (Σ_x⁻¹ + Σ_ε⁻¹)⁻¹ (Σ_x⁻¹ μ_x + Σ_ε⁻¹ y), with μ_x the forecast and unit variances
+    assert jnp.allclose(analysis, 0.5 * (forecast + obs), atol=1e-5)
+
+
+def test_linear_parameterization_analyses_a_batch_around_each_forecast(x64):
+    step = _parameterized_model("threedvar").as_analysis_step()
+    forecasts = jnp.array([[5.0, 5.0], [-3.0, 1.0]])
+    obs = jnp.ones((2, 2))
+
+    analysis = step(forecasts, obs, obs_op=None, obs_err_cov=None)
+
+    assert jnp.allclose(analysis, 0.5 * (forecasts + obs), atol=1e-5)
