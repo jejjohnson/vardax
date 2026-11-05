@@ -326,6 +326,5 @@ class _FlattenedMultiInstrument(eqx.Module):
 
     def linearize(self, x: Float[Array, ...]) -> lx.AbstractLinearOperator:
         """Stacked tangent-linear operator, from autodiff of the flattened map."""
-        # raises TypeError for now: lineax calls fn(x, args) and __call__ takes only x;
-        # tests/test_forward_suite_obs_operators.py pins this with a strict xfail
-        return lx.JacobianLinearOperator(self.__call__, x)
+        # lineax calls fn(x, args), and h takes only x
+        return lx.JacobianLinearOperator(lambda state, _args=None: self(state), x)
