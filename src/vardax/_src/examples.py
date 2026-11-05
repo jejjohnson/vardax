@@ -1,9 +1,7 @@
-"""Notebook-demo helpers (not part of the library API).
+"""Notebook-demo helpers, not part of the library API.
 
-These helpers exist for the tutorial notebooks under ``notebooks/``.
-Production code should compose ``train_step`` (Layer 0 primitive)
-with ``pipekit-train`` (``[train]`` extra) or with any other training
-framework — vardax does not own training loops.
+``fit_demo`` serves the tutorial notebooks under ``notebooks/``; production code
+composes ``train_step`` with ``pipekit-train`` or another training framework.
 """
 
 from __future__ import annotations
@@ -29,10 +27,9 @@ def fit_demo(
 ) -> tuple[Any, list[float], list[float]]:
     """Minimal notebook-demo training loop.
 
-    Composes ``optax.adam`` + ``vardax.train_step`` inline. Not a library
-    API — exists for pedagogical use in ``notebooks/``. For production
-    training, use ``pipekit-train.TrainingLoop`` via
-    ``vardax.adapters.pipekit_train``.
+    Composes ``optax.adam`` and ``vardax.train_step`` inline, for use in
+    ``notebooks/``. For production training, use ``pipekit-train.TrainingLoop``
+    via ``vardax.adapters.pipekit_train``.
 
     Args:
         model: Equinox module to train.
@@ -43,8 +40,33 @@ def fit_demo(
         verbose: Print per-epoch losses.
 
     Returns:
-        Tuple of (trained model, per-epoch mean train losses, per-epoch
-        mean val losses (NaN when ``val_batches`` is None)).
+        The trained model, the per-epoch mean train losses and the per-epoch
+        mean validation losses (NaN when ``val_batches`` is ``None``).
+
+    Examples:
+        >>> import jax
+        >>> import jax.numpy as jnp
+        >>> import vardax as vdx
+        >>> model = vdx.FourDVarNet1D(
+        ...     state_dim=4,
+        ...     n_time=3,
+        ...     latent_dim=2,
+        ...     hidden_dim=3,
+        ...     n_solver_steps=1,
+        ...     key=jax.random.PRNGKey(0),
+        ... )
+        >>> ones = jnp.ones((2, 3, 4))
+        >>> batch = vdx.Batch1D(input=ones, mask=ones, target=jnp.zeros((2, 3, 4)))
+        >>> trained, train_losses, val_losses = vdx.examples.fit_demo(
+        ...     model, [batch], n_epochs=2, verbose=False
+        ... )
+        >>> len(train_losses)
+        2
+
+        Without validation batches the validation history is NaN:
+
+        >>> bool(jnp.isnan(jnp.array(val_losses)).all())
+        True
     """
     optimizer = optax.adam(lr)
     opt_state = optimizer.init(eqx.filter(model, eqx.is_array))

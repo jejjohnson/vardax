@@ -1,17 +1,8 @@
-"""Training primitives for FourDVarNet.
+"""Training primitives: losses and single optimiser steps, with no outer loop.
 
-Per Decision D5, vardax ships ``train_step`` and ``eval_step`` as
-Layer 0 primitives — they encode the correctness-critical
-differentiation through the FourDVarNet inner solver, which is the part
-that's library-grade. The outer training loop (epoch iteration, logging,
-checkpointing, distributed) is delegated to ``pipekit-train``
-(``[train]`` extra) — see ``vardax.adapters.pipekit_train`` for the
-``Loss`` adapter that wraps ``train_loss_fn`` into the
-``pipekit_train.Loss`` protocol.
-
-This module contains *only* the inner-step primitives. There is no
-``fit()`` helper; users either compose ``train_step`` into a small
-notebook-level loop or wire it through ``pipekit_train.TrainingLoop``.
+``train_step`` and ``eval_step`` differentiate through the FourDVarNet inner
+solver. The outer loop (epochs, logging, checkpointing) is left to
+``pipekit-train``, with ``vardax.adapters.pipekit_train`` wrapping the loss.
 """
 
 from __future__ import annotations
@@ -32,23 +23,22 @@ def reconstruction_loss(
     pred: Float[Array, ...],
     target: Float[Array, ...],
 ) -> Float[Array, ""]:
-    r"""Mean-squared reconstruction loss.
+    """Mean-squared reconstruction loss.
 
-    $$
-    \mathcal{L}(\hat x, x) = \frac{1}{n} \sum_i (\hat x_i - x_i)^2
-    $$
+        ℒ_MSE(x̂, x) = mean((x̂ − x)²)
 
     Args:
-        pred: Model predictions $\hat x$.
-        target: Ground-truth targets $x$, broadcastable against ``pred``.
+        pred: Model prediction x̂.
+        target: Ground-truth target x, broadcastable against ``pred``.
 
     Returns:
-        Scalar mean-squared error.
+        Scalar mean-squared error ℒ_MSE.
 
     Examples:
         >>> import jax.numpy as jnp
         >>> import vardax as vdx
-        >>> float(vdx.reconstruction_loss(jnp.array([1.0, 3.0]), jnp.array([1.0, 1.0])))
+        >>> prediction = jnp.array([1.0, 3.0])
+        >>> float(vdx.reconstruction_loss(prediction, jnp.array([1.0, 1.0])))
         2.0
 
         A perfect prediction has zero loss, whatever the shape:
@@ -57,6 +47,7 @@ def reconstruction_loss(
         >>> float(vdx.reconstruction_loss(x, x))
         0.0
     """
+    # ℒ_MSE = mean((x̂ − x)²)
     return jnp.mean((pred - target) ** 2)
 
 
@@ -64,15 +55,13 @@ def train_loss_fn(
     model: Any,
     batch: Batch1D | Batch2D,
 ) -> Float[Array, ""]:
-    r"""Compute the training loss for a single batch.
+    """Compute the training loss for a single batch.
 
-    $$
-    \mathcal{L} = \operatorname{mean}\big((\mathcal{M}(b) - x_\text{target})^2\big)
-    $$
+        ℒ_MSE = mean((x̂ − x)²),   x̂ = model(batch),   x = batch.target
 
     Algorithm:
-        1. Run the model on the batch to obtain the prediction.
-        2. Compare it with ``batch.target`` using
+        1. Run the model on the batch to obtain the prediction x̂.
+        2. Compare it with the target x using
            [`reconstruction_loss`][vardax.reconstruction_loss].
 
     Args:
@@ -118,11 +107,13 @@ def train_loss_fn(
         ...
         MissingInputError: train_loss_fn requires batch.target to be set.
     """
-    pred = model(batch)
+    # x̂ = model(batch)
+    prediction = model(batch)
     target = batch.target
     if target is None:
         raise MissingInputError("train_loss_fn requires batch.target to be set.")
-    return reconstruction_loss(pred, target)
+    # ℒ_MSE = mean((x̂ − x)²)
+    return reconstruction_loss(prediction, target)
 
 
 @eqx.filter_jit
@@ -132,19 +123,19 @@ def train_step(
     optimizer: optax.GradientTransformation,
     opt_state: optax.OptState,
 ) -> tuple[Any, optax.OptState, Float[Array, ""]]:
-    """Perform a single training step (forward + backward + update).
+    """Perform a single training step (forward, backward and update).
 
-    This is the correctness-critical primitive: gradients flow through
-    the FourDVarNet inner solver according to whichever differentiation
-    strategy (the model's ``solver_adjoint``) the model is configured with.
-    Users should compose this primitive into their training loop
-    (notebook-level or ``pipekit_train.TrainingLoop``) rather than
+        θ⁽ⁱ⁺¹⁾ = θ⁽ⁱ⁾ + Δθ⁽ⁱ⁾,   (Δθ⁽ⁱ⁾, s⁽ⁱ⁺¹⁾) = optimiser(∇_θ ℒ_MSE(θ⁽ⁱ⁾), s⁽ⁱ⁾)
+
+    with s the optimiser state. Gradients flow through the FourDVarNet inner
+    solver according to the model's ``solver_adjoint``. Compose this step into a
+    notebook-level loop or ``pipekit_train.TrainingLoop`` rather than
     reimplementing it.
 
     Algorithm:
-        1. Evaluate [`train_loss_fn`][vardax.train_loss_fn] and its gradient with
-           respect to the model parameters.
-        2. Turn the gradient into an update with the optax optimiser.
+        1. Evaluate [`train_loss_fn`][vardax.train_loss_fn] and its gradient
+           ∇_θ ℒ_MSE with respect to the model parameters θ.
+        2. Turn the gradient into an update Δθ with the optax optimiser.
         3. Apply the update to the model.
 
     Args:
@@ -192,8 +183,11 @@ def train_step(
         >>> bool(eqx.tree_equal(new_model, model))
         False
     """
+    # ℒ_MSE(θ⁽ⁱ⁾) and ∇_θ ℒ_MSE(θ⁽ⁱ⁾)
     loss, grads = eqx.filter_value_and_grad(train_loss_fn)(model, batch)
+    # Δθ⁽ⁱ⁾ from the optimiser
     updates, opt_state = optimizer.update(grads, opt_state, model)
+    # θ⁽ⁱ⁺¹⁾ = θ⁽ⁱ⁾ + Δθ⁽ⁱ⁾
     model = eqx.apply_updates(model, updates)
     return model, opt_state, loss
 
@@ -204,6 +198,8 @@ def eval_step(
     batch: Batch1D | Batch2D,
 ) -> Float[Array, ""]:
     """Compute the evaluation loss for a single batch (no gradient).
+
+        ℒ_MSE = mean((x̂ − x)²),   x̂ = model(batch),   x = batch.target
 
     Args:
         model: Equinox module implementing ``__call__(batch) -> prediction``.
@@ -251,28 +247,28 @@ def eval_step(
         ...
         MissingInputError: eval_step requires batch.target to be set.
     """
-    pred = model(batch)
+    # x̂ = model(batch)
+    prediction = model(batch)
     target = batch.target
     if target is None:
         raise MissingInputError("eval_step requires batch.target to be set.")
-    return reconstruction_loss(pred, target)
+    # ℒ_MSE = mean((x̂ − x)²)
+    return reconstruction_loss(prediction, target)
 
 
 def amortized_nll_loss_fn(
     model: Any,
     batch: Batch1D | Batch2D,
 ) -> Float[Array, ""]:
-    r"""Negative log-likelihood for amortized inference (Epic 8).
+    """Negative log-likelihood for amortized inference.
 
-    For ``AmortizedPosterior`` with flow / regression heads the maximum-
-    likelihood objective on simulated pairs is
+        ℒ_NLL(ν) = −mean(log q(x | y; ν))
 
-    $$
-    \mathcal{L}_\text{MLE}(\phi) = -\mathbb{E}_{(x, y)} \log q_\phi(x \mid y).
-    $$
+    averaged over the simulated pairs (x, y) of the batch, for an
+    ``AmortizedPosterior`` with any head that has a ``.log_prob``.
 
     Algorithm:
-        1. Evaluate $\log q_\phi(x \mid y)$ for each sample with
+        1. Evaluate log q(x | y; ν) for each sample with
            ``model.log_prob(batch.target, batch)``.
         2. Return the negative batch mean.
 
@@ -324,7 +320,9 @@ def amortized_nll_loss_fn(
         raise MissingInputError(
             "amortized_nll_loss_fn requires batch.target (the true x) to be set."
         )
+    # log q(x | y; ν) per sample
     log_prob = model.log_prob(target, batch)
+    # ℒ_NLL = −mean(log q(x | y; ν))
     return -jnp.mean(log_prob)
 
 
@@ -337,6 +335,8 @@ def amortized_train_step(
 ) -> tuple[Any, optax.OptState, Float[Array, ""]]:
     """Single training step for ``AmortizedPosterior``.
 
+        ν⁽ⁱ⁺¹⁾ = ν⁽ⁱ⁾ + Δν⁽ⁱ⁾,   (Δν⁽ⁱ⁾, s⁽ⁱ⁺¹⁾) = optimiser(∇_ν ℒ_NLL(ν⁽ⁱ⁾), s⁽ⁱ⁾)
+
     Same shape as [`train_step`][vardax.train_step] but uses
     [`amortized_nll_loss_fn`][vardax.amortized_nll_loss_fn] instead of the MSE
     reconstruction loss. Use this for simulation-based training of amortized
@@ -344,8 +344,9 @@ def amortized_train_step(
     reconstruct fields.
 
     Algorithm:
-        1. Evaluate the NLL and its gradient with respect to the parameters.
-        2. Turn the gradient into an update with the optax optimiser.
+        1. Evaluate ℒ_NLL and its gradient ∇_ν ℒ_NLL with respect to the
+           parameters ν.
+        2. Turn the gradient into an update Δν with the optax optimiser.
         3. Apply the update to the model.
 
     Args:
@@ -393,7 +394,10 @@ def amortized_train_step(
         >>> bool(loss < first)
         True
     """
+    # ℒ_NLL(ν⁽ⁱ⁾) and ∇_ν ℒ_NLL(ν⁽ⁱ⁾)
     loss, grads = eqx.filter_value_and_grad(amortized_nll_loss_fn)(model, batch)
+    # Δν⁽ⁱ⁾ from the optimiser
     updates, opt_state = optimizer.update(grads, opt_state, model)
+    # ν⁽ⁱ⁺¹⁾ = ν⁽ⁱ⁾ + Δν⁽ⁱ⁾
     model = eqx.apply_updates(model, updates)
     return model, opt_state, loss
