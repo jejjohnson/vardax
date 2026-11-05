@@ -18,16 +18,16 @@ analyses, side-by-side comparison.
 
 ## Problem setup
 
-State: SSH on a regular lon-lat grid, $H \times W = 128 \times 128$
-typical for a regional patch. Observations: along-track samples from
-one or more altimeters, with along-track noise $\sigma \sim 3$ cm and
+State: SSH on a regular lon-lat grid, $N_\text{lat} \times N_\text{lon} = 128 \times 128$
+cells, typical for a regional patch, with latitude $\phi$ and longitude $\lambda$ in degrees. Observations: along-track samples from
+one or more altimeters, with along-track noise of standard deviation $\sigma_\text{alt} \sim 3$ cm and
 gaps of $\sim 100$ km perpendicular to track.
 
 The arrays `ssh_observed`, `track_mask`, `ssh_truth`, `lat`, `lon`, `altika_uncertainty` and `climatology_ssh` come from preprocessed altimetry and are not built on this page.
-The state is flattened to $N = Y X$ cells, with $Y = H$ latitudes and $X = W$ longitudes, so that one `Batch1D` serves OI and incremental 4DVar.
+The state $\vect{x}_t \in \mathbb{R}^{D_x}$ is flattened to $D_x = N_\text{lat} N_\text{lon}$ cells, so that one `Batch1D` serves OI and incremental 4DVar, with $D_y = D_x$ and a window of $T + 1 = 10$ times.
 
 ```{code-block} python
-:caption: Builds the gridded and flattened batches of along-track observations, the $y$ and $m$ of [](#eq-obs-model) with the masked identity [](#eq-masked-identity).
+:caption: Builds the gridded and flattened batches of along-track observations, the $\vect{y}_t$ and $\vect{m}_t$ of [](#eq-obs-model) with the masked identity [](#eq-masked-identity).
 :label: code-ssh-batches
 import einx
 import equinox as eqx
@@ -37,37 +37,41 @@ import lineax as lx
 import vardax as vdx
 from jaxtyping import Array, Float
 
-# Shapes: S = 1 window; T = 10 times; Y = 128 latitudes; X = 128 longitudes; N = Y X
+# Shapes: S = 1 window; T = 9 steps, so T + 1 = 10 times; N_lat = 128 latitudes;
+#         N_lon = 128 longitudes; D_x = D_y = N_lat N_lon cells
 
 key = jax.random.PRNGKey(0)
 key_net, key_skeleton = jax.random.split(key)
 
 # NaN · 0 is NaN, so the gaps are zero-filled before they reach the cost
-# ỹ = y where m > 0, else 0
-observed_filled = jnp.where(track_mask > 0, ssh_observed, 0.0)  # (S, T, Y, X)
+# yₜ where mₜ > 0, else 0
+observed_filled = jnp.where(  # (S, T + 1, N_lat, N_lon)
+    track_mask > 0, ssh_observed, 0.0
+)
 # today (vardax)
 grid_batch = vdx.Batch2D(
     input=observed_filled,
     mask=track_mask,  # 1 along-track, 0 in gaps
     target=ssh_truth,  # ground truth, training only
 )
-observed_flat = einx.id("s t y x -> s t (y x)", observed_filled)  # (S, T, N)
-mask_flat = einx.id("s t y x -> s t (y x)", track_mask)  # (S, T, N)
-truth_flat = einx.id("s t y x -> s t (y x)", ssh_truth)  # (S, T, N)
+observed_flat = einx.id("s t y x -> s t (y x)", observed_filled)  # (S, T + 1, D_x)
+mask_flat = einx.id("s t y x -> s t (y x)", track_mask)  # (S, T + 1, D_x)
+truth_flat = einx.id("s t y x -> s t (y x)", ssh_truth)  # (S, T + 1, D_x)
 # today (vardax)
 batch = vdx.Batch1D(input=observed_flat, mask=mask_flat, target=truth_flat)
 ```
 
 ## Approach 1: `OptimalInterpolation`
 
-The classical baseline is OI ([chapter 4](04_oi_blue.md)) with the masked identity [](#eq-masked-identity) as $H$, a separable Matérn prior and a diagonal $R$.
+The classical baseline is OI ([chapter 4](04_oi_blue.md)) with the masked identity [](#eq-masked-identity) as $\mat{H}$, a separable Matérn prior $\gmat{\Sigma}_x = \sigma_x^2 (\mat{C}_\text{lat} \otimes \mat{C}_\text{lon})$ of one time (correlation matrices $\mat{C}_\text{lat}$ and $\mat{C}_\text{lon}$, standard deviation $\sigma_x$) and a diagonal $\gmat{\Sigma}_\varepsilon$.
 
 ```{code-block} python
-:caption: Computes the BLUE mean [](#eq-blue-mean) and covariance [](#eq-blue-cov) in closed form with a separable Matérn prior and a diagonal $R$.
+:caption: Computes the BLUE mean [](#eq-blue-mean) and covariance [](#eq-blue-cov) in closed form with a separable Matérn prior and a diagonal $\gmat{\Sigma}_\varepsilon$.
 :label: code-ssh-oi
 import gaussx as gx
 
-# Shapes: T = 10; Y = 128; X = 128; N = Y X; D = Y or X grid offsets
+# Shapes: T + 1 = 10 times; N_lat = N_lon = 128; D_x = N_lat N_lon;
+#         N_off = N_lat or N_lon grid offsets
 
 
 # user
@@ -78,77 +82,77 @@ def matern32_column(
     scaled = jnp.sqrt(3.0) * offset_km / length_scale_km
     # exp(−r)
     decay = jnp.exp(-scaled)
-    # ρ(d) = (1 + r) exp(−r)
+    # k(d) = (1 + r) exp(−r)
     return (1.0 + scaled) * decay
 
 
 # φ − φ₀
-lat_difference = lat - lat[0]  # (Y,)
+lat_difference = lat - lat[0]  # (N_lat,)
 # d_lat = 111 km per degree of latitude
-lat_offset_km = 111.0 * lat_difference  # (Y,)
-# φ̄ = (1/Y) Σ φ
-mean_latitude = einx.mean("y ->", lat)  # (Y,) → ()
+lat_offset_km = 111.0 * lat_difference  # (N_lat,)
+# φ̄ = (1/N_lat) ∑ φ
+mean_latitude = einx.mean("y ->", lat)  # (N_lat,) → ()
 # φ̄ in radians
 mid_latitude = jnp.deg2rad(mean_latitude)  # → ()
 # 111 cos φ̄ km per degree of longitude
 km_per_lon_degree = 111.0 * jnp.cos(mid_latitude)  # → ()
 # λ − λ₀
-lon_difference = lon - lon[0]  # (X,)
+lon_difference = lon - lon[0]  # (N_lon,)
 # d_lon = 111 cos φ̄ (λ − λ₀)
-lon_offset_km = km_per_lon_degree * lon_difference  # (X,)
+lon_offset_km = km_per_lon_degree * lon_difference  # (N_lon,)
 # user
-# ρ(d_lat), ℓ = 100 km
-lat_column = matern32_column(lat_offset_km, 100.0)  # (Y,)
+# k(d_lat), ℓ = 100 km
+lat_column = matern32_column(lat_offset_km, 100.0)  # (N_lat,)
 # user
-# ρ(d_lon), ℓ = 100 km
-lon_column = matern32_column(lon_offset_km, 100.0)  # (X,)
+# k(d_lon), ℓ = 100 km
+lon_column = matern32_column(lon_offset_km, 100.0)  # (N_lon,)
 # today (gaussx)
-lat_corr = gx.Toeplitz(lat_column)  # (Y, Y) op
+lat_corr = gx.Toeplitz(lat_column)  # (N_lat, N_lat) op
 # today (gaussx)
-lon_corr = gx.Toeplitz(lon_column)  # (X, X) op
+lon_corr = gx.Toeplitz(lon_column)  # (N_lon, N_lon) op
 # today (gaussx)
 # C_lat ⊗ C_lon
-separable_corr = gx.Kronecker(lat_corr, lon_corr)  # (N, N) op
-# B_s = σ² (C_lat ⊗ C_lon), σ = 0.1 m: a separable Matérn-3/2
-spatial_cov = 0.01 * separable_corr  # (N, N) op
+separable_corr = gx.Kronecker(lat_corr, lon_corr)  # (D_x, D_x) op
+# Σ_x = σ_x² (C_lat ⊗ C_lon), σ_x = 0.1 m: a separable Matérn-3/2
+spatial_cov = 0.01 * separable_corr  # (D_x, D_x) op
 window_structure = jax.ShapeDtypeStruct((10, 128 * 128), observed_filled.dtype)
 
 
 # user
 def apply_window_cov(state: Float[Array, "t n"]) -> Float[Array, "t n"]:
     batched_cov = jax.vmap(spatial_cov.mv)
-    # (B v)ₜ = B_s vₜ, no correlation across times
+    # (Σ_x v)ₜ = Σ_x vₜ, no correlation across times
     return batched_cov(state)
 
 
 # today (lineax)
-window_cov = lx.FunctionLinearOperator(  # (T N, T N) op
+window_cov = lx.FunctionLinearOperator(  # ((T + 1) D_x, (T + 1) D_x) op
     apply_window_cov,
     window_structure,
     tags=(lx.symmetric_tag, lx.positive_semidefinite_tag),
 )
-# σ²_alt
-grid_variance = altika_uncertainty**2  # (T, Y, X)
-# R = diag(σ²_alt)
-obs_variance = einx.id("t y x -> t (y x)", grid_variance)  # (T, N)
+# σ_alt²
+grid_variance = altika_uncertainty**2  # (T + 1, N_lat, N_lon)
+# Σ_ε = diag(σ_alt²)
+obs_variance = einx.id("t y x -> t (y x)", grid_variance)  # (T + 1, D_y)
 
 
 # user
 def apply_obs_cov(residual: Float[Array, "t n"]) -> Float[Array, "t n"]:
-    # R v = σ²_alt ⊙ v; a 2-D DiagonalLinearOperator would break oi.posterior
+    # Σ_ε v = σ_alt² ⊙ v; a 2-D DiagonalLinearOperator would break oi.posterior
     return obs_variance * residual
 
 
 # today (lineax)
-window_obs_cov = lx.FunctionLinearOperator(  # (T N, T N) op
+window_obs_cov = lx.FunctionLinearOperator(  # ((T + 1) D_y, (T + 1) D_y) op
     apply_obs_cov,
     window_structure,
     tags=(lx.symmetric_tag, lx.positive_semidefinite_tag),
 )
-# x_b = climatology
-window_background = einx.id("t y x -> t (y x)", climatology_ssh)  # (T, N)
+# μ_x = climatology
+window_background = einx.id("t y x -> t (y x)", climatology_ssh)  # (T + 1, D_x)
 # today (vardax)
-# H(x) = m ⊙ x
+# h(x) = m ⊙ x
 masked_identity = vdx.MaskedIdentity()
 
 # today (vardax)
@@ -162,10 +166,10 @@ oi = vdx.OptimalInterpolation(
 # Single forward pass, no iteration; run with jax_enable_x64, since
 # lineax 0.1.1 CG returned NaN at ~10⁵ unknowns in float32
 # today (vardax)
-# x* = x_b + B Hᵀ (H B Hᵀ + R)⁻¹ (y − H x_b)
-oi_analysis = oi(batch)  # (S, T, N)
+# x⋆ = μ_x + Σ_x Hᵀ (H Σ_x Hᵀ + Σ_ε)⁻¹ (y − H μ_x)
+oi_analysis = oi(batch)  # (S, T + 1, D_x)
 # today (vardax)
-# P* = (B⁻¹ + Hᵀ R⁻¹ H)⁻¹
+# Σ_x|y = (Σ_x⁻¹ + Hᵀ Σ_ε⁻¹ H)⁻¹
 posterior_oi = oi.posterior(batch)
 # Reconstruction in gaps comes from the Matérn correlation length.
 ```
@@ -183,20 +187,22 @@ Add a `somax.ShallowWaterModel` as the dynamics. Multi-time observations now con
 :label: code-ssh-incremental
 import somax
 
-# Shapes: S = 1 window; T = 10; N = Y X; the control is x₀ (N,)
+# Shapes: S = 1 window; T + 1 = 10 times; D_x = D_y = N_lat N_lon;
+#         the control is x₀ (D_x,)
 
+# User-supplied: grid, ssh_params
 # not pinned (somax)
 shallow_water = somax.ShallowWaterModel(grid=grid, params=ssh_params)
 # today (lineax)
-# R = diag(σ²_alt) at one time
-time_obs_cov = lx.DiagonalLinearOperator(obs_variance[0])  # (N, N) op
-# x_b = climatology at the first time
-initial_background = einx.id("y x -> (y x)", climatology_ssh[0])  # (N,)
+# Σ_ε = diag(σ_alt²) at one time
+time_obs_cov = lx.DiagonalLinearOperator(obs_variance[0])  # (D_y, D_y) op
+# μ_x = climatology at the first time
+initial_background = einx.id("y x -> (y x)", climatology_ssh[0])  # (D_x,)
 # today (vardax)
 incremental_config = vdx.IncrementalConfig(n_outer=3, n_inner=20, cvt=True)
 
 # today* (vardax)
-# J(x₀) = ½ ‖x₀ − x_b‖²_{B_s⁻¹} + ½ Σₜ ‖mₜ ⊙ (yₜ − M_t(x₀))‖²_{R⁻¹}
+# 𝒥(x₀) = ½ ‖x₀ − μ_x‖²_Σ_x⁻¹ + ½ ∑ₜ ‖mₜ ⊙ (yₜ − fₜ(x₀))‖²_Σ_ε⁻¹
 incremental = vdx.IncrementalFourDVar(
     forward=shallow_water,
     obs_op=masked_identity,
@@ -208,10 +214,11 @@ incremental = vdx.IncrementalFourDVar(
 )
 
 # today (vardax)
-# x₀* = argmin J(x₀)
-incremental_analysis = incremental(batch)  # (S, N)
+# x₀⋆ = argmin 𝒥(x₀)
+incremental_analysis = incremental(batch)  # (S, D_x)
 # today (vardax)
-# P* = (B_s⁻¹ + Σₜ Gₜᵀ R⁻¹ Gₜ)⁻¹, Gₜ = mₜ ⊙ M′_t
+# Σ_x|y = (Σ_x⁻¹ + ∑ₜ (Hₜ F_{t←0})ᵀ Σ_ε⁻¹ (Hₜ F_{t←0}))⁻¹
+# Hₜ = Mₜ = diag(mₜ), the masked identity
 posterior_inc = incremental.posterior(batch)
 # Mesoscale eddies now propagate consistently across observation gaps;
 # the posterior reflects model + observation uncertainty.
@@ -221,14 +228,14 @@ What this gives you: physically-consistent reconstruction. The incremental machi
 
 ## Approach 3: `FourDVarNet` with learned prior
 
-Train a `FourDVarNet` ([chapter 9](09_4dvarnet.md)) on (observed, truth) patches. The learned prior $\varphi_\theta$ of the cost [](#eq-4dvarnet-cost) captures the SSH manifold, and the learned gradient modulator $\Phi_\phi$ of the update [](#eq-4dvarnet-update) accelerates the inner iterations.
+Train a `FourDVarNet` ([chapter 9](09_4dvarnet.md)) on (observed, truth) patches. The learned prior $g_\text{ae}$ of the cost [](#eq-4dvarnet-cost) captures the SSH manifold, and the learned gradient modulator $g_\text{mod}$ of the update [](#eq-4dvarnet-update) accelerates the inner iterations.
 
 ```{code-block} python
 :caption: Trains the learned-prior solver of [](#eq-4dvarnet-cost) and [](#eq-4dvarnet-update) on the loss [](#eq-4dvarnet-loss) and reconstructs the SSH window.
 :label: code-ssh-4dvarnet
 import optax
 
-# Shapes: S = 1 window; T = 10; Y = 128; X = 128
+# Shapes: S = 1 window; T + 1 = 10 times; N_lat = N_lon = 128
 
 # today (vardax)
 # builds a BilinAEPrior2D prior and a ConvLSTMGradMod2D modulator inside
@@ -258,20 +265,21 @@ def step(
     model: vdx.FourDVarNet2D, opt_state: optax.OptState, train_batch: vdx.Batch2D
 ) -> tuple[vdx.FourDVarNet2D, optax.OptState, Float[Array, ""]]:
     # today (vardax)
-    # θ ← θ − η Adam(∇_θ ‖x̂_θ(y) − x‖²)
+    # θ ← θ − γ Adam(∇_θ ‖x̂(y; θ) − x‖²)
     model, opt_state, loss = vdx.train_step(model, train_batch, optimizer, opt_state)
     return model, opt_state, loss
 
 
-# Train on the OceanBench dataset; oceanbench_loader yields Batch2D
+# Train on the OceanBench dataset
+# user; oceanbench_loader yields Batch2D
 for _ in range(100):
     for train_batch in oceanbench_loader:
         # user
         model, opt_state, loss = step(model, opt_state, train_batch)
 
 # today (vardax)
-# x̂ = Ψ_θ(y)
-net_analysis = model(grid_batch)  # (S, T, Y, X)
+# x̂ = x^(N_iter) after N_iter = 15 solver steps
+net_analysis = model(grid_batch)  # (S, T + 1, N_lat, N_lon)
 ```
 
 What this gives you: state-of-the-art reconstruction on the
@@ -305,10 +313,11 @@ the chosen analysis in a `pipekit_cycle.DACycle`:
 :label: code-ssh-cycle
 import pipekit_cycle as pc
 
-# Shapes: N = Y X
+# Shapes: D_x = N_lat N_lon
+# User-supplied: along_track_loader, n_assimilation_windows, initial_state
 
 # today (vardax)
-# x₀* = argmin J(x₀) as a cycle slot; or oi / net
+# x₀⋆ = argmin 𝒥(x₀) as a cycle slot; or oi / net
 analysis_step = incremental.as_analysis_step()
 # today (pipekit_cycle)
 ssh_cycle = pc.DACycle(
@@ -323,7 +332,7 @@ ssh_cycle = pc.DACycle(
 # today (pipekit_cycle)
 initial_da_state = pc.DAState(t=0.0, cycle_count=0)
 # today* (pipekit_cycle)
-# one forecast and one analysis x₀* per window
+# one forecast and one analysis x₀⋆ per window
 final_analysis, final_da_state = ssh_cycle(initial_state, initial_da_state)
 ```
 

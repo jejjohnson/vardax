@@ -17,22 +17,25 @@ This chapter formalises variational data assimilation in a learned low-dimension
 ## 18.1  Setting and notation
 
 Augment the notation of [chapter 1](01_problem_setting.md) with an
-autoencoder $(\varphi, \psi)$:
+autoencoder $(g_\text{enc}, g_\text{dec})$:
 
 | Symbol | Space | Meaning |
 |---|---|---|
-| $x$ | $\mathbb{R}^{N_x}$ | physical state |
-| $z$ | $\mathbb{R}^{N_z}$, $N_z \ll N_x$ | latent code |
-| $\varphi: x \mapsto z$ | encoder | satisfies `pipekit_cycle.Encoder` |
-| $\psi: z \mapsto \hat{x}$ | decoder | satisfies `pipekit_cycle.Decoder` |
-| $M_x: x \mapsto x$ | physical forward model | as in chapter 3 |
-| $M_z: z \mapsto z$ | latent forward model | learned or $\varphi \circ M_x \circ \psi$ |
-| $H: x \mapsto y$ | observation operator | as in chapter 2 |
-| $\tilde{H} := H \circ \psi$ | **lifted** obs operator | $z \mapsto y$ |
-| $\mathbf{B}_z$ | $\mathbb{R}^{N_z \times N_z}$ | background-error covariance in $z$ |
-| $\mathbf{R}$ | $\mathbb{R}^{N_y \times N_y}$ | observation-error covariance |
+| $\vect{x}$ | $\mathbb{R}^{D_x}$ | physical state |
+| $\vect{z}$ | $\mathbb{R}^{D_z}$, $D_z \ll D_x$ | latent code |
+| $\vect{y}$ | $\mathbb{R}^{D_y}$ | observations |
+| $g_\text{enc}: \vect{x} \mapsto \vect{z}$ | encoder | satisfies `pipekit_cycle.Encoder` |
+| $g_\text{dec}: \vect{z} \mapsto \hat{\vect{x}}$ | decoder | satisfies `pipekit_cycle.Decoder` |
+| $\mat{J}_\text{dec}(\vect{z})$ | $\mathbb{R}^{D_x \times D_z}$ | Jacobian of $g_\text{dec}$ |
+| $f_x: \vect{x} \mapsto \vect{x}$ | physical forward model, one step | as in chapter 3, with Jacobian $\mat{F}_x(\vect{x}) \in \mathbb{R}^{D_x \times D_x}$ |
+| $f_z: \vect{z} \mapsto \vect{z}$ | latent forward model, one step | learned or $g_\text{enc} \circ f_x \circ g_\text{dec}$, with Jacobian $\mat{F}_z(\vect{z}) \in \mathbb{R}^{D_z \times D_z}$ |
+| $h: \vect{x} \mapsto \vect{y}$ | observation operator | as in chapter 2, with Jacobian $\mat{H}(\vect{x}) \in \mathbb{R}^{D_y \times D_x}$ |
+| $h_z := h \circ g_\text{dec}$ | **lifted** obs operator | $\vect{z} \mapsto \vect{y}$, with Jacobian $\mat{H}_z(\vect{z}) = \mat{H}(g_\text{dec}(\vect{z})) \mat{J}_\text{dec}(\vect{z}) \in \mathbb{R}^{D_y \times D_z}$ |
+| $\gvect{\mu}_z$ | $\mathbb{R}^{D_z}$ | background in $\vect{z}$ |
+| $\gmat{\Sigma}_z$ | $\mathbb{R}^{D_z \times D_z}$ | background-error covariance in $\vect{z}$ |
+| $\gmat{\Sigma}_\varepsilon$ | $\mathbb{R}^{D_y \times D_y}$ | observation-error covariance |
 
-The pair $(\varphi, \psi)$ is **consistent on the data manifold** if $\psi(\varphi(x)) \approx x$ for $x$ drawn from the climatology. The formalism does not require exact identity; it requires only that $\psi$ be differentiable, which is automatic for neural decoders.
+The pair $(g_\text{enc}, g_\text{dec})$ is **consistent on the data manifold** if $g_\text{dec}(g_\text{enc}(\vect{x})) \approx \vect{x}$ for $\vect{x}$ drawn from the climatology. The formalism does not require exact identity; it requires only that $g_\text{dec}$ be differentiable, which is automatic for neural decoders.
 
 ---
 
@@ -40,37 +43,37 @@ The pair $(\varphi, \psi)$ is **consistent on the data manifold** if $\psi(\varp
 
 ### 18.2.1  Cost
 
-The latent counterpart of the 3DVar cost [](#eq-3dvar-cost) replaces the control vector $x$ with $z$, the observation operator $H$ with $\tilde{H}$ (so $x = \psi(z)$ in the misfit) and the background term with one in $z$:
+The latent counterpart of the 3DVar cost [](#eq-3dvar-cost) replaces the control vector $\vect{x}$ with $\vect{z}$, the observation operator $h$ with $h_z$ (so $\vect{x} = g_\text{dec}(\vect{z})$ in the misfit) and the background term with one in $\vect{z}$:
 
-$$J_{3D}(z) = \underbrace{\frac{1}{2}\|z - z_b\|^2_{\mathbf{B}_z^{-1}}}_{\text{background, in } z} + \underbrace{\frac{1}{2}\|y - H(\psi(z))\|^2_{\mathbf{R}^{-1}}}_{\text{obs misfit, lifted}},$$ (eq-latent-3dvar-cost)
+$$\mathcal{J}_\text{3D}(\vect{z}) = \underbrace{\frac{1}{2} \Vert \vect{z} - \gvect{\mu}_z \Vert^2_{\gmat{\Sigma}_z^{-1}}}_{\text{background, in } \vect{z}} + \underbrace{\frac{1}{2} \Vert \vect{y} - h(g_\text{dec}(\vect{z})) \Vert^2_{\gmat{\Sigma}_\varepsilon^{-1}}}_{\text{obs misfit, lifted}},$$ (eq-latent-3dvar-cost)
 
-where $z_b$ is the background in $z$.
+where $\gvect{\mu}_z$ is the background in $\vect{z}$.
 
 ### 18.2.2  Gradient and Hessian
 
-Let $\tilde{H}'(z) := H'(\psi(z)) \psi'(z)$ be the lifted tangent linear (chain rule). Then the 3DVar gradient [](#eq-3dvar-grad) becomes
+Let $\mat{H}_z(\vect{z}) := \mat{H}(g_\text{dec}(\vect{z})) \mat{J}_\text{dec}(\vect{z})$ be the lifted tangent linear, the Jacobian of $h_z$ (chain rule). Then the 3DVar gradient [](#eq-3dvar-grad) becomes
 
-$$\nabla_z J_{3D}(z) = \mathbf{B}_z^{-1}(z - z_b) - \tilde{H}'(z)^\top \mathbf{R}^{-1}(y - \tilde{H}(z)),$$ (eq-latent-3dvar-grad)
+$$\nabla_{\vect{z}} \mathcal{J}_\text{3D}(\vect{z}) = \gmat{\Sigma}_z^{-1}(\vect{z} - \gvect{\mu}_z) + \mat{H}_z(\vect{z})^\top \gmat{\Sigma}_\varepsilon^{-1}(h_z(\vect{z}) - \vect{y}),$$ (eq-latent-3dvar-grad)
 
 and the Gauss-Newton Hessian [](#eq-3dvar-gn-hessian) becomes
 
-$$\mathbf{H}_z(z) \approx \mathbf{B}_z^{-1} + \tilde{H}'(z)^\top \mathbf{R}^{-1} \tilde{H}'(z).$$ (eq-latent-3dvar-hessian)
+$$\nabla^2_{\vect{z}} \mathcal{J}_\text{3D}(\vect{z}) \approx \gmat{\Sigma}_z^{-1} + \mat{H}_z(\vect{z})^\top \gmat{\Sigma}_\varepsilon^{-1} \mat{H}_z(\vect{z}).$$ (eq-latent-3dvar-hessian)
 
-When $\tilde{H}'$ is treated as constant near the linearisation point (the **incremental** form, cf. [chapter 8](08_incremental_4dvar.md)), the minimisation reduces to a linear solve and the Sherman-Morrison-Woodbury identity gives the closed form
+When $\mat{H}_z$ is treated as constant near the linearisation point (the **incremental** form, cf. [chapter 8](08_incremental_4dvar.md)), the minimisation reduces to a linear solve and the Sherman-Morrison-Woodbury identity gives the closed form
 
-$$z^* = z_b + \mathbf{B}_z \tilde{H}'^\top \left(\tilde{H}' \mathbf{B}_z \tilde{H}'^\top + \mathbf{R}\right)^{-1}(y - \tilde{H}(z_b)).$$ (eq-latent-3dvar-mean)
+$$\vect{z}^\star = \gvect{\mu}_z + \gmat{\Sigma}_z \mat{H}_z^\top \left(\mat{H}_z \gmat{\Sigma}_z \mat{H}_z^\top + \gmat{\Sigma}_\varepsilon\right)^{-1}(\vect{y} - h_z(\gvect{\mu}_z)).$$ (eq-latent-3dvar-mean)
 
-This is the BLUE mean [](#eq-blue-mean) with $(x_b, B, H)$ replaced by $(z_b, \mathbf{B}_z, \tilde{H}')$: the $(N_y \times N_y)$ inverse matches the OI form, and the difference is that the gain is now multiplied by $\mathbf{B}_z$ (size $N_z \times N_z$) rather than $\mathbf{B}$ (size $N_x \times N_x$).
+This is the BLUE mean [](#eq-blue-mean) with $(\gvect{\mu}_x, \gmat{\Sigma}_x, \mat{H})$ replaced by $(\gvect{\mu}_z, \gmat{\Sigma}_z, \mat{H}_z)$: the $D_y \times D_y$ inverse matches the OI form, and the difference is that the gain is now multiplied by $\gmat{\Sigma}_z$ (size $D_z \times D_z$) rather than $\gmat{\Sigma}_x$ (size $D_x \times D_x$).
 This is the structural source of the order-of-magnitude wall-clock win
-when $N_z \ll N_x$.
+when $D_z \ll D_x$.
 
 ### 18.2.3  Analysis output
 
-The variational solution is in $z$; the analysis in physical space is $x^* = \psi(z^*)$. The posterior covariance, when needed, comes from the Laplace approximation [](#eq-laplace-cov) at $z^*$, pushed forward through the decoder:
+The variational solution is in $\vect{z}$; the analysis in physical space is $\vect{x}^\star = g_\text{dec}(\vect{z}^\star)$. The posterior covariance, when needed, comes from the Laplace approximation [](#eq-laplace-cov) at $\vect{z}^\star$, pushed forward through the decoder:
 
-$$\mathrm{cov}_z = \mathbf{H}_z(z^*)^{-1} \text{ and } \mathrm{cov}_x = \psi'(z^*) \mathrm{cov}_z \psi'(z^*)^\top.$$ (eq-latent-laplace-cov)
+$$\gmat{\Sigma}_{z \mid y} = \left(\nabla^2_{\vect{z}} \mathcal{J}_\text{3D}(\vect{z}^\star)\right)^{-1} \text{ and } \gmat{\Sigma}_{x \mid y} = \mat{J}_\text{dec}(\vect{z}^\star) \gmat{\Sigma}_{z \mid y} \mat{J}_\text{dec}(\vect{z}^\star)^\top.$$ (eq-latent-laplace-cov)
 
-The pushforward $\mathrm{cov}_x$ has rank at most $N_z$, so it is a low-rank object naturally represented by `lineax.LowRankUpdate`.
+The pushforward $\gmat{\Sigma}_{x \mid y}$ has rank at most $D_z$, so it is a low-rank object naturally represented by `lineax.LowRankUpdate`.
 
 ---
 
@@ -78,25 +81,25 @@ The pushforward $\mathrm{cov}_x$ has rank at most $N_z$, so it is a low-rank obj
 
 ### 18.3.1  Cost
 
-The latent strong-constraint cost is [](#eq-strong4dvar-cost) with the control $z_0$, the rollout $z_{k+1} = M_z(z_k)$ in the latent space, and the observation residuals through the lifted operator:
+The latent strong-constraint cost is [](#eq-strong4dvar-cost) with the control $\vect{z}_0$, the rollout $\vect{z}_{t+1} = f_z(\vect{z}_t)$ in the latent space, and the observation residuals through the lifted operator:
 
-$$J_{4D}(z_0) = \frac{1}{2}\|z_0 - z_b\|^2_{\mathbf{B}_z^{-1}} + \frac{1}{2}\sum_{k=0}^{K}\|y_k - H(\psi(z_k))\|^2_{\mathbf{R}^{-1}}, \text{ with } z_{k+1} = M_z(z_k),$$ (eq-latent-strong4dvar-cost)
+$$\mathcal{J}_\text{4D}(\vect{z}_0) = \frac{1}{2} \Vert \vect{z}_0 - \gvect{\mu}_z \Vert^2_{\gmat{\Sigma}_z^{-1}} + \frac{1}{2} \sum_{t=0}^{T} \Vert \vect{y}_t - h(g_\text{dec}(\vect{z}_t)) \Vert^2_{\gmat{\Sigma}_\varepsilon^{-1}}, \text{ with } \vect{z}_{t+1} = f_z(\vect{z}_t),$$ (eq-latent-strong4dvar-cost)
 
-where $k = 0, \ldots, K$ indexes the observation times of the window.
+where $t = 0, \ldots, T$ indexes the observation times of the window, which has $T$ steps and $T + 1$ times, and $\vect{y}_t \in \mathbb{R}^{D_y}$.
 
 ### 18.3.2  Gradient
 
 Backpropagation through the latent rollout gives the analogue of the strong 4DVar gradient [](#eq-strong4dvar-grad),
 
-$$\frac{\partial J_{4D}}{\partial z_0} = \mathbf{B}_z^{-1}(z_0 - z_b) - \sum_{k=0}^{K} \left(\prod_{j=0}^{k-1} M_z'(z_j)\right)^\top \tilde{H}'(z_k)^\top \mathbf{R}^{-1} (y_k - \tilde{H}(z_k)).$$ (eq-latent-strong4dvar-grad)
+$$\nabla_{\vect{z}_0} \mathcal{J}_\text{4D} = \gmat{\Sigma}_z^{-1}(\vect{z}_0 - \gvect{\mu}_z) + \sum_{t=0}^{T} \left(\prod_{j=0}^{t-1} \mat{F}_z(\vect{z}_j)\right)^\top \mat{H}_z(\vect{z}_t)^\top \gmat{\Sigma}_\varepsilon^{-1} (h_z(\vect{z}_t) - \vect{y}_t).$$ (eq-latent-strong4dvar-grad)
 
-For learned $M_z$ implemented as an `eqx.Module`, the tangent-linear
+For learned $f_z$ implemented as an `eqx.Module`, the tangent-linear
 operators come from JAX autodiff; no hand-coded adjoint is required.
 
 ### 18.3.3  Memory bound
 
-The full unrolled adjoint stores $O(K \cdot N_z)$ values rather than $O(K \cdot N_x)$, another order-of-magnitude saving for large $N_x$.
-With $K = 20$, $N_z = 8$ versus $N_x = 10^4$, the backward tape shrinks
+The full unrolled adjoint stores $O(T D_z)$ values rather than $O(T D_x)$, another order-of-magnitude saving for large $D_x$.
+With $T = 20$, $D_z = 8$ versus $D_x = 10^4$, the backward tape shrinks
 from megabytes to kilobytes.
 
 ---
@@ -105,24 +108,24 @@ from megabytes to kilobytes.
 
 ### 18.4.1  Motivation
 
-The strong-latent form (§18.3) commits the *forecast* to the latent manifold, which can accumulate reconstruction error over long windows. The hybrid form keeps the forecast in physical space, where the trusted physics model lives, and uses $z$ only as the control variable and as the natural background space:
+The strong-latent form (§18.3) commits the *forecast* to the latent manifold, which can accumulate reconstruction error over long windows. The hybrid form keeps the forecast in physical space, where the trusted physics model lives, and uses $\vect{z}$ only as the control variable and as the natural background space:
 
-* Control: $z_0 \in \mathcal{Z}$.
-* Initial physical state: $x_0 = \psi(z_0)$.
-* Rollout: $x_{k+1} = M_x(x_k)$ in $\mathcal{X}$ (physics, not AE).
-* Observation residual: $y_k - H(x_k)$, no $\psi$ inside the sum.
+* Control: $\vect{z}_0 \in \mathbb{R}^{D_z}$.
+* Initial physical state: $\vect{x}_0 = g_\text{dec}(\vect{z}_0)$.
+* Rollout: $\vect{x}_{t+1} = f_x(\vect{x}_t)$ in $\mathbb{R}^{D_x}$ (physics, not AE).
+* Observation residual: $\vect{y}_t - h(\vect{x}_t)$, no $g_\text{dec}$ inside the sum.
 
 ### 18.4.2  Cost
 
-The hybrid cost is the strong 4DVar cost [](#eq-strong4dvar-cost) with $x_0 = \psi(z_0)$ and the background term moved to $z$:
+The hybrid cost is the strong 4DVar cost [](#eq-strong4dvar-cost) with $\vect{x}_0 = g_\text{dec}(\vect{z}_0)$ and the background term moved to $\vect{z}$:
 
-$$J_{H}(z_0) = \frac{1}{2}\|z_0 - z_b\|^2_{\mathbf{B}_z^{-1}} + \frac{1}{2}\sum_{k=0}^{K}\|y_k - H(x_k)\|^2_{\mathbf{R}^{-1}}, \text{ with } x_0 = \psi(z_0), x_{k+1} = M_x(x_k).$$ (eq-latent-hybrid-cost)
+$$\mathcal{J}_\text{hyb}(\vect{z}_0) = \frac{1}{2} \Vert \vect{z}_0 - \gvect{\mu}_z \Vert^2_{\gmat{\Sigma}_z^{-1}} + \frac{1}{2} \sum_{t=0}^{T} \Vert \vect{y}_t - h(\vect{x}_t) \Vert^2_{\gmat{\Sigma}_\varepsilon^{-1}}, \text{ with } \vect{x}_0 = g_\text{dec}(\vect{z}_0), \vect{x}_{t+1} = f_x(\vect{x}_t).$$ (eq-latent-hybrid-cost)
 
 ### 18.4.3  Gradient
 
-$$\frac{\partial J_H}{\partial z_0} = \mathbf{B}_z^{-1}(z_0 - z_b) - \psi'(z_0)^\top \sum_{k=0}^{K} \left(\prod_{j=0}^{k-1} M_x'(x_j)\right)^\top H'(x_k)^\top \mathbf{R}^{-1}(y_k - H(x_k)).$$ (eq-latent-hybrid-grad)
+$$\nabla_{\vect{z}_0} \mathcal{J}_\text{hyb} = \gmat{\Sigma}_z^{-1}(\vect{z}_0 - \gvect{\mu}_z) + \mat{J}_\text{dec}(\vect{z}_0)^\top \sum_{t=0}^{T} \left(\prod_{j=0}^{t-1} \mat{F}_x(\vect{x}_j)\right)^\top \mat{H}(\vect{x}_t)^\top \gmat{\Sigma}_\varepsilon^{-1}(h(\vect{x}_t) - \vect{y}_t).$$ (eq-latent-hybrid-grad)
 
-The decoder Jacobian $\psi'(z_0)$ appears only **once**, at the start of the window. The expensive piece is the physics adjoint $\prod M_x'$, identical to the one in the strong 4DVar gradient [](#eq-strong4dvar-grad).
+The decoder Jacobian $\mat{J}_\text{dec}(\vect{z}_0)$ appears only **once**, at the start of the window. The expensive piece is the physics adjoint $\prod \mat{F}_x$, identical to the one in the strong 4DVar gradient [](#eq-strong4dvar-grad).
 
 ### 18.4.4  When to prefer hybrid over strong-latent
 
@@ -130,30 +133,30 @@ The decoder Jacobian $\psi'(z_0)$ appears only **once**, at the start of the win
 |---|---|
 | AE reconstructs the manifold well over the assimilation window | strong-latent (§18.3), the cheapest |
 | Physics model is trusted; AE only approximate | hybrid (§18.4) |
-| No learned $M_z$ available, and `EncodedForwardModel` is too lossy | hybrid |
-| $N_x$ huge ($10^6$+) and physics adjoint is the bottleneck | strong-latent (forces $M_z$ training) |
+| No learned $f_z$ available, and `EncodedForwardModel` is too lossy | hybrid |
+| $D_x$ huge ($10^6$+) and physics adjoint is the bottleneck | strong-latent (forces $f_z$ training) |
 
 ---
 
 ## 18.5  Latent incremental 4DVar (sketch)
 
-The incremental algorithm of [chapter 8](08_incremental_4dvar.md) extends mutatis mutandis: the outer Gauss-Newton loop produces a sequence of inner problems, each the incremental cost [](#eq-incremental-cost) in $z$,
+The incremental algorithm of [chapter 8](08_incremental_4dvar.md) extends mutatis mutandis: the outer Gauss-Newton loop produces a sequence of inner problems, each the incremental cost [](#eq-incremental-cost) in $\vect{z}$,
 
-$$\min_{\delta z} \frac{1}{2}\|z_0^{(n)} + \delta z - z_b\|^2_{\mathbf{B}_z^{-1}} + \frac{1}{2}\sum_k \|d_k - \tilde{H}_k' M_{z,k}' \delta z\|^2_{\mathbf{R}^{-1}},$$ (eq-latent-incremental-cost)
+$$\min_{\delta\vect{z}} \frac{1}{2} \Vert \vect{z}_0^{(i)} + \delta\vect{z} - \gvect{\mu}_z \Vert^2_{\gmat{\Sigma}_z^{-1}} + \frac{1}{2} \sum_{t=0}^{T} \Vert \vect{r}_t^{(i)} - \mat{H}_{z,t} \mat{F}_{z,t \leftarrow 0} \delta\vect{z} \Vert^2_{\gmat{\Sigma}_\varepsilon^{-1}},$$ (eq-latent-incremental-cost)
 
-with $z_0^{(n)}$ the outer guess, $d_k = y_k - \tilde{H}(z_k^{(n)})$ the innovation at outer iteration $n$, and primed quantities evaluated at the current outer guess. The inner problem is linear-quadratic in $\delta z$ and CG-able in $\mathcal{Z}$, typically with two orders of magnitude fewer CG iterations than in $\mathcal{X}$ because the conditioning improves with dimensionality reduction.
+with $\vect{z}_0^{(i)}$ the outer guess at outer iteration $i$, $\vect{r}_t^{(i)} = \vect{y}_t - h_z(\vect{z}_t^{(i)})$ the residual (innovation), $\mat{F}_{z,t \leftarrow 0} \in \mathbb{R}^{D_z \times D_z}$ the tangent-linear model of the latent rollout to time $t$ and $\mat{H}_{z,t}$ the lifted Jacobian at $\vect{z}_t^{(i)}$, both evaluated at the current outer guess. The inner problem is linear-quadratic in $\delta\vect{z}$ and CG-able in $\mathbb{R}^{D_z}$, typically with two orders of magnitude fewer CG iterations than in $\mathbb{R}^{D_x}$ because the conditioning improves with dimensionality reduction.
 
-A control-variable transform (CVT) in $z$ is rarely needed: if the AE
-was trained with a unit-Gaussian prior on $z$, then $\mathbf{B}_z = I$
+A control-variable transform (CVT) in $\vect{z}$ is rarely needed: if the AE
+was trained with a unit-Gaussian prior on $\vect{z}$, then $\gmat{\Sigma}_z = \mat{I}$
 to leading order and the cost is already well-conditioned.
 
 ---
 
 ## 18.6  Identity-AE consistency
 
-If $(\varphi, \psi) = (\mathrm{id}, \mathrm{id})$ then $z = x$,
-$\tilde{H} = H$, $M_z = M_x$, $\mathbf{B}_z = \mathbf{B}$, and the
-three latent costs reduce exactly to the corresponding x-space costs.
+If $(g_\text{enc}, g_\text{dec}) = (\mathrm{id}, \mathrm{id})$ then $\vect{z} = \vect{x}$,
+$h_z = h$, $f_z = f_x$, $\gmat{\Sigma}_z = \gmat{\Sigma}_x$, and the
+three latent costs reduce exactly to the corresponding $\vect{x}$-space costs.
 This is the canonical regression test for any implementation
 (`vardax.identity_latent_map(N)`).
 
@@ -161,25 +164,25 @@ This is the canonical regression test for any implementation
 
 ## 18.7  Connection to chapter 9 (4DVarNet)
 
-`FourDVarNet` minimises the learned-prior cost [](#eq-4dvarnet-cost) with the prior $\varphi_\theta = \psi \circ \varphi$, so its prior term is $\alpha_{\text{prior}}\|x - \psi(\varphi(x))\|^2$.
+`FourDVarNet` minimises the learned-prior cost [](#eq-4dvarnet-cost) with the prior $g_\text{ae} = g_\text{dec} \circ g_\text{enc}$, so its prior term is $\alpha_p \Vert \vect{x} - g_\text{dec}(g_\text{enc}(\vect{x})) \Vert_2^2$.
 
-This is **prior-only latent**: the AE appears as a reconstruction penalty but the control remains $x$. The latent methods of this chapter promote $z$ itself to the control vector. The two are not incompatible, and `FourDVarNet` retains its place when the autoencoder is a *regulariser* rather than a *parameterisation* of the state space.
+This is **prior-only latent**: the AE appears as a reconstruction penalty but the control remains $\vect{x}$. The latent methods of this chapter promote $\vect{z}$ itself to the control vector. The two are not incompatible, and `FourDVarNet` retains its place when the autoencoder is a *regulariser* rather than a *parameterisation* of the state space.
 
 ---
 
-## 18.8  Worked example: Lorenz-96, $N_x=40$, $N_z=8$
+## 18.8  Worked example: Lorenz-96, $D_x = 40$, $D_z = 8$
 
 The notebook `docs/notebooks/18_latent_lorenz.ipynb` (to be added with
 the implementation) trains a bilinear AE on L96 trajectories and runs
-all three latent methods against the x-space baselines on the same
+all three latent methods against the $\vect{x}$-space baselines on the same
 fixture. Expected pattern:
 
 * `LatentThreeDVar` matches `ThreeDVar` analysis RMSE to within
   $0.05$ standard deviations; cost-per-cycle drops by $\sim 25\times$.
-* `LatentStrongFourDVar` with `EncodedForwardModel` (no learned $M_z$)
+* `LatentStrongFourDVar` with `EncodedForwardModel` (no learned $f_z$)
   matches `StrongFourDVar`; cost-per-cycle drops by $\sim 10\times$
   (the AE round-trip eats some of the win).
-* `LatentStrongFourDVar` with a trained residual-MLP $M_z$ wins
+* `LatentStrongFourDVar` with a trained residual-MLP $f_z$ wins
   $\sim 50\times$ but introduces a small RMSE bias controlled by AE
   reconstruction quality.
 * `LatentHybridFourDVar` matches `StrongFourDVar` RMSE almost exactly;
