@@ -14,7 +14,15 @@ window.MathJax = {
     inlineMath: [["\\(", "\\)"], ["$", "$"]],
     displayMath: [["\\[", "\\]"], ["$$", "$$"]],
     processEscapes: true,
-    processEnvironments: true
+    processEnvironments: true,
+    // The kind-named macros of docs/notation.md, as in docs/myst.yml
+    macros: {
+      vect: ["\\mathbf{#1}", 1],
+      mat: ["\\mathbf{#1}", 1],
+      gvect: ["\\boldsymbol{#1}", 1],
+      gmat: ["\\boldsymbol{#1}", 1],
+      op: ["\\mathrm{#1}", 1]
+    }
   }
 };
 

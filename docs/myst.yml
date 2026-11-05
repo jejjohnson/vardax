@@ -24,6 +24,12 @@ project:
   github: https://github.com/jejjohnson/vardax
   authors:
     - name: J. Emmanuel Johnson
+  math:
+    '\vect': '\mathbf{#1}'
+    '\mat': '\mathbf{#1}'
+    '\gvect': '\boldsymbol{#1}'
+    '\gmat': '\boldsymbol{#1}'
+    '\op': '\mathrm{#1}'
   references:
     api: http://127.0.0.1:8911/
   toc:
