@@ -1,31 +1,7 @@
-r"""Minimisers implementing the [`Minimiser`][vardax.Minimiser] protocol.
+"""Minimisers behind the `Minimiser` protocol: ``optimistix`` and first-order ``optax``.
 
-The classical analysis models ([`ThreeDVar`][vardax.ThreeDVar],
-[`StrongFourDVar`][vardax.StrongFourDVar],
-[`WeakFourDVar`][vardax.WeakFourDVar],
-[`ReducedBasisFourDVar`][vardax.ReducedBasisFourDVar]) hand their cost
-$J(\theta)$ to ``optimistix.minimise`` with a quasi-Newton solver by
-default. That is the right tool for a state-sized control, but not for a
-control made of $10^5$ network weights, where BFGS's dense inverse-Hessian
-estimate is not viable. Two minimisers share one calling convention,
-``minimiser(cost_fn, x0, batch) -> x_star`` with ``cost_fn(x, batch)``
-returning a scalar and ``x0`` any pytree:
-
-- [`OptimistixMinimiser`][vardax.OptimistixMinimiser] wraps an
-  ``optimistix.AbstractMinimiser`` (default ``optx.BFGS(rtol=1e-6,
-  atol=1e-6)``, the models' default).
-- [`OptaxMinimiser`][vardax.OptaxMinimiser] runs a first-order ``optax``
-  optimiser (Adam, say) in a ``jax.lax.while_loop`` with early stopping,
-  optionally followed by a second optimiser (L-BFGS, say) to polish.
-
-Differentiating *through* the minimum uses an ``optimistix`` adjoint. The
-default, ``optimistix.ImplicitAdjoint``, applies the implicit function
-theorem at $\theta^\star$, which assumes stationarity,
-$\nabla J(\theta^\star) = 0$. A first-order optimiser stopped by a step
-budget or by patience does not guarantee it, so both minimisers report
-the final gradient norm $\lVert \nabla J(\theta^\star) \rVert_2$ in
-[`MinimiseResult`][vardax.MinimiseResult]; check it before trusting
-gradients through the minimum.
+Both share one calling convention, ``minimiser(cost_fn, x0, batch)``, and report
+the final gradient norm so a caller can check the implicit adjoint's assumption.
 """
 
 from __future__ import annotations
@@ -45,21 +21,27 @@ from vardax._src.errors import ConfigurationError, ShapeError
 
 
 class MinimiseResult(eqx.Module):
-    r"""Outcome of a minimisation.
+    """Outcome of a minimisation: the optimum θ⋆ and its diagnostics.
+
+    Differentiating *through* the minimum uses an ``optimistix`` adjoint. The
+    default, ``optimistix.ImplicitAdjoint``, applies the implicit function
+    theorem at θ⋆, which assumes stationarity, ∇_θ𝒥(θ⋆) = 0. A first-order
+    optimiser stopped by a step budget or by patience does not guarantee it, so
+    both minimisers report the final gradient norm ‖∇_θ𝒥(θ⋆)‖₂ here; check it
+    before trusting gradients through the minimum.
 
     Attributes:
-        value: The minimiser $\theta^\star$, with the structure of ``x0``.
-        cost: The cost $J(\theta^\star)$.
-        grad_norm: $\lVert \nabla J(\theta^\star) \rVert_2$ over all
-            leaves of $\theta$. The implicit adjoint is exact only when
-            this is (close to) zero.
+        value: The minimiser θ⋆, with the structure of ``x0``.
+        cost: The cost 𝒥(θ⋆).
+        grad_norm: ‖∇_θ𝒥(θ⋆)‖₂ over all leaves of θ. The implicit adjoint is
+            exact only when this is (close to) zero.
         num_steps: Number of optimiser steps taken (both phases, for
             `OptaxMinimiser` with a polish).
         converged: Whether the minimiser met its own convergence test:
-            optimistix's ``result == successful``, or for
-            `OptaxMinimiser` a small gradient or ``step_patience`` small
-            steps (in the polish phase, when there is one); stopping on
-            ``patience`` or ``max_steps`` is ``False``. ``None`` for a custom
+            optimistix's ``result == successful``, or for `OptaxMinimiser` a
+            small gradient or ``step_patience`` small steps (in the polish
+            phase, when there is one); stopping on ``patience`` or
+            ``max_steps`` is ``False``. ``None`` for a custom
             [`Minimiser`][vardax.Minimiser], which reports no status.
 
     Examples:
@@ -79,6 +61,11 @@ class MinimiseResult(eqx.Module):
 
         >>> bool(result.grad_norm < 1e-4), bool(result.converged)
         (True, True)
+
+        The cost and step count are scalar arrays.
+
+        >>> result.cost.shape, result.num_steps.shape
+        ((), ())
     """
 
     value: PyTree[Array]
@@ -89,7 +76,9 @@ class MinimiseResult(eqx.Module):
 
 
 def _tree_l2_norm(tree: PyTree[Array]) -> Float[Array, ""]:
+    """Euclidean norm ‖t‖₂ of a pytree, over all its leaves."""
     leaves = jtu.tree_leaves(tree)
+    # ‖t‖₂ = sqrt(∑ over leaves of ∑ tⱼ²)
     return jnp.sqrt(sum(jnp.sum(jnp.square(leaf)) for leaf in leaves))
 
 
@@ -101,6 +90,9 @@ def _close_over(
     The implicit adjoint differentiates with respect to the leaves of its
     inputs, so a cost that closes over model arrays (``prior_mean``, an
     operator) must expose them, as ``optimistix.minimise`` does.
+
+    Raises:
+        ShapeError: If ``cost_fn`` does not return a floating-point scalar.
     """
     closed_cost_fn = eqx.filter_closure_convert(cost_fn, initial_guess, batch)
     cost_struct = closed_cost_fn.out_struct  # ty:ignore[unresolved-attribute]
@@ -114,20 +106,22 @@ def _close_over(
 
 
 class OptimistixMinimiser(eqx.Module):
-    r"""An ``optimistix`` minimiser behind the `Minimiser` protocol.
+    """An ``optimistix`` minimiser behind the `Minimiser` protocol.
+
+        θ⋆ = argmin_θ 𝒥(θ; batch)
 
     ``OptimistixMinimiser()`` is the models' default made explicit:
     ``optx.BFGS(rtol=1e-6, atol=1e-6)`` with ``max_steps=200`` and
-    ``throw=False``, so a model built with it returns exactly what the
-    default model returns.
-
-    $$ \theta^\star = \arg\min_\theta J(\theta;\, \text{batch}) $$
+    ``throw=False``, so a model built with it returns exactly what the default
+    model returns. A quasi-Newton solver suits a state-sized control, but not
+    one of 10⁵ network weights, where BFGS's dense inverse-Hessian estimate is
+    not viable; use [`OptaxMinimiser`][vardax.OptaxMinimiser] there.
 
     Algorithm:
-        1. Hand ``cost_fn(x, batch)``, the solver and ``x0`` to
+        1. Hand ``cost_fn(params, batch)``, the solver and ``x0`` to
            ``optimistix.minimise``, capped at ``max_steps`` iterations.
-        2. Return the minimiser; `run` also reports the cost, the
-           gradient norm and the step count at the solution.
+        2. Return the minimiser θ⋆; `run` also reports the cost 𝒥(θ⋆), the
+           gradient norm ‖∇_θ𝒥(θ⋆)‖₂ and the step count at the solution.
 
     Raises:
         ConfigurationError: If ``max_steps`` is below 1.
@@ -136,12 +130,11 @@ class OptimistixMinimiser(eqx.Module):
         solver: The ``optimistix.AbstractMinimiser``.
         max_steps: Iteration cap.
         throw: Passed to ``optimistix.minimise``: raise on failure
-            (non-convergence within ``max_steps``) instead of returning
-            the last iterate.
+            (non-convergence within ``max_steps``) instead of returning the
+            last iterate.
 
     Examples:
-        A quadratic $J(x) = \tfrac12 \lVert x - m \rVert^2$ has its
-        minimum at $m$.
+        A quadratic 𝒥(θ) = ½ ‖θ − m‖² has its minimum at m.
 
         >>> import jax.numpy as jnp, vardax
         >>> m = jnp.array([1.0, -2.0, 0.5])
@@ -194,11 +187,11 @@ class OptimistixMinimiser(eqx.Module):
         *,
         adjoint: optx.AbstractAdjoint | None = None,
     ) -> MinimiseResult:
-        """Minimise ``cost_fn(x, batch)`` from ``x0``, with diagnostics.
+        """Minimise 𝒥(θ; batch) from θ⁽⁰⁾ = ``x0``, with diagnostics.
 
         Args:
-            cost_fn: Scalar cost ``cost_fn(x, batch)``.
-            x0: Initial guess, any pytree of arrays.
+            cost_fn: Scalar cost 𝒥, called as ``cost_fn(params, batch)``.
+            x0: Initial guess θ⁽⁰⁾, any pytree of arrays.
             batch: Passed as the second argument of ``cost_fn``.
             adjoint: How to differentiate through the minimum. Default
                 ``optimistix.ImplicitAdjoint()``.
@@ -213,6 +206,8 @@ class OptimistixMinimiser(eqx.Module):
             ... )
             >>> bool(jnp.allclose(result.value, 1.0, atol=1e-5))
             True
+            >>> bool(result.converged)
+            True
         """
         solution = optx.minimise(
             fn=cost_fn,
@@ -224,6 +219,7 @@ class OptimistixMinimiser(eqx.Module):
             throw=self.throw,
         )
         value = solution.value
+        # 𝒥(θ⋆) and ‖∇_θ𝒥(θ⋆)‖₂
         cost, grad_norm = _cost_and_grad_norm(cost_fn, value, batch)
         return MinimiseResult(
             value=value,
@@ -239,16 +235,17 @@ class OptimistixMinimiser(eqx.Module):
         x0: PyTree[Array],
         batch: Any = None,
     ) -> PyTree[Array]:
-        """Return ``argmin_x cost_fn(x, batch)`` starting from ``x0``.
+        """Return θ⋆ = argmin_θ 𝒥(θ; batch) starting from θ⁽⁰⁾ = ``x0``.
 
         Args:
-            cost_fn: Scalar cost ``cost_fn(x, batch)``.
-            x0: Initial guess, any pytree of arrays.
+            cost_fn: Scalar cost 𝒥, called as ``cost_fn(params, batch)``.
+            x0: Initial guess θ⁽⁰⁾, any pytree of arrays.
             batch: Passed as the second argument of ``cost_fn``.
 
         Returns:
-            The minimiser, with the structure of ``x0``.
+            The minimiser θ⋆, with the structure of ``x0``.
         """
+        # θ⋆ = argmin_θ 𝒥(θ; batch)
         return optx.minimise(
             fn=cost_fn,
             solver=self.solver,
@@ -260,56 +257,56 @@ class OptimistixMinimiser(eqx.Module):
 
 
 class OptaxMinimiser(eqx.Module):
-    r"""First-order minimisation with an ``optax`` optimiser.
+    """First-order minimisation with an ``optax`` optimiser.
 
-    $$ \theta_{k+1} = \theta_k + u_k, \qquad g_k = \nabla J(\theta_k) $$
+        θ⁽ⁱ⁺¹⁾ = θ⁽ⁱ⁾ + Δθ⁽ⁱ⁾,   ∇_θ𝒥(θ⁽ⁱ⁾) = ∂𝒥/∂θ at θ⁽ⁱ⁾
 
-    with $u_k$ the ``optimizer`` update from $g_k$. The loop is a
+    with Δθ⁽ⁱ⁾ the ``optimizer`` update from ∇_θ𝒥(θ⁽ⁱ⁾). The loop is a
     ``jax.lax.while_loop`` (so the whole minimisation is ``jit``-able) and
     stops at the first of:
 
     - ``max_steps`` steps;
-    - a small gradient, $\lVert g_k \rVert_2 \le \mathrm{gtol}$;
+    - a small gradient, ‖∇_θ𝒥(θ⁽ⁱ⁾)‖₂ ≤ gtol;
     - ``step_patience`` consecutive small steps,
-      $\lVert u_k \rVert_2 \le \mathrm{atol} + \mathrm{rtol}\,\lVert \theta_k \rVert_2$
+      ‖Δθ⁽ⁱ⁾‖₂ ≤ atol + rtol ‖θ⁽ⁱ⁾‖₂
       (one small step is not enough: a learning-rate schedule starting at
       zero gives a zero first update);
     - ``patience`` consecutive steps whose cost exceeds the lowest cost
       seen by more than float round-off.
 
     There is deliberately no relative cost-change test: with a large
-    irreducible misfit, $J_k - J_{k-1}$ rounds to zero in float32 long
-    before $\theta$ converges. For the same reason a step counts as an
-    improvement when $J_k \le J_\text{best} + 8\,\varepsilon\,|J_\text{best}|$
-    ($\varepsilon$ the machine epsilon of $J$), so a cost that is flat to
-    round-off does not exhaust the patience. At a small gradient the loop
-    stops *before* applying the update, so stored momentum cannot carry a
-    stationary iterate away. It returns the best iterate seen: the lowest
-    cost, with ties within round-off broken by the smaller gradient norm.
+    irreducible misfit, 𝒥⁽ⁱ⁾ − 𝒥⁽ⁱ⁻¹⁾ rounds to zero in float32 long before θ
+    converges. For the same reason a step counts as an improvement when
+    𝒥⁽ⁱ⁾ ≤ 𝒥_best + 8 ε_mach |𝒥_best| (ε_mach the machine epsilon of 𝒥), so a
+    cost that is flat to round-off does not exhaust the patience. At a small
+    gradient the loop stops *before* applying the update, so stored momentum
+    cannot carry a stationary iterate away. It returns the best iterate seen:
+    the lowest cost, with ties within round-off broken by the smaller gradient
+    norm.
 
     With ``polish``, a second loop of at most ``polish_steps`` steps of that
-    optimiser (for example ``optax.lbfgs()``) starts from there, with its
-    own, tight, tolerances (``polish_gtol``, ``polish_rtol``,
-    ``polish_atol``, ``polish_patience``; by default it stops only on
-    ``polish_steps`` or ``step_patience`` exactly zero steps). The optimisers are called
-    with the extra arguments ``value``, ``grad`` and ``value_fn``, so
-    line-search optimisers such as ``optax.lbfgs`` work unchanged.
+    optimiser (for example ``optax.lbfgs()``) starts from there, with its own,
+    tight, tolerances (``polish_gtol``, ``polish_rtol``, ``polish_atol``,
+    ``polish_patience``; by default it stops only on ``polish_steps`` or
+    ``step_patience`` exactly zero steps). The optimisers are called with the
+    extra arguments ``value``, ``grad`` and ``value_fn``, so line-search
+    optimisers such as ``optax.lbfgs`` work unchanged.
 
-    The implicit adjoint used to differentiate through the minimum assumes
-    $\nabla J(\theta^\star) = 0$, which a first-order optimiser stopped
-    early does not guarantee: check
+    First-order methods suit a control of 10⁵ network weights, where the dense
+    inverse-Hessian estimate of BFGS is not viable. The implicit adjoint used
+    to differentiate through the minimum assumes ∇_θ𝒥(θ⋆) = 0, which a
+    first-order optimiser stopped early does not guarantee: check
     [`MinimiseResult.grad_norm`][vardax.MinimiseResult] from `run`.
 
     Algorithm:
-        1. Evaluate the cost and gradient at the iterate $\theta_k$.
-        2. Stop if the gradient norm is below ``gtol``; otherwise apply
-           the ``optimizer`` update.
+        1. Evaluate the cost 𝒥(θ⁽ⁱ⁾) and gradient ∇_θ𝒥(θ⁽ⁱ⁾) at the iterate.
+        2. Stop if the gradient norm is below ``gtol``; otherwise apply the
+           ``optimizer`` update Δθ⁽ⁱ⁾.
         3. Track the best iterate, and count consecutive small steps and
            steps without improvement.
-        4. Repeat until a stopping rule above fires; keep the best
-           iterate.
-        5. With ``polish``, repeat steps 1-4 from the best iterate with
-           the polish optimiser and tolerances.
+        4. Repeat until a stopping rule above fires; keep the best iterate.
+        5. With ``polish``, repeat steps 1-4 from the best iterate with the
+           polish optimiser and tolerances.
 
     Raises:
         ConfigurationError: If a step cap or ``step_patience`` is below 1,
@@ -334,8 +331,8 @@ class OptaxMinimiser(eqx.Module):
         polish_patience: As ``patience``, for the polish loop.
 
     Examples:
-        Adam on $J(x) = \tfrac12 \lVert x - m \rVert^2$, polished by
-        L-BFGS, reaches the closed-form minimum $x^\star = m$.
+        Adam on 𝒥(θ) = ½ ‖θ − m‖², polished by L-BFGS, reaches the
+        closed-form minimum θ⋆ = m.
 
         >>> import jax.numpy as jnp, optax, vardax
         >>> m = jnp.array([1.0, -2.0, 0.5])
@@ -448,15 +445,14 @@ class OptaxMinimiser(eqx.Module):
         *,
         adjoint: optx.AbstractAdjoint | None = None,
     ) -> MinimiseResult:
-        """Minimise ``cost_fn(x, batch)`` from ``x0``, with diagnostics.
+        """Minimise 𝒥(θ; batch) from θ⁽⁰⁾ = ``x0``, with diagnostics.
 
         ``result.cost`` is differentiable: by the envelope theorem
-        $\\mathrm{d}J^\\star/\\mathrm{d}\\phi = \\partial J/\\partial\\phi$ at
-        $\\theta^\\star$ for any parameter $\\phi$ of the cost.
+        d𝒥⋆/dω = ∂𝒥/∂ω at θ⋆ for any parameter ω of the cost other than θ.
 
         Args:
-            cost_fn: Scalar cost ``cost_fn(x, batch)``.
-            x0: Initial guess, any pytree of arrays (for a network, the
+            cost_fn: Scalar cost 𝒥, called as ``cost_fn(params, batch)``.
+            x0: Initial guess θ⁽⁰⁾, any pytree of arrays (for a network, the
                 array half of ``eqx.partition(model, eqx.is_inexact_array)``).
             batch: Passed as the second argument of ``cost_fn``.
             adjoint: How to differentiate through the minimum. Default
@@ -481,9 +477,11 @@ class OptaxMinimiser(eqx.Module):
         x0 = jtu.tree_map(jnp.asarray, x0)
         closed_cost_fn = _close_over(cost_fn, x0, batch)
         inputs = (closed_cost_fn, self, x0, batch)
+        # θ⋆ from the loop; its adjoint solves ∇_θ𝒥(θ⋆) = 0 (stationarity)
         value, (num_steps, converged) = (adjoint or optx.ImplicitAdjoint()).apply(
             _optax_primal, _optax_rewrite, inputs, frozenset()
         )
+        # 𝒥(θ⋆) and ‖∇_θ𝒥(θ⋆)‖₂
         cost, grad_norm = _cost_and_grad_norm(cost_fn, value, batch)
         return MinimiseResult(
             value=value,
@@ -499,30 +497,35 @@ class OptaxMinimiser(eqx.Module):
         x0: PyTree[Array],
         batch: Any = None,
     ) -> PyTree[Array]:
-        """Return ``argmin_x cost_fn(x, batch)`` starting from ``x0``.
+        """Return θ⋆ = argmin_θ 𝒥(θ; batch) starting from θ⁽⁰⁾ = ``x0``.
 
         Args:
-            cost_fn: Scalar cost ``cost_fn(x, batch)``.
-            x0: Initial guess, any pytree of arrays.
+            cost_fn: Scalar cost 𝒥, called as ``cost_fn(params, batch)``.
+            x0: Initial guess θ⁽⁰⁾, any pytree of arrays.
             batch: Passed as the second argument of ``cost_fn``.
 
         Returns:
-            The minimiser, with the structure of ``x0``.
+            The minimiser θ⋆, with the structure of ``x0``.
         """
+        # θ⋆ from the same loop as `run`, without the diagnostics
         return self.run(cost_fn, x0, batch).value
 
 
-def _cost_and_grad_norm(cost_fn, value, batch):
-    """$J(\\theta^\\star)$ (differentiable to all orders) and $\\lVert g \\rVert$.
+def _cost_and_grad_norm(
+    cost_fn: Callable[[Any, Any], Any], value: PyTree[Array], batch: Any
+) -> tuple[Any, Float[Array, ""]]:
+    """Return 𝒥(θ⋆), differentiable to all orders, and ‖∇_θ𝒥(θ⋆)‖₂.
 
     The cost is evaluated at ``value`` itself, which carries the adjoint's
-    derivative of $\\theta^\\star$: the first derivative is then the
-    envelope theorem's ($\\partial J/\\partial\\theta = 0$ at the minimum),
-    and higher derivatives keep the implicit dependence of $\\theta^\\star$
-    on the parameters. The gradient norm is a diagnostic and is detached.
+    derivative of θ⋆: the first derivative is then the envelope theorem's
+    (∂𝒥/∂θ = 0 at the minimum), and higher derivatives keep the implicit
+    dependence of θ⋆ on the parameters. The gradient norm is a diagnostic and is
+    detached.
     """
+    # 𝒥(θ⋆), at the adjoint-carrying value
     cost = cost_fn(value, batch)
     minimum = jax.lax.stop_gradient(value)
+    # ∇_θ𝒥(θ⋆), at the detached minimum
     grad = jax.grad(cost_fn)(minimum, batch)
     return cost, jax.lax.stop_gradient(_tree_l2_norm(grad))
 
@@ -530,7 +533,7 @@ def _cost_and_grad_norm(cost_fn, value, batch):
 def _optax_loop(
     cost_fn, batch, initial_guess, optimizer, max_steps, tols, patience, while_loop
 ):
-    """One early-stopped loop; returns (best iterate, steps, converged)."""
+    """Run one early-stopped loop; return (best iterate, steps, converged)."""
     gtol, rtol, atol, step_patience = tols
     optimizer = optax.with_extra_args_support(optimizer)
 
@@ -539,17 +542,19 @@ def _optax_loop(
 
     cost_dtype = cost_fn.out_struct.dtype
     inf = jnp.asarray(jnp.inf, dtype=cost_dtype)
-    eps = jnp.finfo(cost_dtype).eps
+    eps_mach = jnp.finfo(cost_dtype).eps
 
     def slack(reference_cost):
+        # 8 ε_mach |𝒥_ref|, and 0 while 𝒥_ref is still infinite
         return jnp.where(
-            jnp.isfinite(reference_cost), 8 * eps * jnp.abs(reference_cost), 0.0
+            jnp.isfinite(reference_cost), 8 * eps_mach * jnp.abs(reference_cost), 0.0
         )
 
     def better(cost, grad_norm, best_cost, best_grad_norm):
         # Lower cost beyond round-off, or a tie within round-off broken by
         # the gradient norm (closer to stationary).
         tolerance = slack(best_cost)
+        # 𝒥 < 𝒥_best − 8 ε_mach |𝒥_best|, or a tie with a smaller ‖∇_θ𝒥‖₂
         return (cost < best_cost - tolerance) | (
             (cost <= best_cost + tolerance) & (grad_norm <= best_grad_norm)
         )
@@ -561,6 +566,7 @@ def _optax_loop(
 
     def cond(carry):
         step, _, _, _, _, _, _, since_best, _, converged = carry
+        # continue while i < N_iter, not converged and within the patience
         keep = (step < max_steps) & ~converged
         if patience is not None:
             keep = keep & (since_best < patience)
@@ -576,9 +582,10 @@ def _optax_loop(
             best_grad_norm,
             min_cost,
             since_best,
-            n_small,
+            num_small_steps,
             _,
         ) = carry
+        # 𝒥(θ⁽ⁱ⁾) and ∇_θ𝒥(θ⁽ⁱ⁾)
         cost, gradient = jax.value_and_grad(cost_fn)(iterate, batch)
         grad_norm = _tree_l2_norm(gradient)
         take = better(cost, grad_norm, best_cost, best_grad_norm)
@@ -589,17 +596,21 @@ def _optax_loop(
         # seen by more than round-off.
         since_best = jnp.where(cost <= min_cost + slack(min_cost), 0, since_best + 1)
         min_cost = jnp.minimum(cost, min_cost)
+        # ‖∇_θ𝒥(θ⁽ⁱ⁾)‖₂ ≤ gtol
         small_grad = grad_norm <= gtol
+        # Δθ⁽ⁱ⁾ from the optimiser, given 𝒥 and ∇_θ𝒥 for line searches
         updates, opt_state = optimizer.update(
             gradient, opt_state, iterate, value=cost, grad=gradient, value_fn=value_fn
         )
+        # ‖Δθ⁽ⁱ⁾‖₂ ≤ atol + rtol ‖θ⁽ⁱ⁾‖₂
         small_step = _tree_l2_norm(updates) <= atol + rtol * _tree_l2_norm(iterate)
-        n_small = jnp.where(small_step, n_small + 1, 0)
+        num_small_steps = jnp.where(small_step, num_small_steps + 1, 0)
         # A stationary iterate is final: do not apply the (momentum) update.
+        # θ⁽ⁱ⁺¹⁾ = θ⁽ⁱ⁾ + Δθ⁽ⁱ⁾
         next_iterate = select(
             small_grad, iterate, optax.apply_updates(iterate, updates)
         )
-        converged = small_grad | (n_small >= step_patience)
+        converged = small_grad | (num_small_steps >= step_patience)
         return (
             step + 1,
             next_iterate,
@@ -609,7 +620,7 @@ def _optax_loop(
             best_grad_norm,
             min_cost,
             since_best,
-            n_small,
+            num_small_steps,
             converged,
         )
 
@@ -630,6 +641,7 @@ def _optax_loop(
         while_loop(cond, body, init, max_steps=max_steps)
     )
     # The last iterate may not have been evaluated: keep it if it is better.
+    # 𝒥(θ⁽ⁱ⁾) and ∇_θ𝒥(θ⁽ⁱ⁾) at the last iterate
     last_cost, last_gradient = jax.value_and_grad(cost_fn)(last_iterate, batch)
     take_last = better(
         last_cost, _tree_l2_norm(last_gradient), best_cost, best_grad_norm
@@ -641,6 +653,7 @@ def _optax_loop(
 # no_type_check keeps the jaxtyping test hook from wrapping this one
 @no_type_check
 def _optax_primal(inputs):
+    """Run the main loop, then the optional polish loop, from ``initial_guess``."""
     cost_fn, minimiser, initial_guess, batch, while_loop = inputs
     iterate, steps, converged = _optax_loop(
         cost_fn,
@@ -668,6 +681,7 @@ def _optax_primal(inputs):
             minimiser.polish_patience,
             while_loop,
         )
+        # N_iter = main steps + polish steps
         steps = steps + polish_steps
     return iterate, (steps, converged)
 
@@ -675,8 +689,9 @@ def _optax_primal(inputs):
 # global and unwrapped for the implicit adjoint, as _optax_primal
 @no_type_check
 def _optax_rewrite(root, _residual, inputs):
-    """Stationarity condition $\\nabla J(\\theta^\\star) = 0$ for the IFT."""
+    """Stationarity condition ∇_θ𝒥(θ⋆) = 0 for the implicit function theorem."""
     cost_fn, _, _, batch, *_ = inputs
+    # ∇_θ𝒥(θ⋆), the residual whose root is θ⋆
     return jax.grad(cost_fn)(root, batch)
 
 
@@ -688,14 +703,51 @@ def minimise(
     adjoint: optx.AbstractAdjoint,
     max_steps: int,
 ) -> PyTree[Array]:
-    """Run a model's ``minimiser`` on ``cost_fn(x, None)`` from ``x0``.
+    """Run a model's ``minimiser`` on 𝒥(θ) = ``cost_fn(θ, None)`` from θ⁽⁰⁾.
 
     An ``optimistix.AbstractMinimiser`` goes through ``optimistix.minimise``
-    with the model's ``max_steps`` and ``throw=False``, exactly as the
-    models always have. `OptaxMinimiser` and `OptimistixMinimiser` keep
-    their own step caps and receive the model's ``adjoint``; any other
-    [`Minimiser`][vardax.Minimiser] is called as
+    with the model's ``max_steps`` and ``throw=False``. `OptaxMinimiser` and
+    `OptimistixMinimiser` keep their own step caps and receive the model's
+    ``adjoint``; any other [`Minimiser`][vardax.Minimiser] is called as
     ``minimiser(cost_fn, x0, None)``.
+
+    Args:
+        minimiser: An ``optimistix`` solver or a [`Minimiser`][vardax.Minimiser].
+        cost_fn: Scalar cost 𝒥, called as ``cost_fn(params, None)``.
+        x0: Initial guess θ⁽⁰⁾, any pytree of arrays.
+        adjoint: How to differentiate through the minimum.
+        max_steps: Iteration cap for an ``optimistix`` solver; the other
+            minimisers keep their own.
+
+    Returns:
+        The minimiser θ⋆, with the structure of ``x0``.
+
+    Examples:
+        An ``optimistix`` solver and a vardax minimiser reach the same minimum
+        of 𝒥(θ) = ½ ‖θ − m‖²:
+
+        >>> import jax.numpy as jnp, optimistix as optx, vardax
+        >>> from vardax._src.minimisers import minimise
+        >>> m = jnp.array([1.0, -2.0])
+        >>> cost_fn = lambda x, _: 0.5 * jnp.sum((x - m) ** 2)
+        >>> theta = minimise(
+        ...     optx.BFGS(rtol=1e-6, atol=1e-6),
+        ...     cost_fn,
+        ...     jnp.zeros(2),
+        ...     adjoint=optx.ImplicitAdjoint(),
+        ...     max_steps=50,
+        ... )
+        >>> bool(jnp.allclose(theta, m, atol=1e-5))
+        True
+        >>> theta = minimise(
+        ...     vardax.OptimistixMinimiser(),
+        ...     cost_fn,
+        ...     jnp.zeros(2),
+        ...     adjoint=optx.ImplicitAdjoint(),
+        ...     max_steps=50,
+        ... )
+        >>> bool(jnp.allclose(theta, m, atol=1e-5))
+        True
     """
     if isinstance(minimiser, optx.AbstractMinimiser):
         return optx.minimise(
@@ -720,14 +772,53 @@ def minimise_with_result(
     adjoint: optx.AbstractAdjoint,
     max_steps: int,
 ) -> MinimiseResult:
-    r"""``minimise``, returning its diagnostics too.
+    """`minimise`, returning its diagnostics too.
 
-    The same dispatch and the same iterate, plus $J(\theta^\star)$,
-    $\lVert \nabla J(\theta^\star) \rVert_2$ and the step count. A
-    custom [`Minimiser`][vardax.Minimiser] does not report its steps, so
-    ``num_steps`` is ``-1`` for it. Costs one extra cost and gradient
+    The same dispatch and the same iterate θ⋆, plus 𝒥(θ⋆), ‖∇_θ𝒥(θ⋆)‖₂ and the
+    step count. A custom [`Minimiser`][vardax.Minimiser] does not report its
+    steps, so ``num_steps`` is ``-1`` for it. Costs one extra cost and gradient
     evaluation at the minimum, which is why the models' ``__call__`` uses
-    ``minimise``.
+    `minimise`.
+
+    Args:
+        minimiser: An ``optimistix`` solver or a [`Minimiser`][vardax.Minimiser].
+        cost_fn: Scalar cost 𝒥, called as ``cost_fn(params, None)``.
+        x0: Initial guess θ⁽⁰⁾, any pytree of arrays.
+        adjoint: How to differentiate through the minimum.
+        max_steps: Iteration cap for an ``optimistix`` solver; the other
+            minimisers keep their own.
+
+    Returns:
+        A [`MinimiseResult`][vardax.MinimiseResult].
+
+    Examples:
+        A custom minimiser reports ``num_steps = -1`` and no status:
+
+        >>> import jax.numpy as jnp, optimistix as optx, vardax
+        >>> from vardax._src.minimisers import minimise_with_result
+        >>> m = jnp.array([1.0, -2.0])
+        >>> cost_fn = lambda x, _: 0.5 * jnp.sum((x - m) ** 2)
+        >>> result = minimise_with_result(
+        ...     lambda cost_fn, x0, batch: m,
+        ...     cost_fn,
+        ...     jnp.zeros(2),
+        ...     adjoint=optx.ImplicitAdjoint(),
+        ...     max_steps=50,
+        ... )
+        >>> int(result.num_steps), result.converged is None
+        (-1, True)
+
+        An ``optimistix`` solver reports its own status:
+
+        >>> result = minimise_with_result(
+        ...     optx.BFGS(rtol=1e-6, atol=1e-6),
+        ...     cost_fn,
+        ...     jnp.zeros(2),
+        ...     adjoint=optx.ImplicitAdjoint(),
+        ...     max_steps=50,
+        ... )
+        >>> bool(result.converged), bool(result.grad_norm < 1e-4)
+        (True, True)
     """
     if isinstance(minimiser, optx.AbstractMinimiser):
         solution = optx.minimise(
@@ -739,6 +830,7 @@ def minimise_with_result(
             adjoint=adjoint,
             throw=False,
         )
+        # 𝒥(θ⋆) and ‖∇_θ𝒥(θ⋆)‖₂
         cost, grad_norm = _cost_and_grad_norm(cost_fn, solution.value, None)
         return MinimiseResult(
             value=solution.value,
@@ -750,6 +842,7 @@ def minimise_with_result(
     if isinstance(minimiser, OptaxMinimiser | OptimistixMinimiser):
         return minimiser.run(cost_fn, x0, None, adjoint=adjoint)
     value = minimiser(cost_fn, x0, None)
+    # 𝒥(θ⋆) and ‖∇_θ𝒥(θ⋆)‖₂
     cost, grad_norm = _cost_and_grad_norm(cost_fn, value, None)
     return MinimiseResult(
         value=value, cost=cost, grad_norm=grad_norm, num_steps=jnp.asarray(-1)
