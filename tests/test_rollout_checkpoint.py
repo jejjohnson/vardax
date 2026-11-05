@@ -22,6 +22,7 @@ import lineax as lx
 import pytest
 
 import vardax as vdx
+from vardax._src import protocols
 from vardax._src.models._rollout import checkpoint_every, rollout
 
 N_SITES, DT, FORCING = 40, 0.01, 8.0
@@ -231,3 +232,6 @@ class TestModelSlots:
     def test_protocol_conformance(self):
         assert isinstance(DiffraxDecay(), vdx.SupportsForwardAdjoint)
         assert not isinstance(_Decay(), vdx.SupportsForwardAdjoint)
+
+    def test_protocol_is_listed_in_its_module(self):
+        assert "SupportsForwardAdjoint" in protocols.__all__

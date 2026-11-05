@@ -488,6 +488,7 @@ __all__ = [
     "Prior",
     "ReducedBasis",
     "StateParameterization",
+    "SupportsForwardAdjoint",
     "TemporalPrior",
 ]
 
