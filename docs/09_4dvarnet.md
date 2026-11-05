@@ -6,8 +6,8 @@ numbering:
 # 4DVarNet (learned 4DVar)
 
 4DVarNet replaces two pieces of classical 4DVar with learned
-counterparts: the Gaussian prior $\|x - x_b\|^2_{B^{-1}}$ becomes a
-learned reconstruction $\|x - \varphi_\theta(x)\|^2$, and the inner
+counterparts: the Gaussian prior $\Vert \vect{x} - \gvect{\mu}_x \Vert^2_{\gmat{\Sigma}_x^{-1}}$ becomes a
+learned reconstruction $\Vert \vect{x} - g_\text{ae}(\vect{x}; \gvect{\theta}) \Vert_2^2$, and the inner
 gradient-descent solver becomes a learned iteration with a ConvLSTM
 gradient modulator. The result is trainable end-to-end on
 (input, target) pairs.
@@ -18,34 +18,37 @@ The "Net" naming follows Fablet et al. (2021). vardax keeps it as the name of th
 
 The variational cost is structurally familiar:
 
-$$J(x) = \alpha_\text{obs} \frac{1}{2} \|H(x) - y\|^2_{R^{-1}} + \alpha_\text{prior} \|x - \varphi_\theta(x)\|^2$$ (eq-4dvarnet-cost)
+$$\mathcal{J}(\vect{x}) = \alpha_o \frac{1}{2} \Vert h(\vect{x}) - \vect{y} \Vert^2_{\gmat{\Sigma}_\varepsilon^{-1}} + \alpha_p \Vert \vect{x} - g_\text{ae}(\vect{x}; \gvect{\theta}) \Vert_2^2$$ (eq-4dvarnet-cost)
 
-where the first term is the observation cost [](#eq-obs-cost), $\varphi_\theta$ is a learned autoencoder with parameters $\theta$, and $\alpha_\text{obs}$ and $\alpha_\text{prior}$ weight the two terms. The Gaussian background
-term $\|x - x_b\|^2_{B^{-1}}$ is **replaced** (not added). The learned
-prior is expressive enough to encode the same information that $B$ +
-$x_b$ would, plus structure that classical Gaussian priors can't
+where the first term is the observation cost [](#eq-obs-cost), $g_\text{ae}$ is a learned autoencoder with parameters $\gvect{\theta}$, and $\alpha_o$ and $\alpha_p$ weight the two terms.
+Here $\vect{x} \in \mathbb{R}^{D_x}$ is the state of a window and $\vect{y} \in \mathbb{R}^{D_y}$ its observations, $h: \mathbb{R}^{D_x} \to \mathbb{R}^{D_y}$, $\gmat{\Sigma}_\varepsilon \in \mathbb{R}^{D_y \times D_y}$, $g_\text{ae}: \mathbb{R}^{D_x} \to \mathbb{R}^{D_x}$ and $\gvect{\theta} \in \mathbb{R}^{D_\theta}$.
+The Gaussian background
+term $\Vert \vect{x} - \gvect{\mu}_x \Vert^2_{\gmat{\Sigma}_x^{-1}}$ is **replaced** (not added). The learned
+prior is expressive enough to encode the same information that $\gmat{\Sigma}_x$ +
+$\gvect{\mu}_x$ would, plus structure that classical Gaussian priors can't
 represent (multimodality, nonlinear manifolds, conditional
 dependencies).
 
 ## The learned inner solver
 
-Classical 4DVar minimises $J$ via gradient descent or a quasi-Newton
+Classical 4DVar minimises $\mathcal{J}$ via gradient descent or a quasi-Newton
 method. 4DVarNet replaces the inner step with a learned modulator:
 
-$$x_{k+1} = x_k - \Phi_\phi(\nabla_x J(x_k), h_k), \text{ for } k = 0, \ldots, K-1$$ (eq-4dvarnet-update)
+$$\vect{x}^{(i+1)} = \vect{x}^{(i)} - \alpha \Delta\vect{x}^{(i)}, \text{ with } (\Delta\vect{x}^{(i)}, \vect{c}^{(i+1)}) = g_\text{mod}(\nabla_{\vect{x}} \mathcal{J}(\vect{x}^{(i)}), \vect{x}^{(i)}, \vect{c}^{(i)}), \text{ for } i = 0, \ldots, N_\text{iter} - 1$$ (eq-4dvarnet-update)
 
-where $J$ is the cost [](#eq-4dvarnet-cost), $\Phi_\phi$ is a small neural network (ConvLSTM, MLP, or attention) with parameters $\phi$, and $h_k$ is its recurrent hidden state. The network sees the current gradient and decides how to step, so it can learn momentum, adaptive step sizes, or problem-specific preconditioning that hand-coded solvers don't capture.
+where $\mathcal{J}$ is the cost [](#eq-4dvarnet-cost), $g_\text{mod}$ is a small neural network (ConvLSTM, MLP, or attention) with parameters $\gvect{\theta}_\text{mod}$, $\vect{c}^{(i)}$ is its recurrent carry, $\alpha > 0$ is the step size on the state, and $N_\text{iter}$ is the number of solver steps. The network sees the current gradient and decides how to step, so it can learn momentum, adaptive step sizes, or problem-specific preconditioning that hand-coded solvers don't capture.
+Here $\Delta\vect{x}^{(i)} \in \mathbb{R}^{D_x}$, and the carry $\vect{c}^{(i)}$ holds a hidden and a cell tensor with `hidden_dim` channels per cell.
 
-After $K$ iterations the analysis is $x^* = x_K$. The whole pipeline (forward, gradient, modulator, update) is differentiable end-to-end.
+After $N_\text{iter}$ iterations the analysis is $\vect{x}^\star = \vect{x}^{(N_\text{iter})}$. The whole pipeline (forward, gradient, modulator, update) is differentiable end-to-end.
 
 ## Training
 
 The training objective minimises reconstruction error against
 ground-truth states:
 
-$$\mathcal{L}(\theta, \phi) = \mathbb{E}_{(y, x_\text{true})} \|x^*(\theta, \phi; y) - x_\text{true}\|^2$$ (eq-4dvarnet-loss)
+$$\mathcal{L}(\gvect{\theta}, \gvect{\theta}_\text{mod}) = \mathbb{E}_{(\vect{y}, \vect{x}_\text{true})} \Vert \vect{x}^\star(\gvect{\theta}, \gvect{\theta}_\text{mod}; \vect{y}) - \vect{x}_\text{true} \Vert_2^2$$ (eq-4dvarnet-loss)
 
-where $x^*(\theta, \phi; y)$ is the analysis after $K$ steps of [](#eq-4dvarnet-update) from the observations $y$, and $x_\text{true}$ is the ground-truth state. The training gradient $\nabla_{\theta, \phi} \mathcal{L}$ flows through
+where $\vect{x}^\star(\gvect{\theta}, \gvect{\theta}_\text{mod}; \vect{y})$ is the analysis after $N_\text{iter}$ steps of [](#eq-4dvarnet-update) from the observations $\vect{y}$, and $\vect{x}_\text{true} \in \mathbb{R}^{D_x}$ is the ground-truth state. The training gradient $\nabla_{\gvect{\theta}, \gvect{\theta}_\text{mod}} \mathcal{L}$ flows through
 the inner solver. This is where the adjoint choice (Decision D15)
 matters.
 
@@ -56,31 +59,33 @@ constructor slot. Three viable choices:
 
 | Adjoint | Memory | Convergence requirement | Notes |
 |---|---|---|---|
-| `optimistix.RecursiveCheckpointAdjoint()` | $O(K)$ checkpoints | None | Standard backprop with recursive checkpointing |
+| `optimistix.RecursiveCheckpointAdjoint()` | $O(N_\text{iter})$ checkpoints | None | Standard backprop with recursive checkpointing |
 | `vardax.adjoints.OneStepAdjoint()` | $O(1)$ | None | Bolte et al. 2023; only the last step differentiable |
 | `optimistix.ImplicitAdjoint()` | $O(1)$ | Yes | IFT-based at the fixed point; exact at convergence |
 
-**`RecursiveCheckpointAdjoint`** is the default. It backpropagates through all $K$ unrolled steps, with recursive checkpointing to bound memory, so it always works and costs $O(K)$ checkpoints.
+**`RecursiveCheckpointAdjoint`** is the default. It backpropagates through all $N_\text{iter}$ unrolled steps, with recursive checkpointing to bound memory, so it always works and costs $O(N_\text{iter})$ checkpoints.
 
-**`OneStepAdjoint`** runs $K-1$ steps with `jax.lax.stop_gradient` applied to the trajectory, then a single differentiable step, so the training gradient picks up only the last iteration's contribution. Bolte et al. (2023) prove this is exact at convergence; in practice it works well for converged or near-converged inner solvers. Its memory cost is $O(1)$, which makes it the right choice for $K \ge 20$ when memory is constrained.
+**`OneStepAdjoint`** runs $N_\text{iter} - 1$ steps with `jax.lax.stop_gradient` applied to the trajectory, then a single differentiable step, so the training gradient picks up only the last iteration's contribution. Bolte et al. (2023) prove this is exact at convergence; in practice it works well for converged or near-converged inner solvers. Its memory cost is $O(1)$, which makes it the right choice for $N_\text{iter} \ge 20$ when memory is constrained.
 
 vardax ships `OneStepAdjoint` in `vardax._src.adjoints.one_step` with
 the goal of upstreaming to `optimistix` once stable (Decision D6).
 
-**`ImplicitAdjoint`** uses the implicit function theorem at the fixed point $x^* = f(x^*; \theta)$ of the inner iteration:
+**`ImplicitAdjoint`** uses the implicit function theorem at the fixed point $\vect{x}^\star = g_\text{step}(\vect{x}^\star; \gvect{\theta})$ of the inner iteration:
 
-$$\frac{d x^*}{d \theta} = \left(I - \frac{\partial f}{\partial x}\right)^{-1} \frac{\partial f}{\partial \theta}$$ (eq-fixed-point-grad)
+$$\frac{\mathrm{d}\vect{x}^\star}{\mathrm{d}\gvect{\theta}} = \left(\mat{I} - \frac{\partial g_\text{step}}{\partial \vect{x}}\right)^{-1} \frac{\partial g_\text{step}}{\partial \gvect{\theta}}$$ (eq-fixed-point-grad)
 
-where $f$ is the inner-step map [](#eq-4dvarnet-update) and both partial derivatives are taken at $x^*$. It is the implicit gradient [](#eq-implicit-grad) of chapter 12 with the stationarity condition replaced by the fixed-point residual $x - f(x; \theta) = 0$. Memory $O(1)$, gradient exact at
-convergence. Requires the inner solver to actually converge; if $K$ is
+where $g_\text{step}: \mathbb{R}^{D_x} \to \mathbb{R}^{D_x}$ is the inner-step map [](#eq-4dvarnet-update), $\gvect{\theta}$ stands for either set of weights, and both partial derivatives are taken at $\vect{x}^\star$. It is the implicit gradient [](#eq-implicit-grad) of chapter 12 with the stationarity condition replaced by the fixed-point residual $\vect{x} - g_\text{step}(\vect{x}; \gvect{\theta}) = \mathbf{0}$. Memory $O(1)$, gradient exact at
+convergence. Requires the inner solver to actually converge; if $N_\text{iter}$ is
 too small, the IFT gradient is wrong. Use when the inner iteration is
 known to be a contraction.
 
 ## Implementation in vardax
 
-The example below trains a small `FourDVarNet2D` on $S = 4$ windows of $T = 3$ frames on an $8 \times 8$ grid, for a few optimiser steps only.
-The truth is a travelling wave $x_\text{true}(s, t, y, x) = \sin(0.8 y + 0.3 t + \varphi_s)$ with a random phase $\varphi_s$ per window, about half the cells are observed with mask $m$, and the observations are $m \odot x_\text{true}$.
-The model's cost is $J(x) = \|m \odot (x - y)\|^2 + \lambda \|x - \varphi_\theta(x)\|^2$, which is [](#eq-4dvarnet-cost) with $H(x) = m \odot x$, $R = I$ and no factor ½, and the solver runs [](#eq-4dvarnet-update) with the modulator output scaled by a step size $\alpha$.
+The example below trains a small `FourDVarNet2D` on $N_\text{batch} = 4$ windows of 3 times ($T = 2$ steps) on an $H \times W = 8 \times 8$ grid, for a few optimiser steps only.
+The truth is a travelling wave $x_\text{true}(n, t, i) = \sin(0.8 i + 0.3 t + \xi_n)$, constant along the columns, with a random phase $\xi_n$ per window $n$ and $i$ the row, about half the cells are observed with mask $\vect{m}$, and the observations are $\vect{m} \odot \vect{x}_\text{true}$.
+The model's cost is $\mathcal{J}(\vect{x}) = \mathcal{J}_o(\vect{x}) + \beta_p \mathcal{J}_p(\vect{x})$ with $\mathcal{J}_o = \Vert \vect{m} \odot (\vect{x} - \vect{y}) \Vert_2^2$ and $\mathcal{J}_p = \Vert \vect{x} - g_\text{ae}(\vect{x}; \gvect{\theta}) \Vert_2^2$, which is [](#eq-4dvarnet-cost) with $h(\vect{x}) = \vect{m} \odot \vect{x}$, $\gmat{\Sigma}_\varepsilon = \mat{I}$ and no factor ½, and the solver runs [](#eq-4dvarnet-update) with the modulator output scaled by a step size $\alpha$.
+In the solver $\mathcal{J}_o$ and $\mathcal{J}_p$ are sums of squares over all entries; `obs_cost_1d`, `obs_cost_2d`, `prior_cost` and `variational_cost` return the corresponding means instead.
+Here $\vect{m}, \vect{y}, \vect{x} \in \mathbb{R}^{D_x}$ with $D_x = (T + 1) H W$, so $D_y = D_x$, and $\beta_p \geq 0$ is the prior weight.
 
 ```{code-block} python
 :caption: Trains a FourDVarNet2D, whose solver iterates [](#eq-4dvarnet-update) on the cost [](#eq-4dvarnet-cost), by minimising the reconstruction loss [](#eq-4dvarnet-loss) on travelling-wave windows.
@@ -92,34 +97,41 @@ import jax.numpy as jnp
 import optax
 import vardax as vdx
 
-# Shapes: S = 4 samples; T = 3 times; Y = 8 rows; X = 8 columns
+# Shapes: N_batch = 4 windows; T + 1 = 3 times; H = 8 rows; W = 8 columns
 
 key_model, key_phase, key_mask = jax.random.split(jax.random.PRNGKey(0), 3)
 
-rows = jnp.arange(8.0)  # (Y,)
-times = jnp.arange(3.0)  # (T,)
-# φₛ ~ U(0, 2π), one phase per window
-phase = jax.random.uniform(key_phase, (4,), maxval=2 * jnp.pi)  # (S,)
-# 0.8 y
-row_phase = 0.8 * rows  # (Y,)
+rows = jnp.arange(8.0)  # (H,)
+times = jnp.arange(3.0)  # (T + 1,)
+# ξ_n ~ U(0, 2π), one phase per window
+phase = jax.random.uniform(key_phase, (4,), maxval=2 * jnp.pi)  # (N_batch,)
+# 0.8 i
+row_phase = 0.8 * rows  # (H,)
 # 0.3 t
-time_phase = 0.3 * times  # (T,)
-# 0.8 y + 0.3 t + φₛ
-wave_phase = einx.add("y, t, s -> s t y", row_phase, time_phase, phase)  # (S, T, Y)
-# x_true(s, t, y) = sin(0.8 y + 0.3 t + φₛ)
-wave = jnp.sin(wave_phase)  # (S, T, Y)
-# the wave is constant along x
-target = einx.id("s t y -> s t y x", wave, x=8)  # (S, T, Y) → (S, T, Y, X)
+time_phase = 0.3 * times  # (T + 1,)
+# 0.8 i + 0.3 t + ξ_n
+wave_phase = einx.add(  # (N_batch, T + 1, H)
+    "y, t, s -> s t y", row_phase, time_phase, phase
+)
+# x_true(n, t, i) = sin(0.8 i + 0.3 t + ξ_n)
+wave = jnp.sin(wave_phase)  # (N_batch, T + 1, H)
+# the wave is constant along the columns
+target = einx.id(  # (N_batch, T + 1, H) → (N_batch, T + 1, H, W)
+    "s t y -> s t y x", wave, x=8
+)
 # m ~ Bernoulli(0.5)
-observed = jax.random.bernoulli(key_mask, 0.5, (4, 3, 8, 8))  # (S, T, Y, X)
-mask = observed.astype(jnp.float32)  # (S, T, Y, X)
+observed = jax.random.bernoulli(  # (N_batch, T + 1, H, W)
+    key_mask, 0.5, (4, 3, 8, 8)
+)
+mask = observed.astype(jnp.float32)  # (N_batch, T + 1, H, W)
 # y = m ⊙ x_true
-obs = mask * target  # (S, T, Y, X)
+obs = mask * target  # (N_batch, T + 1, H, W)
 
 # today (vardax)
 batch = vdx.Batch2D(input=obs, mask=mask, target=target)
 # today (vardax)
-# x_{k+1} = x_k − α Φ_ϕ(∇J(x_k), h_k), K = 3, with a bilinear autoencoder φ_θ
+# x⁽ⁱ⁺¹⁾ = x⁽ⁱ⁾ − α Δx⁽ⁱ⁾, (Δx⁽ⁱ⁾, c⁽ⁱ⁺¹⁾) = g_mod(∇ₓ𝒥(x⁽ⁱ⁾), x⁽ⁱ⁾, c⁽ⁱ⁾)
+# N_iter = 3, with a bilinear autoencoder g_ae
 model = vdx.FourDVarNet2D(
     n_time=3,
     height=8,
@@ -135,14 +147,14 @@ model = vdx.FourDVarNet2D(
 
 # today (optax)
 optimizer = optax.adam(1e-3)
-# the trainable leaves (θ, ϕ)
+# the trainable leaves (θ, θ_mod)
 params = eqx.filter(model, eqx.is_array)
 # today (optax)
 opt_state = optimizer.init(params)
 losses = []
 for _ in range(20):
     # today (vardax)
-    # (θ, ϕ) ← adam step on ℒ(θ, ϕ) = mean (x*(θ, ϕ; y) − x_true)²
+    # (θ, θ_mod) ← adam step on ℒ(θ, θ_mod) = mean((x⋆ − x_true)²)
     model, opt_state, loss = vdx.train_step(model, batch, optimizer, opt_state)
     losses.append(float(loss))
 print(f"loss {losses[0]:.3f} -> {losses[-1]:.3f}")
@@ -160,11 +172,11 @@ vardax ships these priors:
 
 | Prior | Form | When |
 |---|---|---|
-| `BilinAEPrior1D/2D/2DMultivar` | $\varphi(x) = \text{decode}(\text{ReLU}(Ax) \odot \tanh(Bx))$ | Standard 4DVarNet starting point |
+| `BilinAEPrior1D/2D/2DMultivar` | $g_\text{ae}(\vect{x}) = g_\text{dec}(\text{ReLU}(\mat{W}_a \vect{x}) \odot \tanh(\mat{W}_b \vect{x}))$ | Standard 4DVarNet starting point |
 | `ConvAEPrior1D` | Periodic 1D convolutional AE | Periodic 1D fields (Lorenz-96) |
 | `MLPAEPrior1D` | Dense MLP AE | Low-dimensional states (Lorenz-63) |
-| `IdentityPrior` | $\varphi(x) = x$ | Pure obs-driven baseline; recovers classical 4DVar with a fixed-step modulator |
-| `DynamicalPrior` | $\varphi(x) = M^n(x)$ via somax / plumax forward | Physics-informed 4DVarNet |
+| `IdentityPrior` | $g_\text{ae}(\vect{x}) = \vect{x}$ | Pure obs-driven baseline; recovers classical 4DVar with a fixed-step modulator |
+| `DynamicalPrior` | $g_\text{ae}(\vect{x}) = f^n(\vect{x})$ via somax / plumax forward | Physics-informed 4DVarNet |
 
 `DynamicalPrior` is interesting: it wraps any
 `pipekit_cycle.ForwardModel` as the variational prior, so the regulariser
@@ -181,44 +193,47 @@ The modulators, shipped and planned:
 | `ConvLSTMGradMod1D/2D` | ConvLSTM over spatial dims, recurrent over solver iterations |
 | `MLPGradMod` | Dense MLP, dimension-agnostic via flatten (planned) |
 | `AttentionGradMod` | Self-attention over spatial axis (planned) |
-| `IdentityGradMod` | $\text{update} = -\alpha \cdot \text{grad}$, classical fixed-step descent (planned) |
+| `IdentityGradMod` | $\Delta\vect{x} = \nabla_{\vect{x}} \mathcal{J}$, classical fixed-step descent with step $\alpha$ (planned) |
 
 Notebook [11](notebooks/11_gradient_learning_L63.ipynb) trains a `ConvLSTMGradMod1D` on its own, with the prior frozen, and compares it with the fixed-step baseline of the next section across solver-step budgets.
 
 ## Linear-Gaussian agreement
 
 `IdentityPrior` with a fixed-step modulator and many solver steps is the classical baseline, useful for checking agreement with the linear-Gaussian limit (Decision D14 invariant).
-With `IdentityPrior` the prior cost $\|x - \varphi(x)\|^2$ is zero, and a modulator that passes the gradient through unchanged turns the solver into fixed-step gradient descent on $J(x) = \|m \odot (x - y)\|^2$.
-No such modulator ships, so the block defines one and hands it to `solve_4dvarnet_1d`; with step $\alpha = 0.05$ and $K = 200$ steps it converges to $m \odot y$.
-`OptimalInterpolation` with $x_b = 0$, $B = I$ and $R = \sigma^2 I$ gives the same field in the limit $\sigma \to 0$; here $\sigma = 0.01$ on $N = 8$ cells, about 60% of them observed.
+With `IdentityPrior` the prior cost $\Vert \vect{x} - g_\text{ae}(\vect{x}) \Vert_2^2$ is zero, and a modulator that passes the gradient through unchanged turns the solver into fixed-step gradient descent on $\mathcal{J}(\vect{x}) = \Vert \vect{m} \odot (\vect{x} - \vect{y}) \Vert_2^2$.
+No such modulator ships, so the block defines one and hands it to `solve_4dvarnet_1d`; with step $\alpha = 0.05$ and $N_\text{iter} = 200$ steps it converges to $\vect{m} \odot \vect{y}$.
+`OptimalInterpolation` with $\gvect{\mu}_x = \mathbf{0}$, $\gmat{\Sigma}_x = \mat{I}$ and $\gmat{\Sigma}_\varepsilon = \sigma^2 \mat{I}$ gives the same field in the limit $\sigma \to 0$; here $\sigma = 0.01$ on $N_{\Omega_x} = 8$ cells, about 60% of them observed.
+All of these are in $\mathbb{R}^{D_x}$ with $D_x = N_{\Omega_x}$, since the window holds a single time ($T = 0$).
 The block continues the one above.
 
 ```{code-block} python
-:caption: Runs [](#eq-4dvarnet-update) with Φ(∇J, h) = ∇J and an identity prior, and checks it against the BLUE mean [](#eq-blue-mean).
+:caption: Runs [](#eq-4dvarnet-update) with g_mod(∇𝒥, x, c) = (∇𝒥, c) and an identity prior, and checks it against the BLUE mean [](#eq-blue-mean).
 :label: code-4dvarnet-oi-agreement
 from typing import Any
 
 import lineax as lx
 from jaxtyping import Array, Float
 
-# Shapes: S = 1 sample; T = 1 time; N = 8 grid cells
+# Shapes: N_batch = 1 window; T + 1 = 1 time; N_Ωx = 8 grid cells; D_x = N_Ωx
 
 key_truth, key_cells = jax.random.split(jax.random.PRNGKey(1))
 state_structure = jax.ShapeDtypeStruct((1, 8), jnp.float32)
 
-# B = I
-prior_cov = lx.IdentityLinearOperator(state_structure)  # (T N, T N) op
-# R = σ² I, σ = 0.01; tagged PSD so the default CG solve accepts it
-obs_cov = lx.TaggedLinearOperator(  # (T N, T N) PSD op
+# Σ_x = I
+prior_cov = lx.IdentityLinearOperator(state_structure)  # (D_x, D_x) op
+# Σ_ε = σ² I, σ = 0.01; tagged PSD so the default CG solve accepts it
+obs_cov = lx.TaggedLinearOperator(  # (D_x, D_x) PSD op
     jnp.float32(1e-4) * prior_cov, lx.positive_semidefinite_tag
 )
 # x_true ~ 𝒩(0, I)
-truth = jax.random.normal(key_truth, (1, 1, 8))  # (S, T, N)
+truth = jax.random.normal(key_truth, (1, 1, 8))  # (N_batch, T + 1, N_Ωx)
 # m ~ Bernoulli(0.6)
-observed_cells = jax.random.bernoulli(key_cells, 0.6, (1, 1, 8))  # (S, T, N)
-cell_mask = observed_cells.astype(jnp.float32)  # (S, T, N)
+observed_cells = jax.random.bernoulli(  # (N_batch, T + 1, N_Ωx)
+    key_cells, 0.6, (1, 1, 8)
+)
+cell_mask = observed_cells.astype(jnp.float32)  # (N_batch, T + 1, N_Ωx)
 # y = m ⊙ x_true
-line_obs = cell_mask * truth  # (S, T, N)
+line_obs = cell_mask * truth  # (N_batch, T + 1, N_Ωx)
 # today (vardax)
 line_batch = vdx.Batch1D(input=line_obs, mask=cell_mask)
 
@@ -230,18 +245,18 @@ class FixedStepGradMod(eqx.Module):
     def __call__(
         self, grad: Float[Array, "s t n"], state: Float[Array, "s t n"], carry: Any
     ) -> tuple[Float[Array, "s t n"], Any]:
-        # Φ(∇J, h) = ∇J
+        # (Δx, c′) = (∇ₓ𝒥, c)
         return grad, carry
 
 
 # today (vardax)
-# φ(x) = x, so ‖x − φ(x)‖² = 0
+# g_ae(x) = x, so 𝒥_p = ‖x − g_ae(x)‖² = 0
 identity_prior = vdx.IdentityPrior()
 # user
 grad_mod = FixedStepGradMod()
 # today (vardax)
-# x_{k+1} = x_k − α ∇J(x_k), with J(x) = ‖m ⊙ (x − y)‖²
-descent = vdx.solve_4dvarnet_1d(  # → (S, T, N)
+# x⁽ⁱ⁺¹⁾ = x⁽ⁱ⁾ − α ∇ₓ𝒥(x⁽ⁱ⁾), with 𝒥(x) = ‖m ⊙ (x − y)‖²
+descent = vdx.solve_4dvarnet_1d(  # → (N_batch, T + 1, N_Ωx)
     line_batch,
     identity_prior,
     grad_mod,
@@ -250,7 +265,7 @@ descent = vdx.solve_4dvarnet_1d(  # → (S, T, N)
     alpha=0.05,
 )
 # today (vardax)
-# p(x) = 𝒩(0, B), p(y | x) = 𝒩(m ⊙ x, R)
+# p(x) = 𝒩(μ_x, Σ_x), p(y | x) = 𝒩(m ⊙ x, Σ_ε)
 optimal_interpolation = vdx.OptimalInterpolation(
     obs_op=vdx.MaskedIdentity(),
     prior_mean=jnp.zeros((1, 8)),
@@ -258,8 +273,8 @@ optimal_interpolation = vdx.OptimalInterpolation(
     obs_cov_op=obs_cov,
 )
 # today (vardax)
-# x_a = x_b + B Hᵀ (H B Hᵀ + R)⁻¹ (y − H x_b)
-closed_form = optimal_interpolation(line_batch)  # → (S, T, N)
+# μ_x|y = μ_x + Σ_x Hᵀ (H Σ_x Hᵀ + Σ_ε)⁻¹ (y − H μ_x)
+closed_form = optimal_interpolation(line_batch)  # → (N_batch, T + 1, N_Ωx)
 print(bool(jnp.allclose(descent, closed_form, atol=1e-2)))
 ```
 
@@ -272,7 +287,7 @@ This is the floor. A trained `FourDVarNet` with a non-trivial prior and grad mod
 Use `FourDVarNet` when:
 
 - You have a training set of (observation, ground-truth) pairs
-- The classical $B$ is hard to specify or known to be inadequate
+- The classical $\gmat{\Sigma}_x$ is hard to specify or known to be inadequate
 - The regime is data-rich and learning-friendly (smooth manifolds, no
   catastrophic distribution shift between train and test)
 
@@ -284,42 +299,42 @@ Don't use `FourDVarNet` when:
 
 ## Posterior
 
-`LaplaceCovariance` builds its Hessian from the model's `obs_op`, $B$ and $R$, which `FourDVarNet2D` does not have, so it raises `AttributeError` on this model.
-The Laplace approximation of the learned cost is assembled by hand instead: with residuals $r(x) = (m \odot (x - y), \sqrt{\lambda} (x - \varphi_\theta(x)))$ and Jacobian $J_r$ at the analysis $x^*$, the Gauss-Newton Hessian is $\nabla^2 J \approx 2 J_r^\top J_r$ and the Laplace covariance [](#eq-laplace-cov) is $P^* = (\nabla^2 J)^{-1}$, applied by a CG solve.
-The block continues the first one on this page, for its first window, with $\lambda = 1$.
+`LaplaceCovariance` builds its Hessian from the model's `obs_op`, $\gmat{\Sigma}_x$ and $\gmat{\Sigma}_\varepsilon$, which `FourDVarNet2D` does not have, so it raises `AttributeError` on this model.
+The Laplace approximation of the learned cost is assembled by hand instead: with the stacked residual $\vect{r}(\vect{x}) = (\vect{m} \odot (\vect{x} - \vect{y}), \sqrt{\beta_p} (\vect{x} - g_\text{ae}(\vect{x}; \gvect{\theta}))) \in \mathbb{R}^{2 D_x}$ and its Jacobian $\mat{J}_r \in \mathbb{R}^{2 D_x \times D_x}$ at the analysis $\vect{x}^\star$, the Gauss-Newton Hessian is $\nabla^2_{\vect{x}} \mathcal{J} \approx 2 \mat{J}_r^\top \mat{J}_r$ and the Laplace covariance [](#eq-laplace-cov) is $\gmat{\Sigma}_{x \mid y} = (\nabla^2_{\vect{x}} \mathcal{J})^{-1}$, applied by a CG solve.
+The block continues the first one on this page, for its first window, with $\beta_p = 1$ and $D_x = (T + 1) H W$.
 
 ```{code-block} python
 :caption: Applies the Laplace covariance [](#eq-laplace-cov) of the learned cost [](#eq-4dvarnet-cost), with a Gauss-Newton Hessian built by hand, to one field.
 :label: code-4dvarnet-laplace
-# Shapes: S = 1 sample; T = 3 times; Y = 8 rows; X = 8 columns
+# Shapes: N_batch = 1 window; T + 1 = 3 times; H = 8 rows; W = 8 columns
 
-first_obs = obs[:1]  # (S, T, Y, X)
-first_mask = mask[:1]  # (S, T, Y, X)
+first_obs = obs[:1]  # (N_batch, T + 1, H, W)
+first_mask = mask[:1]  # (N_batch, T + 1, H, W)
 # today (vardax)
 one_window = vdx.Batch2D(input=first_obs, mask=first_mask)
 # today (vardax)
-# x* = x_K
-analysis = model(one_window)  # → (S, T, Y, X)
+# x⋆ = x^(N_iter)
+analysis = model(one_window)  # → (N_batch, T + 1, H, W)
 
 
 # user
 def residuals(
     state: Float[Array, "s t y x"],
 ) -> tuple[Float[Array, "s t y x"], Float[Array, "s t y x"]]:
-    """The residuals r(x) = (m ⊙ (x − y), √λ (x − φ_θ(x))), λ = 1."""
+    """The residuals r(x) = (m ⊙ (x − y), √β_p (x − g_ae(x; θ))), β_p = 1."""
     # x − y
-    misfit = state - one_window.input  # (S, T, Y, X)
+    misfit = state - one_window.input  # (N_batch, T + 1, H, W)
     # r_o = m ⊙ (x − y)
-    obs_residual = one_window.mask * misfit  # (S, T, Y, X)
+    obs_residual = one_window.mask * misfit  # (N_batch, T + 1, H, W)
     # today (vardax)
-    # φ_θ(x)
-    reconstruction = model.prior(state)  # (S, T, Y, X)
-    # r_p = √λ (x − φ_θ(x)), λ = 1
-    prior_residual = state - reconstruction  # (S, T, Y, X)
+    # x̂ = g_ae(x; θ)
+    reconstruction = model.prior(state)  # (N_batch, T + 1, H, W)
+    # r_p = √β_p (x − x̂), β_p = 1
+    prior_residual = state - reconstruction  # (N_batch, T + 1, H, W)
     return obs_residual, prior_residual
 
 
-# δx ↦ J_r δx at x*
+# δx ↦ J_r δx at x⋆
 _, residual_jvp = jax.linearize(residuals, analysis)
 # δr ↦ J_rᵀ δr
 residual_vjp = jax.linear_transpose(residual_jvp, analysis)
@@ -327,26 +342,26 @@ residual_vjp = jax.linear_transpose(residual_jvp, analysis)
 
 # user
 def precision_mv(direction: Float[Array, "s t y x"]) -> Float[Array, "s t y x"]:
-    """The Gauss-Newton Hessian product ∇²J δx ≈ 2 J_rᵀ J_r δx."""
+    """The Gauss-Newton Hessian product ∇²ₓ𝒥 δx ≈ 2 J_rᵀ J_r δx."""
     # J_r δx
     residual_direction = residual_jvp(direction)
     # J_rᵀ J_r δx
-    (pulled_back,) = residual_vjp(residual_direction)  # (S, T, Y, X)
-    # ∇²J δx ≈ 2 J_rᵀ J_r δx
-    return 2.0 * pulled_back  # (S, T, Y, X)
+    (pulled_back,) = residual_vjp(residual_direction)  # (N_batch, T + 1, H, W)
+    # ∇²ₓ𝒥 δx ≈ 2 J_rᵀ J_r δx
+    return 2.0 * pulled_back  # (N_batch, T + 1, H, W)
 
 
 analysis_structure = jax.ShapeDtypeStruct(analysis.shape, analysis.dtype)
-# ∇²J ≈ 2 J_rᵀ J_r
-posterior_precision = lx.FunctionLinearOperator(  # (S T Y X, S T Y X) PSD op
+# Λ_x|y = ∇²ₓ𝒥 ≈ 2 J_rᵀ J_r
+posterior_precision = lx.FunctionLinearOperator(  # (D_x, D_x) PSD op
     precision_mv, analysis_structure, lx.positive_semidefinite_tag
 )
 # 1
-ones = jnp.ones_like(analysis)  # (S, T, Y, X)
+ones = jnp.ones_like(analysis)  # (N_batch, T + 1, H, W)
 precision_solver = lx.CG(rtol=1e-5, atol=1e-5, max_steps=500)
 # today (lineax)
-# P* 1 = (∇²J)⁻¹ 1, one matrix-free solve
-spread = lx.linear_solve(  # (S, T, Y, X) → (S, T, Y, X)
+# Σ_x|y 1 = (∇²ₓ𝒥)⁻¹ 1, one matrix-free solve
+spread = lx.linear_solve(  # (N_batch, T + 1, H, W) → (N_batch, T + 1, H, W)
     posterior_precision, ones, solver=precision_solver
 )
 print(spread.value.shape, int(spread.stats["num_steps"]))
