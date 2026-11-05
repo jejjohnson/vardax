@@ -1,21 +1,11 @@
-r"""Amortized inference (Epic 8 / Decision D12).
+"""Amortized inference: a posterior q(x | y; ν) that maps observations to states.
 
-Learns a conditional density $q_\phi(x \mid y)$ that maps
-observations directly to posteriors. Trained by simulation: sample
-$x \sim p(x)$, simulate $y \mid x$, train
-$q_\phi$ to recover $x$ from $y$. Per-event inference
-is a single forward pass — the cost amortises over many events.
-
-Three head choices via ``AmortizedConfig.head_type``:
-
-- ``"regression"`` — Gaussian head ``(μ_φ(y), Σ_φ(y))``. Cheapest.
-- ``"flow"`` — Conditional normalising flow. Exact density, exact
-  samples. **Stub** — requires ``gauss_flows``.
-- ``"score"`` — Score-based diffusion. Sampling-only, handles
-  multimodal posteriors. **Stub** — pending diffrax reverse-SDE.
-
-Validation gates (six-step cycle, Decision D12) live in
-``vardax.utils.validation``.
+Training is by simulation: draw x ∼ p(x), simulate y | x, and fit ν to recover x
+from y. Inference per event is then one forward pass. The head is chosen by
+``AmortizedConfig.head_type``: ``"regression"`` is a diagonal Gaussian head,
+``"flow"`` a conditional normalising flow (stub, needs ``gauss_flows``) and
+``"score"`` a score-based diffusion head (stub, pending a diffrax reverse SDE).
+The validation gates of the six-step cycle live in ``vardax.utils.validation``.
 """
 
 from .config import AmortizedConfig

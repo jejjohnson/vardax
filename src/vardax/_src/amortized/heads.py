@@ -1,21 +1,10 @@
-"""Density heads for ``AmortizedPosterior``.
+"""Density heads q(x | c; ν) for ``AmortizedPosterior``.
 
-Three head variants per the design (chapter 10):
-
-- ``RegressionHead`` — Gaussian ``q_φ(x|y) = N(μ_φ(y), Σ_φ(y))`` with
-  diagonal covariance. Fully implemented.
-- ``ConditionalFlowHead`` — normalising flow. Requires ``gauss_flows``;
-  ships as a stub until that dependency lands.
-- ``ScoreDiffusionHead`` — score-based diffusion. Stub pending the
-  diffrax-based reverse-SDE pipeline.
-
-Heads expose three methods:
-
-- ``map_estimate(ctx)`` — mode of ``q_φ(x|ctx)``.
-- ``sample(ctx, key, n)`` — ``n`` posterior samples shaped
-  ``(n, *state_shape)``.
-- ``log_prob(x, ctx)`` — scalar log-density of ``x`` under ``q_φ(·|ctx)``.
-  ``ScoreDiffusionHead.log_prob`` raises ``NotImplementedError``.
+``RegressionHead`` is a diagonal Gaussian and is fully implemented.
+``ConditionalFlowHead`` (needs ``gauss_flows``) and ``ScoreDiffusionHead``
+(pending a diffrax reverse-SDE pipeline) are stubs that raise on construction.
+Heads expose ``map_estimate(ctx)``, ``sample(ctx, key, n)`` and
+``log_prob(x, ctx)``.
 """
 
 from __future__ import annotations
@@ -32,36 +21,34 @@ _LOG_2PI = math.log(2.0 * math.pi)
 
 
 class RegressionHead(eqx.Module):
-    r"""Gaussian regression head: ``q_φ(x|y) = N(μ_φ(y), diag(σ²_φ(y)))``.
+    """Gaussian regression head with diagonal covariance.
 
-    $$
-    q_\phi(x \mid y) = \mathcal{N}(\mu_\phi(y), \mathrm{diag}\,\sigma^2_\phi(y))
-    $$
+        q(x | c; ν) = 𝒩(x; μ(c; ν), diag(σ²(c; ν)))
+        log q(x | c; ν) = −½ ∑ᵢ [(xᵢ − μᵢ)² / σᵢ² + log σᵢ² + log 2π]
 
-    Two MLPs share the context: one for the mean, one for the log
-    variance. Outputs are reshaped to the user-specified
-    ``state_shape``.
+    Two MLPs share the context c: one for the mean μ and one for the log
+    variance log σ². Their outputs are laid out on ``state_shape``.
 
     Algorithm:
-        1. Map the context to the flat mean $\mu$ and log variance
-           $\log \sigma^2$ with the two MLPs, and reshape them to ``state_shape``.
-        2. ``map_estimate`` returns $\mu$.
-        3. ``sample`` returns $\mu + \sigma \odot \varepsilon$ with
-           $\varepsilon \sim \mathcal{N}(0, I)$.
-        4. ``log_prob`` returns the diagonal-Gaussian log-density summed over
-           all state entries.
+        1. Map c to the flat μ and log σ² with the two MLPs and lay them out on
+           ``state_shape``.
+        2. ``map_estimate`` returns μ.
+        3. ``sample`` returns x = μ + σ ⊙ z with σ = exp(½ log σ²) and
+           z ∼ 𝒩(0, I).
+        4. ``log_prob`` returns the log-density above, summed over all state
+           entries.
 
     Args:
-        context_dim: Dimension of the context vector from the encoder.
-        state_shape: Shape of a single posterior sample (e.g.
-            ``(T, N)`` for ``Batch1D`` targets).
+        context_dim: Length of the context vector c from the encoder.
+        state_shape: Shape of a single posterior sample x (e.g. ``(T, N)`` for
+            ``Batch1D`` targets).
         hidden_dim: Width of the MLP hidden layers.
         depth: Number of hidden layers of each MLP.
         key: PRNG key for the MLP weights.
 
     Attributes:
-        mlp_mu: MLP from context to flat mean (size ``prod(state_shape)``).
-        mlp_log_var: MLP from context to flat log variance.
+        mlp_mu: MLP from c to the flat mean μ (size ``prod(state_shape)``).
+        mlp_log_var: MLP from c to the flat log variance log σ².
 
     Examples:
         >>> import jax
@@ -102,9 +89,11 @@ class RegressionHead(eqx.Module):
         key: PRNGKeyArray,
     ) -> None:
         self.state_shape = tuple(state_shape)
+        # Product of the state axes: size of the flat MLP output.
         flat_dim = 1
         for dim_size in self.state_shape:
             flat_dim *= dim_size
+        # One key per MLP, so the mean and log-variance weights are independent.
         key_mean, key_log_var = jax.random.split(key)
         self.mlp_mu = eqx.nn.MLP(
             in_size=context_dim,
@@ -122,6 +111,8 @@ class RegressionHead(eqx.Module):
         )
 
     def map_estimate(self, ctx: Float[Array, " D"]) -> Float[Array, ...]:
+        """Return the mode μ(c; ν), which equals the mean of a Gaussian."""
+        # μ = lay_out(MLP_μ(c))
         return einx.id("(s...) -> s...", self.mlp_mu(ctx), s=self.state_shape)
 
     def sample(
@@ -130,12 +121,16 @@ class RegressionHead(eqx.Module):
         key: PRNGKeyArray,
         n: int,
     ) -> Float[Array, ...]:
+        """Draw ``n`` samples x = μ + σ ⊙ z, shaped ``(n, *state_shape)``."""
+        # μ = lay_out(MLP_μ(c))
         mean = einx.id("(s...) -> s...", self.mlp_mu(ctx), s=self.state_shape)
+        # log σ² = lay_out(MLP_logσ²(c))
         log_var = einx.id("(s...) -> s...", self.mlp_log_var(ctx), s=self.state_shape)
         # σ = exp(½ log σ²)
         std = jnp.exp(0.5 * log_var)
+        # z ∼ 𝒩(0, I), one draw per sample
         noise = jax.random.normal(key, (n, *self.state_shape))
-        # x = μ + σ ⊙ ε
+        # x = μ + σ ⊙ z
         return mean + std * noise
 
     def log_prob(
@@ -143,21 +138,28 @@ class RegressionHead(eqx.Module):
         x: Float[Array, ...],
         ctx: Float[Array, " D"],
     ) -> Float[Array, ""]:
+        """Return log q(x | c; ν), summed over every state entry."""
+        # μ = lay_out(MLP_μ(c))
         mean = einx.id("(s...) -> s...", self.mlp_mu(ctx), s=self.state_shape)
+        # log σ² = lay_out(MLP_logσ²(c))
         log_var = einx.id("(s...) -> s...", self.mlp_log_var(ctx), s=self.state_shape)
-        # log N(x | mu, diag(exp(log_var))) — sum over state dims.
-        return -0.5 * jnp.sum(
-            ((x - mean) ** 2) * jnp.exp(-log_var) + log_var + _LOG_2PI
-        )
+        # (x − μ)²
+        squared_error = (x - mean) ** 2
+        # σ⁻² = exp(−log σ²)
+        inverse_variance = jnp.exp(-log_var)
+        # (x − μ)² / σ² + log σ² + log 2π
+        terms = squared_error * inverse_variance + log_var + _LOG_2PI
+        # log q = −½ ∑ᵢ [(xᵢ − μᵢ)² / σᵢ² + log σᵢ² + log 2π]
+        return -0.5 * jnp.sum(terms)
 
 
 class ConditionalFlowHead(eqx.Module):
-    r"""Conditional normalising flow head (stub).
+    """Conditional normalising flow head (stub).
 
-    Implements $x = f_\phi(z; c_\psi(y))$ with $z \sim \mathcal{N}(0, I)$. Exact
-    density via change-of-variables. Requires ``gauss_flows`` for the
-    flow primitives; ships as a stub until that dependency is added to
-    ``pyproject.toml``.
+    The planned head is x = g_flow(z; c, ν) with z ∼ 𝒩(0, I), whose density
+    follows from the change of variables. It needs ``gauss_flows`` for the flow
+    primitives. This class is a stub that raises ``NotImplementedError`` on
+    construction until that dependency is added to ``pyproject.toml``.
 
     Examples:
         Constructing the stub raises until the dependency lands:
@@ -178,11 +180,11 @@ class ConditionalFlowHead(eqx.Module):
 
 
 class ScoreDiffusionHead(eqx.Module):
-    r"""Score-based diffusion head (stub).
+    """Score-based diffusion head (stub).
 
-    Learns $s_\phi(x, t \mid y) \approx \nabla_x \log p_t(x \mid y)$; samples via
-    reverse SDE solved with diffrax. Ships as a stub pending the reverse-SDE
-    pipeline.
+    The planned head learns s(x, t | y; ν) ≈ ∇ₓ log p_t(x | y) and samples by a
+    reverse SDE solved with diffrax. This class is a stub that raises
+    ``NotImplementedError`` on construction, pending the reverse-SDE pipeline.
 
     Examples:
         Constructing the stub raises until the pipeline lands:

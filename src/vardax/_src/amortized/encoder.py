@@ -1,15 +1,7 @@
-"""Observation encoders for ``AmortizedPosterior``.
+"""Observation encoders c = g_enc(y, m; ν) for ``AmortizedPosterior``.
 
-The encoder maps a single sample's ``(input, mask)`` to a context
-vector consumed by the head. Vardax ships two reference encoders:
-
-- ``IdentityObsEncoder`` — concatenates ``input`` and ``mask`` and
-  flattens. No learned parameters; useful as a baseline.
-- ``MLPObsEncoder`` — small MLP, trainable. Sensible default for
-  small-to-moderate state sizes.
-
-Users are encouraged to provide custom encoders (Conv, attention, ...)
-for higher-dimensional inputs.
+An encoder maps one sample's ``(input, mask)`` to the context vector c that the
+head consumes. Custom encoders (convolutional, attention) can replace these.
 """
 
 from __future__ import annotations
@@ -22,11 +14,15 @@ from vardax._src.utils.shapes import flatten
 
 
 class IdentityObsEncoder(eqx.Module):
-    r"""Concatenate ``input`` and ``mask`` into a flat context vector.
+    """Concatenate ``input`` and ``mask`` into a flat context vector.
 
-    Zero parameters, the encoder is purely structural:
-    $c = [\mathrm{vec}(y); \mathrm{vec}(m)]$. The output dimension is
-    ``input.size + mask.size``.
+        c = [vec(y); vec(m)]
+
+    The encoder has no parameters. The context size is ``input.size + mask.size``.
+
+    Algorithm:
+        1. Flatten the input y and the mask m to vectors.
+        2. Concatenate them into c.
 
     Examples:
         >>> import jax.numpy as jnp
@@ -57,25 +53,31 @@ class IdentityObsEncoder(eqx.Module):
         input: Float[Array, ...],
         mask: Float[Array, ...],
     ) -> Float[Array, " D"]:
+        """Return the context c for one sample."""
+        # c = [vec(y); vec(m)]
         return einx.id("a, b -> (a + b)", flatten(input), flatten(mask))
 
 
 class MLPObsEncoder(eqx.Module):
-    r"""Two-layer MLP encoder from flat ``(input, mask)`` to context.
+    """MLP encoder from the flat ``(input, mask)`` to the context c.
 
-    Computes $c = \mathrm{MLP}([\mathrm{vec}(y); \mathrm{vec}(m)])$.
+        c = g_enc([vec(y); vec(m)]; ν)
+
+    Algorithm:
+        1. Flatten the input y and the mask m and concatenate them.
+        2. Apply the MLP with parameters ν.
 
     Args:
         input_size: Flattened size of the input field (``T * N`` for
             ``Batch1D``, ``T * H * W`` for ``Batch2D``).
-        context_dim: Dimension of the context vector $c$.
+        context_dim: Length of the context vector c.
         hidden_dim: Width of the MLP hidden layers.
         depth: Number of hidden layers of the MLP.
         key: PRNG key for the MLP weights.
 
     Attributes:
-        mlp: ``eqx.nn.MLP`` taking ``2 * input_size`` features and
-            emitting ``context_dim``.
+        mlp: ``eqx.nn.MLP`` with parameters ν, taking ``2 * input_size``
+            features and emitting ``context_dim``.
 
     Examples:
         >>> import jax
@@ -130,6 +132,8 @@ class MLPObsEncoder(eqx.Module):
         input: Float[Array, ...],
         mask: Float[Array, ...],
     ) -> Float[Array, " context_dim"]:
-        # features = [vec(y); vec(m)]
+        """Return the context c for one sample."""
+        # [vec(y); vec(m)]
         features = einx.id("a, b -> (a + b)", flatten(input), flatten(mask))
+        # c = g_enc([vec(y); vec(m)]; ν)
         return self.mlp(features)
