@@ -2,8 +2,9 @@
 
 import numpy as np
 import pytest
+import xarray as xr
 
-from vardax import Batch1D
+from vardax import Batch1D, ConfigurationError
 from vardax._src.utils.masks import random_mask
 from vardax._src.utils.noise import add_gaussian_noise
 from vardax._src.utils.patches import extract_patches, trajectory_to_xr_dataset
@@ -77,6 +78,40 @@ class TestXrToBatch1d:
 
 
 class TestInterpolateInitialCondition:
+    @pytest.mark.parametrize("method_kwargs", [{}, {"method": "linear"}])
+    def test_linear_values_and_metadata(self, method_kwargs):
+        dims = ("patch", "time", "feature")
+        ds = xr.Dataset(
+            {
+                "obs": (dims, np.array([[[0.0], [2.0], [0.0], [6.0], [0.0]]])),
+                "mask": (dims, np.array([[[0.0], [1.0], [0.0], [1.0], [0.0]]])),
+            },
+            coords={"patch": [7], "time": [10, 20, 30, 40, 50], "feature": ["x"]},
+        )
+
+        result = interpolate_initial_condition(ds, fillna=-1.0, **method_kwargs)
+
+        expected = xr.DataArray(
+            np.array([[[-1.0], [2.0], [4.0], [6.0], [-1.0]]], dtype=np.float32),
+            dims=dims,
+            coords=ds["obs"].coords,
+            name="x_init",
+        )
+        xr.testing.assert_identical(result["x_init"], expected)
+        xr.testing.assert_identical(result.drop_vars("x_init"), ds)
+        assert "x_init" not in ds
+
+    @pytest.mark.parametrize("method", ["nearest", "cubic", "linera", ""])
+    def test_unsupported_method_raises(self, method):
+        ds = _make_full_ds()
+        with pytest.raises(ConfigurationError, match=r"method.*linear"):
+            interpolate_initial_condition(ds, method=method)
+        assert "x_init" not in ds
+
+    def test_method_validated_before_dataset_access(self):
+        with pytest.raises(ConfigurationError, match=r"method.*linear"):
+            interpolate_initial_condition(xr.Dataset(), method="nearest")
+
     def test_x_init_exists(self):
         ds = _make_full_ds()
         result = interpolate_initial_condition(ds)

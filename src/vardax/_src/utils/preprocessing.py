@@ -9,7 +9,7 @@ import numpy as np
 import xarray as xr
 
 from vardax._src._types import Batch1D
-from vardax._src.errors import DataError
+from vardax._src.errors import ConfigurationError, DataError
 
 
 def train_test_split(
@@ -142,13 +142,16 @@ def interpolate_initial_condition(
             ``(patch, time, feature)``.
         obs_var: Name of the (noisy) observation variable y.
         mask_var: Name of the binary observation mask m.
-        method: Interpolation method passed to ``numpy.interp`` along the time axis
-            (``"linear"`` only).
+        method: Interpolation method along the time axis. Only ``"linear"`` is
+            supported, using ``numpy.interp``.
         fillna: Fill value for leading and trailing gaps that cannot be interpolated.
 
     Returns:
         Dataset with an additional ``"x_init"`` variable with dims
         ``(patch, time, feature)``.
+
+    Raises:
+        ConfigurationError: If ``method`` is not ``"linear"``.
 
     Examples:
         The gap between two observed times is interpolated:
@@ -175,6 +178,9 @@ def interpolate_initial_condition(
         >>> filled["x_init"].values[0, :, 0].tolist()
         [-1.0, -1.0, -1.0]
     """
+    if method != "linear":
+        raise ConfigurationError(f"method must be 'linear'; got {method!r}.")
+
     obs = np.asarray(ds[obs_var])
     mask = np.asarray(ds[mask_var])
 
