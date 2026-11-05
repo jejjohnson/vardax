@@ -134,10 +134,10 @@ The classical DA hierarchy as first-class peer classes:
   primitive `blue_analysis(x_b, y, B_op, R_op, H_op)`.
 - `ThreeDVar` — `optimistix.GaussNewton` / `BFGS` over the nonlinear
   cost.
-- `StrongFourDVar` — control = $x_0$, dynamics rollout via diffrax,
+- `StrongFourDVar` — control = $\vect{x}_0$, dynamics rollout via diffrax,
   adjoint via `forward_adjoint` slot.
 - `WeakFourDVar` — augmented control, model-error cost term, separate
-  `model_err_cov_op` (Q).
+  `model_err_cov_op` ($\gmat{\Sigma}_\eta$).
 
 This epic establishes the foundation. `FourDVarNet` (Epic 6) and
 `AmortizedPosterior` (Epic 8) are learned variants of these classical
@@ -172,8 +172,8 @@ population models.
 
 ### Epic 6: `FourDVarNet`
 
-Learned variant of strong-constraint 4DVar. Learned prior $\varphi_\theta$
-(AE family) + learned gradient modulator $\Phi_\phi$ (ConvLSTM / MLP /
+Learned variant of strong-constraint 4DVar. Learned prior $g_\text{ae}$
+(AE family) + learned gradient modulator $g_\text{mod}$ (ConvLSTM / MLP /
 Attention). The inner solver is itself a learned iteration; the adjoint
 choice (`RecursiveCheckpointAdjoint` / `OneStepAdjoint` / `ImplicitAdjoint`)
 comes from the `minimiser_adjoint` slot (Epic 3).

@@ -12,21 +12,21 @@ the seven classical and modern analysis methods that turn observations
 into state estimates:
 
 1. **`OptimalInterpolation`** — BLUE / OI, the closed-form linear-Gaussian
-   analysis. The right tool when $H$ is linear and $B$, $R$ are Gaussian.
+   analysis. The right tool when $h$ is linear and $\gmat{\Sigma}_x$, $\gmat{\Sigma}_\varepsilon$ are Gaussian.
 2. **`ThreeDVar`** — 3D variational analysis. Nonlinear observation
    operator, snapshot in time.
 3. **`StrongFourDVar`** — strong-constraint 4DVar. Control variable is
-   the initial state $x_0$; dynamics $M_t$ are treated as exact.
+   the initial state $\vect{x}_0$; dynamics $f_t$ are treated as exact.
 4. **`WeakFourDVar`** — weak-constraint 4DVar. Augmented control vector
-   $(x_0, \eta_1, \ldots, \eta_T)$ admits model error.
+   $(\vect{x}_0, \gvect{\eta}_1, \ldots, \gvect{\eta}_T)$ admits model error.
 5. **`IncrementalFourDVar`** — the operational fast path of strong-constraint
    4DVar. Gauss-Newton outer iterations on the full nonlinear cost, CG
    inner iterations on the linearised quadratic subproblem, control-variable
    transform for preconditioning.
-6. **`FourDVarNet`** — the learned variant of 4DVar. Prior $\varphi_\theta$
-   replaces the Gaussian $B$; the inner solver becomes a learned gradient
-   modulator $\Phi_\phi$.
-7. **`AmortizedPosterior`** — the direct head $q_\phi(x \mid y)$. Real-time
+6. **`FourDVarNet`** — the learned variant of 4DVar. Prior $g_\text{ae}$
+   replaces the Gaussian $\gmat{\Sigma}_x$; the inner solver becomes a learned gradient
+   modulator $g_\text{mod}$.
+7. **`AmortizedPosterior`** — the direct head $q(\vect{x} \mid \vect{y}; \gvect{\nu})$. Real-time
    inference via conditional flow, score-based diffusion, or regression.
 
 All seven are siblings, not parent–child relationships. They satisfy the
@@ -39,20 +39,19 @@ regime, not a family.
 
 Every analysis method in vardax is a special case of
 
-$$x^* = \underset{x,\,\boldsymbol{\eta}}{\arg\min}\;
-  \underbrace{\tfrac{1}{2}\|x - x_b\|^2_{B^{-1}}}_{\text{background term}}
-  + \underbrace{\tfrac{1}{2}\sum_{t=0}^{T} \|y_t - H_t(M_t(x; \boldsymbol{\eta}))\|^2_{R_t^{-1}}}_{\text{observation term}}
-  \;[\,+\;\underbrace{\tfrac{1}{2}\sum_{t=1}^{T} \|\eta_t\|^2_{Q_t^{-1}}}_{\text{model-error term}}\,].$$
+$$\vect{x}^\star = \underset{\vect{x}, \gvect{\eta}}{\op{argmin}} \underbrace{\frac{1}{2} \Vert \vect{x} - \gvect{\mu}_x \Vert^2_{\gmat{\Sigma}_x^{-1}}}_{\text{background term}} + \underbrace{\frac{1}{2} \sum_{t=0}^{T} \Vert \vect{y}_t - h_t(f_t(\vect{x}; \gvect{\eta})) \Vert^2_{\gmat{\Sigma}_{\varepsilon,t}^{-1}}}_{\text{observation term}} \left[ + \underbrace{\frac{1}{2} \sum_{t=1}^{T} \Vert \gvect{\eta}_t \Vert^2_{\gmat{\Sigma}_{\eta,t}^{-1}}}_{\text{model-error term}} \right].$$
 
-| Method | $T$ | Prior | Model error $\boldsymbol{\eta}$ | Inner solver |
+The shapes are $\vect{x}, \gvect{\mu}_x \in \mathbb{R}^{D_x}$, $\vect{y}_t \in \mathbb{R}^{D_y}$, $\gvect{\eta}_t \in \mathbb{R}^{D_x}$, $\gmat{\Sigma}_x, \gmat{\Sigma}_{\eta,t}$ of size $D_x \times D_x$ and $\gmat{\Sigma}_{\varepsilon,t}$ of size $D_y \times D_y$.
+
+| Method | $T$ | Prior | Model error $\gvect{\eta}$ | Inner solver |
 |---|---|---|---|---|
-| `OptimalInterpolation` | 0 | Gaussian $B$, linear $H$ | — | closed-form |
-| `ThreeDVar` | 0 | Gaussian $B$, nonlinear $H$ | — | iterative (optimistix) |
-| `StrongFourDVar` | $>0$ | Gaussian $B$ | absent | iterative (optimistix) |
-| `WeakFourDVar` | $>0$ | Gaussian $B$, $Q$ | active | iterative (optimistix) |
-| `IncrementalFourDVar` | $>0$ | Gaussian $B$ | absent | GN outer + CG inner |
-| `FourDVarNet` | $>0$ | learned $\varphi_\theta$ | absent | learned $\Phi_\phi$ |
-| `AmortizedPosterior` | any | implicit in $q_\phi$ | implicit | none (single forward pass) |
+| `OptimalInterpolation` | 0 | Gaussian $\gmat{\Sigma}_x$, linear $h$ | — | closed-form |
+| `ThreeDVar` | 0 | Gaussian $\gmat{\Sigma}_x$, nonlinear $h$ | — | iterative (optimistix) |
+| `StrongFourDVar` | $>0$ | Gaussian $\gmat{\Sigma}_x$ | absent | iterative (optimistix) |
+| `WeakFourDVar` | $>0$ | Gaussian $\gmat{\Sigma}_x$, $\gmat{\Sigma}_\eta$ | active | iterative (optimistix) |
+| `IncrementalFourDVar` | $>0$ | Gaussian $\gmat{\Sigma}_x$ | absent | GN outer + CG inner |
+| `FourDVarNet` | $>0$ | learned $g_\text{ae}$ | absent | learned $g_\text{mod}$ |
+| `AmortizedPosterior` | any | implicit in $q$ | implicit | none (single forward pass) |
 
 Each method specialises the unified cost differently, but the surface
 that user code touches — `model.as_analysis_step()` — is identical.
@@ -65,7 +64,7 @@ through two upstream libraries:
 - **`diffrax`** — gradients through ODE integration via
   `RecursiveCheckpointAdjoint`, `BacksolveAdjoint` (continuous adjoint),
   `ForwardMode` (forward sensitivity), or `DirectAdjoint`. This is how
-  4DVar's adjoint of $M_t$ is computed.
+  4DVar's adjoint of $f_t$ is computed.
 - **`optimistix`** — gradients through the inner minimisation via
   `RecursiveCheckpointAdjoint`, `ImplicitAdjoint` (IFT-based), or
   `DirectAdjoint`. This is how training gradients propagate through
@@ -83,18 +82,18 @@ import vardax as vdx
 # Shapes: N = state size; D = observations per time
 
 # today* (vardax)
-# ŷ = A(h ⊙ x + (1 − h) ⊙ x_a)
+# h(x) = J_x̂ (w ⊙ x + (1 − w) ⊙ μ_ret)
 obs_op = vdx.AveragingKernel(...)  # (N,) → (D,)
 # today* (optimistix); GaussNewton is a least-squares solver, not an AbstractMinimiser
 minimiser = optx.GaussNewton(rtol=1e-5, atol=1e-5)
 # today (optimistix)
-# dx₀*/dθ = −(∇²J)⁻¹ ∇²ₓθ J
+# dx₀⋆/dθ = −(∇²𝒥)⁻¹ ∇²ₓθ 𝒥
 minimiser_adjoint = optx.ImplicitAdjoint()
 # today (diffrax)
 # dλ/dt = −(∂f/∂x)ᵀ λ, integrated backwards
 forward_adjoint = dfx.BacksolveAdjoint()
 # today (vardax); somax_model is not pinned (somax)
-# x₀* = argmin J(x₀), J = ½‖x₀ − x_b‖²_{B⁻¹} + ½ Σₜ ‖yₜ − Hₜ(Mₜ(x₀))‖²_{Rₜ⁻¹}
+# x₀⋆ = argmin 𝒥(x₀), 𝒥 = ½‖x₀ − μ_x‖²_Σ_x⁻¹ + ½ ∑ₜ ‖yₜ − hₜ(fₜ(x₀))‖²_Σ_ε⁻¹
 model = vdx.StrongFourDVar(
     forward=somax_model,
     obs_op=obs_op,
@@ -171,7 +170,7 @@ operational analysis:
 
 Crucially: **Step 2 uses the same vardax code as Step 4**. The forward
 model is swapped via the `pipekit_cycle.ForwardModel` protocol; the
-analysis class doesn't know whether $M_t$ is physics or an emulator. This
+analysis class doesn't know whether $f_t$ is physics or an emulator. This
 is what makes the cycle a cycle and not a rewrite.
 
 The validation gates between steps (adjoint calibration, posterior

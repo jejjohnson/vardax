@@ -20,7 +20,7 @@ shows the satisfaction patterns and the orchestration recipes.
 ## `ForwardModel` satisfaction
 
 ```{code-block} python
-:caption: Checks that a somax forward, the M_t of the rollout [](#eq-rollout), satisfies `pipekit_cycle.ForwardModel` natively.
+:caption: Checks that a somax forward, the fₜ of the rollout [](#eq-rollout), satisfies `pipekit_cycle.ForwardModel` natively.
 :label: code-design-pipekit-forward-model
 # somax / plumax forwards satisfy pipekit_cycle.ForwardModel natively.
 # vardax.priors.DynamicalPrior wraps any ForwardModel as a Prior for the
@@ -29,7 +29,7 @@ import pipekit_cycle as pc
 import somax
 
 # not pinned (somax)
-# xₜ₊₁ = M(xₜ), one step of the shallow-water model
+# xₜ₊₁ = f(xₜ), one step of the shallow-water model
 swm = somax.ShallowWaterModel(grid=grid, params=params)
 # swm.step(state, dt) → state ✓
 # swm.dt → float ✓
@@ -39,10 +39,10 @@ assert isinstance(swm, pc.ForwardModel)
 ```
 
 `DynamicalPrior` composes multiple `step()` calls into the variational
-$\varphi$:
+$g_\text{ae}$:
 
 ```{code-block} python
-:caption: Declares the target `DynamicalPrior`, which composes `n_steps` forward steps of [](#eq-rollout) into the prior map φ of [](#eq-4dvarnet-cost).
+:caption: Declares the target `DynamicalPrior`, which composes `n_steps` forward steps of [](#eq-rollout) into the prior map g_ae of [](#eq-4dvarnet-cost).
 :label: code-design-pipekit-dynamical-prior
 import diffrax as dfx
 import equinox as eqx
@@ -65,7 +65,7 @@ class DynamicalPrior(eqx.Module):
     def __call__(self, x: Float[Array, " N"]) -> Float[Array, " N"]:
         for _ in range(self.n_steps):
             # today (pipekit_cycle)
-            # x ← M(x), over one step of length dt
+            # x ← f(x), over one step of length dt
             x = self.forward.step(x, self.forward.dt)  # (N,) → (N,)
         return x
 ```
@@ -91,12 +91,12 @@ from jaxtyping import Array, Float
 
 # today (vardax)
 class MaskedIdentity(eqx.Module):
-    # H(x) = m ⊙ x
+    # h(x) = m ⊙ x
     def __call__(
         self, x: Float[Array, " N"], mask: Float[Array, " N"] | None = None
     ) -> Float[Array, " N"]: ...
 
-    # H′ = ∂H/∂x at x, as a lineax operator
+    # H = ∂h/∂x at x, as a lineax operator
     def linearize(self, x: Float[Array, " N"]) -> lx.AbstractLinearOperator: ...
 
 
@@ -134,11 +134,11 @@ class StrongFourDVar(eqx.Module):
     forward: pc.ForwardModel
     # today (pipekit_cycle)
     obs_op: pc.ObservationOperator
-    # x_b
+    # μ_x
     prior_mean: Float[Array, " N"]
-    # B
+    # Σ_x
     prior_cov_op: lx.AbstractLinearOperator
-    # R
+    # Σ_ε
     obs_cov_op: lx.AbstractLinearOperator
     minimiser: optx.AbstractMinimiser
     # today (optimistix)
@@ -146,7 +146,7 @@ class StrongFourDVar(eqx.Module):
     # today (diffrax)
     forward_adjoint: dfx.AbstractAdjoint = dfx.RecursiveCheckpointAdjoint()
 
-    # x₀* = argmin J(x₀)
+    # x₀⋆ = argmin 𝒥(x₀)
     def __call__(self, batch: Batch) -> Float[Array, " N"]:
         """Training / analysis interface."""
         ...
@@ -173,7 +173,7 @@ class _StrongFourDVarAnalysisStep:
         # proposed (D8)
         batch = build_batch_from_pipekit_args(forecast, obs, obs_op, obs_err_cov)
         # today* (vardax)
-        # x₀* = argmin J(x₀)
+        # x₀⋆ = argmin 𝒥(x₀)
         return self.model(batch)
 ```
 
@@ -193,13 +193,13 @@ import vardax as vdx
 # Shapes: N = state size; D = observations per time
 
 # proposed (architecture.md); ships today as vdx.AveragingKernel
-# ŷ = A(h ⊙ x + (1 − h) ⊙ x_a)
+# h(x) = J_x̂ (w ⊙ x + (1 − w) ⊙ μ_ret)
 obs_op = vdx.obs_operators.AveragingKernel(...)  # (N,) → (D,)
 # today (vardax)
 config = vdx.IncrementalConfig()
 # Pick any of the seven classes; orchestration code is identical.
 # proposed (architecture.md); ships today as vdx.IncrementalFourDVar
-# Gauss-Newton outer loop, CG inner solve of δJ(δx)
+# Gauss-Newton outer loop, CG inner solve of δ𝒥(δx)
 model = vdx.models.IncrementalFourDVar(
     forward=somax_model,
     obs_op=obs_op,
@@ -224,7 +224,7 @@ da_cycle = pc.DACycle(
 # today (pipekit_cycle)
 cycle_state = pc.DAState(t=0.0, cycle_count=0)
 # today (pipekit_cycle)
-# forecast xₜᶠ = M(xₜ₋₁ᵃ), then analysis xₜᵃ, for every window
+# forecast x_{t|t−1} = f(x_{t−1|t−1}), then analysis x_{t|t}, for every window
 result, final_state = da_cycle(initial_state, cycle_state)
 ```
 
@@ -239,7 +239,7 @@ import vardax as vdx
 # Shapes: N = state size; D = observations per time
 
 # proposed (architecture.md); ships today as vdx.AveragingKernel
-# ŷ = A(h ⊙ x + (1 − h) ⊙ x_a)
+# h(x) = J_x̂ (w ⊙ x + (1 − w) ⊙ μ_ret)
 obs_op = vdx.obs_operators.AveragingKernel(...)  # (N,) → (D,)
 # today (vardax)
 analysis_step = model.as_analysis_step()
@@ -277,10 +277,10 @@ pipeline = pk.Sequential(
         # today (pipekit); build_batch is user
         pk.Lambda(lambda data: build_batch(data)),
         # today (pipekit)
-        # x* = argmin J(x)
+        # x⋆ = argmin 𝒥(x)
         pk.Lambda(lambda batch: model(batch)),
         # today (pipekit)
-        # P* at x*
+        # Σ_x|y at x⋆
         pk.Lambda(posterior_adapter),
         # proposed (D10); GaussianMarkLikelihood ships without from_posterior
         pk.Lambda(vdx.GaussianMarkLikelihood.from_posterior),

@@ -20,7 +20,7 @@ peer `pipekit_cycle.AnalysisStep` implementations:
 | `WeakFourDVar` | Weak-constraint 4DVar |
 | `IncrementalFourDVar` | Operational fast path of strong-4DVar |
 | `FourDVarNet` | Learned 4DVar (prior + grad modulator) |
-| `AmortizedPosterior` | Direct $q_\phi(x \mid y)$ head |
+| `AmortizedPosterior` | Direct $q(\vect{x} \mid \vect{y}; \gvect{\nu})$ head |
 
 Gradients through dynamics and the inner minimiser are composed via
 `diffrax.AbstractAdjoint` and `optimistix.AbstractAdjoint` — vardax owns

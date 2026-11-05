@@ -23,10 +23,10 @@ strategies.
 
 Observation cost:
 
-$$J_\text{obs}(x) = \tfrac{1}{2} \|H(x) - y\|^2_{R^{-1}}.$$
+$$\mathcal{J}_o(\vect{x}) = \frac{1}{2} \Vert h(\vect{x}) - \vect{y} \Vert^2_{\gmat{\Sigma}_\varepsilon^{-1}}.$$
 
-When `obs_operator=None`, $H$ defaults to masked identity. When
-`R_inv_op=None`, $R^{-1}$ defaults to $I / |\Omega|$ (averaged MSE).
+When `obs_operator=None`, $h$ defaults to masked identity. When
+`R_inv_op=None`, $\gmat{\Sigma}_\varepsilon^{-1}$ defaults to $\mat{I} / \vert \Omega \vert$ (averaged MSE).
 
 ### `prior_cost(x, prior_mean=None, B_inv_op=None, prior_fn=None)`
 
@@ -34,11 +34,11 @@ Two distinct meanings depending on which kwargs are passed:
 
 **Classical** (`prior_mean` and `B_inv_op` supplied):
 
-$$J_\text{prior}(x) = \tfrac{1}{2} \|x - x_b\|^2_{B^{-1}}.$$
+$$\mathcal{J}_p(\vect{x}) = \frac{1}{2} \Vert \vect{x} - \gvect{\mu}_x \Vert^2_{\gmat{\Sigma}_x^{-1}}.$$
 
 **Learned** (`prior_fn` supplied — `FourDVarNet`):
 
-$$J_\text{prior}(x) = \|x - \varphi_\theta(x)\|^2.$$
+$$\mathcal{J}_p(\vect{x}) = \Vert \vect{x} - g_\text{ae}(\vect{x}; \gvect{\theta}) \Vert^2.$$
 
 The two forms cannot be mixed — pass one set of arguments or the other.
 
@@ -46,13 +46,13 @@ The two forms cannot be mixed — pass one set of arguments or the other.
 
 Weak-constraint 4DVar model-error term:
 
-$$J_\eta(\boldsymbol{\eta}) = \tfrac{1}{2} \sum_{t=1}^{T} \|\eta_t\|^2_{Q_t^{-1}}.$$
+$$\mathcal{J}_\eta(\gvect{\eta}) = \frac{1}{2} \sum_{t=1}^{T} \Vert \gvect{\eta}_t \Vert^2_{\gmat{\Sigma}_{\eta,t}^{-1}}.$$
 
 ### `variational_cost(x, batch, prior_fn, obs_operator, alpha_obs=1.0, alpha_prior=1.0)`
 
 Weak-constraint variational cost (learned-prior form):
 
-$$J(x) = \alpha_\text{obs} J_\text{obs}(x) + \alpha_\text{prior} J_\text{prior}(x).$$
+$$\mathcal{J}(\vect{x}) = \alpha_\text{obs} \mathcal{J}_o(\vect{x}) + \alpha_\text{prior} \mathcal{J}_p(\vect{x}).$$
 
 Used by `FourDVarNet`.
 
@@ -60,17 +60,16 @@ Used by `FourDVarNet`.
 
 Classical 3DVar cost:
 
-$$J(x) = \tfrac{1}{2} \|x - x_b\|^2_{B^{-1}} + \tfrac{1}{2} \|y - H(x)\|^2_{R^{-1}}.$$
+$$\mathcal{J}(\vect{x}) = \frac{1}{2} \Vert \vect{x} - \gvect{\mu}_x \Vert^2_{\gmat{\Sigma}_x^{-1}} + \frac{1}{2} \Vert \vect{y} - h(\vect{x}) \Vert^2_{\gmat{\Sigma}_\varepsilon^{-1}}.$$
 
 ### `incremental_cost(δx, x_b, batch, forward_lin, obs_op_lin, B_inv_op, R_inv_op)`
 
 Linearised incremental cost for the 4DVar inner loop:
 
-$$J_\text{inc}(\delta x) = \tfrac{1}{2} \|\delta x\|^2_{B^{-1}}
-   + \tfrac{1}{2} \sum_t \|y_t - H_t(x_b) - H'_t M'_t \delta x\|^2_{R^{-1}}.$$
+$$\delta\mathcal{J}(\delta\vect{x}) = \frac{1}{2} \Vert \delta\vect{x} \Vert^2_{\gmat{\Sigma}_x^{-1}} + \frac{1}{2} \sum_t \Vert \vect{y}_t - h_t(\gvect{\mu}_x) - \mat{H}_t \mat{F}_t \delta\vect{x} \Vert^2_{\gmat{\Sigma}_\varepsilon^{-1}}.$$
 
-$H'_t$ and $M'_t$ are tangent-linear operators at the outer iterate
-$x_b$.
+$\mat{H}_t$ and $\mat{F}_t$ are tangent-linear operators at the outer iterate
+$\gvect{\mu}_x$.
 
 ---
 
@@ -80,11 +79,11 @@ $x_b$.
 
 BLUE / OI in closed form (Decision D16):
 
-$$x^* = x_b + B H^\top (H B H^\top + R)^{-1} (y - H x_b).$$
+$$\vect{x}^\star = \gvect{\mu}_x + \gmat{\Sigma}_x \mat{H}^\top (\mat{H} \gmat{\Sigma}_x \mat{H}^\top + \gmat{\Sigma}_\varepsilon)^{-1} (\vect{y} - \mat{H} \gvect{\mu}_x).$$
 
 Returns `(x_star, posterior_cov_op)` where `posterior_cov_op` is an
-`AbstractLinearOperator` representing $P^*$ — not materialised by
-default. `gaussx` exploits structure in $B$, $R$, $H$.
+`AbstractLinearOperator` representing $\gmat{\Sigma}_{x \mid y}$ — not materialised by
+default. `gaussx` exploits structure in $\gmat{\Sigma}_x$, $\gmat{\Sigma}_\varepsilon$, $\mat{H}$.
 
 ```{code-block} python
 :caption: Declares the planned closed-form BLUE primitive, returning the mean [](#eq-blue-mean) and the covariance operator [](#eq-blue-cov).
@@ -103,13 +102,13 @@ def blue_analysis(
     R_op: lx.AbstractLinearOperator,
     H_op: lx.AbstractLinearOperator,
 ) -> tuple[Float[Array, " N"], lx.AbstractLinearOperator]:
-    # x* = x_b + B Hᵀ (H B Hᵀ + R)⁻¹ (y − H x_b)
-    # P* = (B⁻¹ + Hᵀ R⁻¹ H)⁻¹, returned as an (N, N) operator
+    # x⋆ = μ_x + Σ_x Hᵀ (H Σ_x Hᵀ + Σ_ε)⁻¹ (y − H μ_x)
+    # Σ_x|y = (Σ_x⁻¹ + Hᵀ Σ_ε⁻¹ H)⁻¹, returned as an (N, N) operator
     ...
 ```
 
-The implementation picks between the $B$-space form (Sherman-Morrison-
-Woodbury, useful when state is high-dimensional) and the $R$-space form
+The implementation picks between the $\gmat{\Sigma}_x$-space form (Sherman-Morrison-
+Woodbury, useful when state is high-dimensional) and the $\gmat{\Sigma}_\varepsilon$-space form
 (useful when observation count is low) based on dimensions.
 
 ---
@@ -118,14 +117,14 @@ Woodbury, useful when state is high-dimensional) and the $R$-space form
 
 ### `cvt_transform(x, x_b, B_half_op)` and `cvt_inverse(chi, x_b, B_half_op)`
 
-CVT: $\chi = B^{-1/2}(x - x_b)$, with inverse $x = x_b + B^{1/2}\chi$.
+CVT: $\vect{z} = \mat{L}_x^{-1} (\vect{x} - \gvect{\mu}_x)$, with inverse $\vect{x} = \gvect{\mu}_x + \mat{L}_x \vect{z}$, where $\mat{L}_x = \gmat{\Sigma}_x^{1/2}$.
 
-$B^{1/2}$ comes from `gaussx.MaternLinearOperator.half()` when the prior
+$\mat{L}_x$ comes from `gaussx.MaternLinearOperator.half()` when the prior
 is Matérn; falls back to Cholesky factorisation for arbitrary
 `AbstractLinearOperator`.
 
 ```{code-block} python
-:caption: Declares the planned control-variable transform χ = B⁻¹ᐟ²(x − x_b) of [](#eq-cvt) and its inverse.
+:caption: Declares the planned control-variable transform z = L_x⁻¹(x − μ_x) of [](#eq-cvt) and its inverse.
 :label: code-design-api-primitives-cvt
 import lineax as lx
 from jaxtyping import Array, Float
@@ -137,7 +136,7 @@ from jaxtyping import Array, Float
 def cvt_transform(
     x: Float[Array, " N"], x_b: Float[Array, " N"], B_half_op: lx.AbstractLinearOperator
 ) -> Float[Array, " N"]:
-    # χ = B⁻¹ᐟ² (x − x_b)
+    # z = L_x⁻¹ (x − μ_x)
     ...
 
 
@@ -147,11 +146,11 @@ def cvt_inverse(
     x_b: Float[Array, " N"],
     B_half_op: lx.AbstractLinearOperator,
 ) -> Float[Array, " N"]:
-    # x = x_b + B¹ᐟ² χ
+    # x = μ_x + L_x z
     ...
 ```
 
-In CVT coordinates the prior cost is $\|\chi\|^2$ (identity Gaussian),
+In CVT coordinates the prior cost is $\Vert \vect{z} \Vert^2$ (identity Gaussian),
 which preconditions the CG inner loop in `IncrementalFourDVar`.
 
 ---
@@ -163,7 +162,7 @@ which preconditions the CG inner loop in `IncrementalFourDVar`.
 Wraps `jax.linearize` to return an `AbstractLinearOperator`:
 
 ```{code-block} python
-:caption: Defines the planned tangent-linear primitive, which wraps `jax.linearize` as the operator M′ of [](#eq-tlm-forward).
+:caption: Defines the planned tangent-linear primitive, which wraps `jax.linearize` as the operator F of [](#eq-tlm-forward).
 :label: code-design-api-primitives-tangent-linear
 from collections.abc import Callable
 
@@ -180,7 +179,7 @@ def tangent_linear(
 ) -> lx.AbstractLinearOperator:
     """Linearise fn at x. Returns operator suitable for incremental 4DVar."""
     # today (jax)
-    # δx ↦ M′(x) δx
+    # δx ↦ F(x) δx
     _, jvp = jax.linearize(fn, x)
     # today* (lineax): the shipped keyword is input_structure, a ShapeDtypeStruct
     return lx.FunctionLinearOperator(jvp, in_structure=x)
@@ -196,7 +195,7 @@ The transpose / adjoint comes for free via `lineax`.
 
 Laplace approximation at MAP:
 
-$$P^* = \big((H')^\top R^{-1} H' + B^{-1}\big)^{-1}.$$
+$$\gmat{\Sigma}_{x \mid y} = \left(\mat{H}^\top \gmat{\Sigma}_\varepsilon^{-1} \mat{H} + \gmat{\Sigma}_x^{-1}\right)^{-1}.$$
 
 Returns `AbstractLinearOperator` — supports mat-vec via `lineax.CG`, no
 materialisation.
@@ -204,7 +203,7 @@ materialisation.
 ### `gauss_newton_hessian(x_star, batch, forward, obs_op, B_op, R_op, n_krylov=50)`
 
 Gauss-Newton Hessian at MAP, via Krylov / Lanczos. Returns
-`AbstractLinearOperator` representing $J''(x^*)$ for posterior
+`AbstractLinearOperator` representing $\nabla^2 \mathcal{J}(\vect{x}^\star)$ for posterior
 inversion.
 
 ---
@@ -213,7 +212,7 @@ inversion.
 
 ### `reconstruction_loss(pred, target)`
 
-$$\mathcal{L}(\theta) = \|x^*(\theta) - x_\text{true}\|^2.$$
+$$\mathcal{L}(\gvect{\theta}) = \Vert \vect{x}^\star(\gvect{\theta}) - \vect{x}_\text{true} \Vert^2.$$
 
 ### `train_loss_fn(model, batch)`
 
@@ -283,7 +282,7 @@ def gauss_newton_inner(
     cg_atol: float,
     cg_rtol: float,
 ) -> Float[Array, " N"]:
-    # 𝐇_GN δx* = −∇J, solved by CG
+    # 𝐇_GN δx⋆ = −∇𝒥, solved by CG
     ...
 ```
 
@@ -316,12 +315,12 @@ def incremental_outer(
     # today (vardax)
     config: vdx.IncrementalConfig,
 ) -> Float[Array, " N"]:
-    # x⁽ᵏ⁺¹⁾ = x⁽ᵏ⁾ + δx*, k = 0 … n_outer − 1
+    # x⁽ⁱ⁺¹⁾ = x⁽ⁱ⁾ + δx⋆, i = 0 … n_outer − 1
     ...
 ```
 
-Each outer iteration relinearises $H$, $M$ at current $x_b$, solves the
-quadratic with `gauss_newton_inner`, updates $x_b$.
+Each outer iteration relinearises $h$, $f$ at current $\gvect{\mu}_x$, solves the
+quadratic with `gauss_newton_inner`, updates $\gvect{\mu}_x$.
 
 ---
 

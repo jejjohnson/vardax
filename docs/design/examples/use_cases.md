@@ -116,7 +116,7 @@ registry = vdx.InstrumentRegistry.from_l2_dict(
     {op.instrument: op.l2_ds for op in overpasses}
 )
 # today (vardax)
-# J_obs(x) = Σᵢ αᵢ ½ ‖mᵢ ⊙ (yᵢ − Hᵢ(x))‖²_{Rᵢ⁻¹}
+# 𝒥_o(x) = ∑ᵢ αᵢ ½ ‖mᵢ ⊙ (yᵢ − hᵢ(x))‖²_Σ_ε,ᵢ⁻¹
 fusion = vdx.MultiInstrumentFusion(registry=registry)
 
 # (4) Prior: lognormal on Q from EDGAR inventory
@@ -132,18 +132,18 @@ prior_cov = gx.LogNormalLinearOperator(
     mu=log_rate_prior_mean, sigma=log_rate_prior_std
 )  # (P, P) op
 
-# (5) Block-diag R across instruments
+# (5) Block-diag Σ_ε across instruments
 # proposed (lineax; gaussx ships gx.BlockDiag(*operators))
-# R = blockdiag(R_TROPOMI, R_EMIT, R_GHGSat)
+# Σ_ε = blockdiag(Σ_ε,TROPOMI, Σ_ε,EMIT, Σ_ε,GHGSat)
 obs_cov = lx.BlockDiagonalLinearOperator(  # (Σ Mᵢ, Σ Mᵢ) op
     [spec.obs_cov_op for spec in fusion.registry.entries.values()]
 )
 
 # (6) Configure inversion
-# x_b = (log Q_EDGAR, 0, 0, 50 m) for (Q, x₀, y₀, H)
+# μ_x = (log Q_EDGAR, 0, 0, 50 m) for (Q, x₀, y₀, H)
 prior_mean = jnp.array([log_rate_prior_mean, 0.0, 0.0, 50.0])  # (P,)
 # today* (vardax; a fused obs_op goes in as fusion.to_observation_operator())
-# δJ(δx) over the source parameters, in χ with x − x_b = S χ
+# δ𝒥(δx) over the source parameters, in z with x − μ_x = L_x z
 inversion = vdx.IncrementalFourDVar(
     forward=plume,
     obs_op=fusion,
@@ -159,12 +159,12 @@ batch = vdx.utils.build_event_batch(overpasses, met=met)
 
 # (8) Invert
 # today (vardax)
-# x* after the last outer iteration
+# x⋆ after the last outer iteration
 analysis = inversion(batch)  # → (1, P)
 
 # (9) Posterior via Gauss-Newton Hessian (reuses last GN outer iteration)
 # today* (vardax; the adapter takes one window's analysis, e.g. analysis[0])
-# P*_GN = 𝐇_GN⁻¹ at x*, from 50 Lanczos vectors
+# Σ_x|y,GN = 𝐇_GN⁻¹ at x⋆, from 50 Lanczos vectors
 posterior = vdx.GaussNewtonHessian(n_krylov=50)(
     analysis, inversion.as_analysis_step(), batch
 )
@@ -267,7 +267,7 @@ import vardax as vdx
 
 # (1) Build model
 # proposed (D14; ships today as vdx.FourDVarNet2D(n_time, height, width, ..., key))
-# x_{k+1} = x_k − Φ(∇ₓJ(x_k), h_k), k = 0 … K − 1
+# x⁽ⁱ⁺¹⁾ = x⁽ⁱ⁾ − g_mod(∇ₓ𝒥(x⁽ⁱ⁾), c⁽ⁱ⁾), i = 0 … N_iter − 1
 model = vdx.FourDVarNet(
     # today* (vardax; also takes key)
     prior=vdx.BilinAEPrior2D(latent_dim=128, n_time=10, height=128, width=128),
@@ -288,7 +288,7 @@ opt_state = optimizer.init(eqx.filter(model, eqx.is_array))
 for epoch in range(100):
     for batch in oceanbench_loader:
         # today (vardax)
-        # ℒ(θ, φ) = E ‖x*(θ, φ; y) − x_true‖²
+        # ℒ(θ, ν) = E ‖x⋆(θ, ν; y) − x_true‖²
         model, opt_state, loss = vdx.train_step(model, batch, optimizer, opt_state)
 
 # (3) Persist via pipekit (Decision D13)
@@ -314,7 +314,7 @@ posterior_adapter = vdx.LaplaceCovariance()
 # today (pipekit_cycle)
 result, final_state = da_cycle(initial_state, pc.DAState(t=0.0, cycle_count=0))
 # today* (vardax; the adapter takes one window's analysis, not the cycle result)
-# P*_Laplace = (B⁻¹ + H′ᵀ R⁻¹ H′)⁻¹
+# Σ_x|y,Laplace = (Σ_x⁻¹ + Hᵀ Σ_ε⁻¹ H)⁻¹
 posterior = posterior_adapter(result, model.as_analysis_step(), batch)
 ```
 
@@ -344,16 +344,16 @@ import vardax as vdx
 #        coords (N, D), altika_uncertainty (M,), batch
 
 # proposed (gaussx)
-# Bᵢⱼ = k_Matérn(sᵢ, sⱼ; ℓ = 100, σ = 0.1)
+# (Σ_x)ᵢⱼ = k_Matérn(sᵢ, sⱼ; ℓ = 100, σ = 0.1)
 prior_cov = gx.MaternLinearOperator(  # (N, D) → (N, N) PSD op
     coords, length_scale=100.0, sigma=0.1
 )
 # today (lineax)
-# R = diag(σ²)
+# Σ_ε = diag(σ²)
 obs_cov = lx.DiagonalLinearOperator(altika_uncertainty)  # (M,) → (M, M) op
 
 # today (vardax)
-# δJ(δx), 3 outer relinearisations, 20 CG steps each, in χ with x₀ − x_b = S χ
+# δ𝒥(δx), 3 outer relinearisations, 20 CG steps each, in z with x₀ − μ_x = L_x z
 incremental = vdx.IncrementalFourDVar(
     forward=somax_shallow_water,
     obs_op=vdx.MaskedIdentity(),
@@ -363,20 +363,20 @@ incremental = vdx.IncrementalFourDVar(
     config=vdx.IncrementalConfig(n_outer=3, n_inner=20, cvt=True),
 )
 # today (vardax)
-# x₀* after the last outer iteration
+# x₀⋆ after the last outer iteration
 x_incremental = incremental(batch)  # → (B, N)
 
 # Compare:
 # today* (vardax; the adapter takes one window's analysis, e.g. analysis[0])
-# P*_Laplace at the 4DVarNet reconstruction
+# Σ_x|y,Laplace at the 4DVarNet reconstruction
 p_learned = vdx.LaplaceCovariance()(model(batch), model.as_analysis_step(), batch)
 # today* (vardax; the adapter takes one window's analysis, e.g. analysis[0])
-# P*_GN at the incremental analysis
+# Σ_x|y,GN at the incremental analysis
 p_incremental = vdx.GaussNewtonHessian()(
     x_incremental, incremental.as_analysis_step(), batch
 )
 # today (vardax)
-# |x*_learned − x*_incr| / σ_post,incr ≤ 1
+# |x⋆_learned − x⋆_incr| / σ_post,incr ≤ 1
 vdx.assert_posterior_agreement(p_learned, p_incremental, tolerance_sigma=1.0)
 ```
 

@@ -18,7 +18,7 @@ those protocols directly — no parallel `Abstract*` hierarchy.
 ### Re-exports from `pipekit_cycle`
 
 ```{code-block} python
-:caption: Re-exports the pipekit-cycle protocols for the forward model Mₜ of [](#eq-rollout), the observation operator H of [](#eq-obs-model) and the analysis step.
+:caption: Re-exports the pipekit-cycle protocols for the forward model fₜ of [](#eq-rollout), the observation operator h of [](#eq-obs-model) and the analysis step.
 :label: code-design-api-components-pipekit-protocols
 import pipekit_cycle as pc
 
@@ -41,7 +41,7 @@ AnalysisStep = pc.AnalysisStep
 ### Vardax-specific protocols
 
 ```{code-block} python
-:caption: Declares the vardax protocols: the prior φ of [](#eq-4dvarnet-cost), the modulator Φ of [](#eq-4dvarnet-update), a cost J such as [](#eq-3dvar-cost), its minimiser, and the posterior adapter.
+:caption: Declares the vardax protocols: the prior g_ae of [](#eq-4dvarnet-cost), the modulator g_mod of [](#eq-4dvarnet-update), a cost 𝒥 such as [](#eq-3dvar-cost), its minimiser, and the posterior adapter.
 :label: code-design-api-components-vardax-protocols
 from typing import Any, Protocol, runtime_checkable
 
@@ -58,7 +58,7 @@ Batch = vdx.Batch1D | vdx.Batch2D | vdx.Batch2DMultivar
 # today (vardax)
 @runtime_checkable
 class Prior(Protocol):
-    """φ: state → regularised state."""
+    """g_ae: state → regularised state."""
 
     def __call__(self, x: Float[Array, " N"]) -> Float[Array, " N"]: ...
 
@@ -66,7 +66,7 @@ class Prior(Protocol):
 # today* (vardax): shipped __call__ is (grad, state, carry)
 @runtime_checkable
 class GradModulator(Protocol):
-    """Φ: (gradient, carry) → (update, new_carry). FourDVarNet only."""
+    """g_mod: (gradient, carry) → (update, new_carry). FourDVarNet only."""
 
     def __call__(
         self, grad: Float[Array, " N"], carry: Any
@@ -76,7 +76,7 @@ class GradModulator(Protocol):
 # today (vardax)
 @runtime_checkable
 class CostFunction(Protocol):
-    """J: (state, batch, …) → scalar."""
+    """𝒥: (state, batch, …) → scalar."""
 
     def __call__(
         self, x: Float[Array, " N"], batch: Batch, **kwargs: Any
@@ -113,7 +113,7 @@ class Minimiser(Protocol):
 ### Learned autoencoder priors
 
 ```{code-block} python
-:caption: Declares the learned autoencoder priors φ_θ that enter the 4DVarNet cost [](#eq-4dvarnet-cost).
+:caption: Declares the learned autoencoder priors g_ae that enter the 4DVarNet cost [](#eq-4dvarnet-cost).
 :label: code-design-api-components-ae-priors
 import equinox as eqx
 from jaxtyping import Array, Float
@@ -123,7 +123,7 @@ from jaxtyping import Array, Float
 
 # today (vardax)
 class BilinAEPrior1D(eqx.Module):
-    """φ(x) = decoder(ReLU(A·x) ⊙ tanh(B·x))."""
+    """g_ae(x) = decoder(ReLU(A·x) ⊙ tanh(B·x))."""
 
     state_dim: int
     latent_dim: int
@@ -151,7 +151,7 @@ class MLPAEPrior1D(eqx.Module): ...
 ### Identity / classical baseline
 
 ```{code-block} python
-:caption: Declares the identity prior φ(x) = x, the zero-parameter baseline for the prior term of [](#eq-4dvarnet-cost).
+:caption: Declares the identity prior g_ae(x) = x, the zero-parameter baseline for the prior term of [](#eq-4dvarnet-cost).
 :label: code-design-api-components-identity-prior
 import equinox as eqx
 from jaxtyping import Array, Float
@@ -161,7 +161,7 @@ from jaxtyping import Array, Float
 
 # today (vardax)
 class IdentityPrior(eqx.Module):
-    """φ(x) = x. Zero-parameter."""
+    """g_ae(x) = x. Zero-parameter."""
 
     def __call__(self, x: Float[Array, " N"]) -> Float[Array, " N"]: ...
 ```
@@ -169,7 +169,7 @@ class IdentityPrior(eqx.Module):
 ### Dynamical prior (wraps any `ForwardModel`)
 
 ```{code-block} python
-:caption: Declares `DynamicalPrior`, which wraps a forward model Mₜ of [](#eq-rollout) as a prior φ and differentiates it through a diffrax adjoint.
+:caption: Declares `DynamicalPrior`, which wraps a forward model fₜ of [](#eq-rollout) as a prior g_ae and differentiates it through a diffrax adjoint.
 :label: code-design-api-components-dynamical-prior
 import diffrax
 import equinox as eqx
@@ -191,7 +191,7 @@ class DynamicalPrior(eqx.Module):
     forward_adjoint: diffrax.AbstractAdjoint = diffrax.RecursiveCheckpointAdjoint()
 
     def __call__(self, x: Float[Array, " N"]) -> Float[Array, " N"]:
-        # x_n = Mⁿ(x); integrates forward n_steps, gradient via forward_adjoint
+        # x_n = fⁿ(x); integrates forward n_steps, gradient via forward_adjoint
         ...
 ```
 
@@ -225,7 +225,7 @@ strict-protocol contexts.
 ## Gradient modulators (`vardax.grad_mod` — `FourDVarNet` only)
 
 ```{code-block} python
-:caption: Declares the gradient modulators Φ_φ of the 4DVarNet update [](#eq-4dvarnet-update), with the fixed-step identity as the classical baseline.
+:caption: Declares the gradient modulators g_mod of the 4DVarNet update [](#eq-4dvarnet-update), with the fixed-step identity as the classical baseline.
 :label: code-design-api-components-grad-mod
 import equinox as eqx
 import vardax as vdx
@@ -275,7 +275,7 @@ class IdentityGradMod(eqx.Module):
     def __call__(
         self, grad: Float[Array, "B T N"], carry: None
     ) -> tuple[Float[Array, "B T N"], None]:
-        # Φ(∇J, h) = −α ∇J
+        # g_mod(∇𝒥, c) = −α ∇𝒥
         update = -self.alpha * grad  # (B, T, N)
         return update, carry
 ```
@@ -290,7 +290,7 @@ learned inner step.
 ## Minimiser adapters (`vardax.minimisers` — classical methods)
 
 ```{code-block} python
-:caption: Wraps an optimistix minimiser to solve x* = argmin J(x) for a cost such as [](#eq-3dvar-cost), differentiating the solution by the implicit function theorem [](#eq-implicit-grad).
+:caption: Wraps an optimistix minimiser to solve x⋆ = argmin 𝒥(x) for a cost such as [](#eq-3dvar-cost), differentiating the solution by the implicit function theorem [](#eq-implicit-grad).
 :label: code-design-api-components-minimiser
 import equinox as eqx
 import optimistix as optx
@@ -317,7 +317,7 @@ class Minimiser(eqx.Module):
         self, cost_fn: vdx.CostFunction, x0: Float[Array, " N"], batch: Batch
     ) -> Float[Array, " N"]:
         # today (optimistix)
-        # x* = argmin_x J(x; batch)
+        # x⋆ = argmin_x 𝒥(x; batch)
         result = optx.minimise(
             fn=lambda x, args: cost_fn(x, args),
             solver=self.minimiser,
@@ -377,7 +377,7 @@ class BLUECost(eqx.Module):
 
 # proposed (D14)
 class ThreeDVarCost(eqx.Module):
-    """J = ½‖x - x_b‖²_{B⁻¹} + ½‖y - H(x)‖²_{R⁻¹}."""
+    """𝒥 = ½‖x - μ_x‖²_Σ_x⁻¹ + ½‖y - h(x)‖²_Σ_ε⁻¹."""
 
     # today (pipekit_cycle)
     obs_op: pc.ObservationOperator
@@ -390,7 +390,7 @@ class ThreeDVarCost(eqx.Module):
 
 # proposed (D14)
 class StrongConstraintCost(eqx.Module):
-    """J = J_b(x_0) + Σ_t ‖y_t - H_t(M_t(x_0))‖²_{R⁻¹}."""
+    """𝒥 = 𝒥_b(x_0) + ∑_t ‖y_t - h_t(f_t(x_0))‖²_Σ_ε⁻¹."""
 
     # today (pipekit_cycle)
     forward: pc.ForwardModel
@@ -407,7 +407,7 @@ class StrongConstraintCost(eqx.Module):
 
 # proposed (D14)
 class WeakConstraintCost(eqx.Module):
-    """J = J_b(x_0) + Σ_t ‖y_t - H_t(x_t)‖²_{R⁻¹} + Σ_t ‖η_t‖²_{Q⁻¹}."""
+    """𝒥 = 𝒥_b(x_0) + ∑_t ‖y_t - h_t(x_t)‖²_Σ_ε⁻¹ + ∑_t ‖η_t‖²_Σ_η⁻¹."""
 
     # today (pipekit_cycle)
     forward: pc.ForwardModel
@@ -427,7 +427,7 @@ class WeakConstraintCost(eqx.Module):
 
 # proposed (D14)
 class IncrementalCost(eqx.Module):
-    """Linearised J for the incremental 4DVar inner loop."""
+    """Linearised 𝒥 for the incremental 4DVar inner loop."""
 
     forward_lin: lx.AbstractLinearOperator
     obs_op_lin: lx.AbstractLinearOperator
@@ -585,7 +585,7 @@ Batch = vdx.Batch1D | vdx.Batch2D | vdx.Batch2DMultivar
 
 # today* (vardax): also ships prior_cov_op, obs_cov_op and solver fields
 class LaplaceCovariance(eqx.Module):
-    """P* = (Hᵀ R⁻¹ H + B⁻¹)⁻¹ at MAP."""
+    """Σ_x|y = (Hᵀ Σ_ε⁻¹ H + Σ_x⁻¹)⁻¹ at MAP."""
 
     def __call__(
         self, analysis: Float[Array, " N"], model: eqx.Module, batch: Batch
@@ -594,7 +594,7 @@ class LaplaceCovariance(eqx.Module):
 
 # today* (vardax): also ships prior_cov_op, obs_cov_op and tol fields
 class GaussNewtonHessian(eqx.Module):
-    """Krylov / Lanczos inversion of J''(x*) via lineax."""
+    """Krylov / Lanczos inversion of 𝒥''(x⋆) via lineax."""
 
     n_krylov: int = eqx.field(static=True, default=50)
 
@@ -673,7 +673,7 @@ homoscedastic cases. `MultiInstrumentFusion` requires them.
 ### `Posterior`
 
 ```{code-block} python
-:caption: Declares the `Posterior` container for the mean x* and covariance P* of [](#eq-oi-posterior).
+:caption: Declares the `Posterior` container for the mean x⋆ and covariance Σ_x|y of [](#eq-oi-posterior).
 :label: code-design-api-components-posterior
 import equinox as eqx
 import lineax as lx

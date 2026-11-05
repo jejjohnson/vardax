@@ -19,8 +19,8 @@ version: 0.5.0
 │    IncrementalFourDVar    — operational GN+CG+CVT form of strong-4DVar    │
 │                                                                           │
 │  Learned:                                                                 │
-│    FourDVarNet            — learned φ_θ + learned Φ_φ                     │
-│    AmortizedPosterior     — direct q_φ(x | y) head                        │
+│    FourDVarNet            — learned g_ae + learned g_mod                  │
+│    AmortizedPosterior     — direct q(x | y; ν) head                       │
 │                                                                           │
 │  Latent (v0.5+, D17):                                                     │
 │    LatentThreeDVar        — 3DVar in z                                    │
@@ -117,7 +117,7 @@ Foundation (required dependencies):
 ### Protocols
 
 ```{code-block} python
-:caption: Declares the five vardax protocols (prior φ, gradient modulator Φ, cost J, posterior adapter, minimiser) next to the three re-exported from pipekit-cycle; J is the cost of [](#eq-3dvar-cost) and its 4DVar forms, Φ drives [](#eq-4dvarnet-update).
+:caption: Declares the five vardax protocols (prior g_ae, gradient modulator g_mod, cost 𝒥, posterior adapter, minimiser) next to the three re-exported from pipekit-cycle; 𝒥 is the cost of [](#eq-3dvar-cost) and its 4DVar forms, g_mod drives [](#eq-4dvarnet-update).
 :label: code-design-architecture-protocols
 # vardax/protocols.py; ships today as vardax/_src/protocols.py, re-exported as vdx.*
 from typing import Any, Protocol, runtime_checkable
@@ -137,24 +137,24 @@ from jaxtyping import Array, Float
 # today (vardax)
 @runtime_checkable
 class Prior(Protocol):
-    """φ: state → regularised state.
+    """g_ae: state → regularised state.
 
-    For Gaussian priors with mean `m` and covariance op `B`, φ is the
-    affine map x ↦ m + B^{1/2}(B^{-1/2}(x - m)), i.e. identity. For
-    learned autoencoder priors, φ is the encode-decode map. For
-    dynamical priors, φ integrates the forward model n steps.
+    For Gaussian priors with mean `m` and covariance op Σ_x, g_ae is the
+    affine map x ↦ m + L_x(L_x⁻¹(x - m)), i.e. identity. For
+    learned autoencoder priors, g_ae is the encode-decode map. For
+    dynamical priors, g_ae integrates the forward model n steps.
     """
 
-    # x ↦ φ(x)
+    # x ↦ g_ae(x)
     def __call__(self, x: Float[Array, " N"]) -> Float[Array, " N"]: ...
 
 
 # today* (vardax); ships as __call__(grad, state, carry)
 @runtime_checkable
 class GradModulator(Protocol):
-    """Φ: (gradient, carry) → (update, new_carry). FourDVarNet only."""
+    """g_mod: (gradient, carry) → (update, new_carry). FourDVarNet only."""
 
-    # (∇J, h) ↦ (Φ(∇J, h), h′)
+    # (∇𝒥, c) ↦ (g_mod(∇𝒥, c), c′)
     def __call__(
         self, grad: Float[Array, " N"], carry: Any
     ) -> tuple[Float[Array, " N"], Any]: ...
@@ -163,9 +163,9 @@ class GradModulator(Protocol):
 # today (vardax)
 @runtime_checkable
 class CostFunction(Protocol):
-    """J: (state, batch, …) → scalar."""
+    """𝒥: (state, batch, …) → scalar."""
 
-    # x ↦ J(x)
+    # x ↦ 𝒥(x)
     def __call__(
         self, x: Float[Array, " N"], batch: Batch, **kwargs: Any
     ) -> Float[Array, ""]: ...
@@ -176,7 +176,7 @@ class CostFunction(Protocol):
 class PosteriorAdapter(Protocol):
     """Maps inference output → mean + covariance + provenance."""
 
-    # x* ↦ (x*, P*, provenance)
+    # x⋆ ↦ (x⋆, Σ_x|y, provenance)
     def __call__(
         self, analysis: Float[Array, " N"], model: AnalysisStep, batch: Batch
     ) -> Posterior: ...
@@ -188,7 +188,7 @@ class Minimiser(Protocol):
     """Wrapper around optimistix.AbstractMinimiser exposing vardax's
     cost-function interface. Carries its own minimiser_adjoint."""
 
-    # x* = argmin J(x), started from x₀
+    # x⋆ = argmin 𝒥(x), started from x₀
     def __call__(
         self, cost_fn: CostFunction, x0: Float[Array, " N"], batch: Batch
     ) -> Float[Array, " N"]: ...
@@ -209,7 +209,7 @@ class SolverConfig(eqx.Module):
     """Config for FourDVarNet inner loop."""
 
     n_steps: int = eqx.field(static=True)
-    # α, the step size of xₖ₊₁ = xₖ − α Φ(∇J, hₖ)
+    # α, the step size of x⁽ⁱ⁺¹⁾ = x⁽ⁱ⁾ − α g_mod(∇𝒥, c⁽ⁱ⁾)
     alpha: float = 0.2
     prior_weight: float = 1.0
     # No grad_mode enum; adjoints come from the minimiser_adjoint slot.
@@ -223,7 +223,7 @@ class IncrementalConfig(eqx.Module):
     n_inner: int = eqx.field(static=True, default=20)
     cg_atol: float = 1e-5
     cg_rtol: float = 1e-5
-    # x₀ − x_b = S χ when True
+    # x₀ − μ_x = L_x z when True
     cvt: bool = eqx.field(static=True, default=True)
 
 
@@ -260,15 +260,15 @@ from jaxtyping import Array, Float, PRNGKeyArray
 
 # today* (vardax); ships extra CG fields cg_atol, cg_rtol, cg_max_steps, solver
 class OptimalInterpolation(eqx.Module):
-    """BLUE: x* = x_b + BH^T(HBH^T + R)^{-1}(y - Hx_b). Closed-form."""
+    """BLUE: x⋆ = μ_x + Σ_x Hᵀ (H Σ_x Hᵀ + Σ_ε)⁻¹ (y − H μ_x). Closed-form."""
 
-    # must have a linear `linearize(x_b) -> H`
+    # must have a linear `linearize(μ_x) -> H`
     obs_op: ObservationOperator
     prior_mean: Float[Array, " N"]
     prior_cov_op: lx.AbstractLinearOperator
     obs_cov_op: lx.AbstractLinearOperator
 
-    # x* = x_b + K(y − H x_b)
+    # x⋆ = μ_x + G (y − H μ_x)
     def __call__(self, batch: Batch) -> Float[Array, " N"]: ...
     def as_analysis_step(self) -> AnalysisStep: ...
 
@@ -278,7 +278,7 @@ class OptimalInterpolation(eqx.Module):
 
 # today* (vardax)
 class ThreeDVar(eqx.Module):
-    """3D variational: minimise ‖x-x_b‖²_B + ‖y-H(x)‖²_R over x."""
+    """3D variational: minimise ‖x-μ_x‖²_B + ‖y-h(x)‖²_R over x."""
 
     obs_op: ObservationOperator
     prior_mean: Float[Array, " N"]
@@ -288,7 +288,7 @@ class ThreeDVar(eqx.Module):
     # today (optimistix)
     minimiser_adjoint: optx.AbstractAdjoint = optx.ImplicitAdjoint()
 
-    # x* = argmin J(x)
+    # x⋆ = argmin 𝒥(x)
     def __call__(self, batch: Batch) -> Float[Array, " N"]: ...
     def as_analysis_step(self) -> AnalysisStep: ...
 
@@ -311,7 +311,7 @@ class StrongFourDVar(eqx.Module):
     # today (diffrax)
     forward_adjoint: dfx.AbstractAdjoint = dfx.RecursiveCheckpointAdjoint()
 
-    # x₀* = argmin J(x₀)
+    # x₀⋆ = argmin 𝒥(x₀)
     def __call__(self, batch: Batch) -> Float[Array, " N"]: ...
     def as_analysis_step(self) -> AnalysisStep: ...
 
@@ -328,7 +328,7 @@ class WeakFourDVar(eqx.Module):
     prior_mean: Float[Array, " N"]
     prior_cov_op: lx.AbstractLinearOperator
     obs_cov_op: lx.AbstractLinearOperator
-    # Q
+    # Σ_η
     model_err_cov_op: lx.AbstractLinearOperator
     minimiser: optx.AbstractMinimiser
     # today (optimistix)
@@ -336,7 +336,7 @@ class WeakFourDVar(eqx.Module):
     # today (diffrax)
     forward_adjoint: dfx.AbstractAdjoint = dfx.RecursiveCheckpointAdjoint()
 
-    # (x₀*, η*) = argmin J(x₀, η)
+    # (x₀⋆, η⋆) = argmin 𝒥(x₀, η)
     def __call__(self, batch: Batch) -> Float[Array, " N"]: ...
     def as_analysis_step(self) -> AnalysisStep: ...
 
@@ -360,7 +360,7 @@ class IncrementalFourDVar(eqx.Module):
     # today (diffrax)
     forward_adjoint: dfx.AbstractAdjoint = dfx.RecursiveCheckpointAdjoint()
 
-    # 𝐇_GN δx* = −∇J, repeated n_outer times
+    # 𝐇_GN δx⋆ = −∇𝒥, repeated n_outer times
     def __call__(self, batch: Batch) -> Float[Array, " N"]: ...
     def as_analysis_step(self) -> AnalysisStep: ...
 
@@ -371,7 +371,7 @@ class IncrementalFourDVar(eqx.Module):
 # proposed (architecture.md); ships as FourDVarNet1D / FourDVarNet2D, built from
 # sizes with solver_adjoint and no prior / grad_mod / config / forward_adjoint slots
 class FourDVarNet(eqx.Module):
-    """Learned 4DVar: learned prior φ_θ + learned grad modulator Φ_φ."""
+    """Learned 4DVar: learned prior g_ae + learned grad modulator g_mod."""
 
     prior: Prior
     obs_op: ObservationOperator
@@ -384,7 +384,7 @@ class FourDVarNet(eqx.Module):
     # today (diffrax)
     forward_adjoint: dfx.AbstractAdjoint = dfx.RecursiveCheckpointAdjoint()
 
-    # xₖ₊₁ = xₖ − Φ_φ(∇J, hₖ), unrolled
+    # x⁽ⁱ⁺¹⁾ = x⁽ⁱ⁾ − g_mod(∇𝒥, c⁽ⁱ⁾), unrolled
     def __call__(self, batch: Batch) -> Float[Array, " N"]: ...
     def as_analysis_step(self) -> AnalysisStep: ...
 
@@ -394,19 +394,19 @@ class FourDVarNet(eqx.Module):
 
 # today (vardax)
 class AmortizedPosterior(eqx.Module):
-    """Direct q_φ(x | y) head: flow / score / regression."""
+    """Direct q(x | y; ν) head: flow / score / regression."""
 
     encoder: eqx.Module
     head: eqx.Module
     config: AmortizedConfig
 
-    # E[x | y] under q_φ
+    # E[x | y] under q
     def __call__(self, batch: Batch) -> Float[Array, " N"]: ...
-    # x⁽ˢ⁾ ~ q_φ(x | y)
+    # x⁽ˢ⁾ ~ q(x | y; ν)
     def sample(
         self, batch: Batch, key: PRNGKeyArray, n: int
     ) -> Float[Array, "S N"]: ...
-    # log q_φ(x | y)
+    # log q(x | y; ν)
     def log_prob(self, x: Float[Array, " N"], batch: Batch) -> Float[Array, ""]: ...
     def as_analysis_step(self) -> AnalysisStep: ...
 ```
@@ -414,7 +414,7 @@ class AmortizedPosterior(eqx.Module):
 ### Data containers
 
 ```{code-block} python
-:caption: Declares the batch containers that carry y and its mask into the observation term [](#eq-obs-cost), and the `Posterior` that carries x* and P* of [](#eq-oi-posterior).
+:caption: Declares the batch containers that carry y and its mask into the observation term [](#eq-obs-cost), and the `Posterior` that carries x⋆ and Σ_x|y of [](#eq-oi-posterior).
 :label: code-design-architecture-containers
 import equinox as eqx
 import lineax as lx
@@ -454,9 +454,9 @@ class Batch2D(eqx.Module):
 
 # today* (vardax); ships cov, samples, provenance with defaults
 class Posterior(eqx.Module):
-    # x*
+    # x⋆
     mean: Float[Array, " N"]
-    # P*
+    # Σ_x|y
     cov: lx.AbstractLinearOperator | None
     samples: Float[Array, "S N"] | None
     provenance: dict
@@ -473,8 +473,8 @@ vardax/
 │   │                                  # PosteriorAdapter, Minimiser
 │   │                                  # + re-exports of pipekit_cycle protocols
 │   ├── costs/
-│   │   ├── obs.py                     # obs_cost (with R^{-1})
-│   │   ├── prior.py                   # prior_cost (with B^{-1})
+│   │   ├── obs.py                     # obs_cost (with Σ_ε^{-1})
+│   │   ├── prior.py                   # prior_cost (with Σ_x^{-1})
 │   │   ├── weak.py                    # variational_cost (3D / strong-4D)
 │   │   ├── strong.py                  # strong-constraint cost
 │   │   ├── weak_constraint.py         # weak-constraint cost (with η)

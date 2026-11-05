@@ -12,7 +12,7 @@ Implementing protocols and composing `eqx.Module` operators.
 ## Implementing `Prior` — Autoencoder
 
 ```{code-block} python
-:caption: Implements an autoencoder prior φ for the learned prior term of the 4DVarNet cost [](#eq-4dvarnet-cost) and checks it against the Prior protocol.
+:caption: Implements an autoencoder prior g_ae for the learned prior term of the 4DVarNet cost [](#eq-4dvarnet-cost) and checks it against the Prior protocol.
 :label: code-design-components-prior
 import equinox as eqx
 import vardax as vdx
@@ -24,7 +24,7 @@ from jaxtyping import Array, Float
 
 # user
 class ConvAEPrior(eqx.Module):
-    """Autoencoder prior φ(x) = dec(enc(x))."""
+    """Autoencoder prior g_ae(x) = dec(enc(x))."""
 
     encoder: eqx.nn.Sequential
     decoder: eqx.nn.Sequential
@@ -32,7 +32,7 @@ class ConvAEPrior(eqx.Module):
     def __call__(self, x: Float[Array, "T N"]) -> Float[Array, "T N"]:
         # z = enc(x)
         latent = self.encoder(x)
-        # φ(x) = dec(z)
+        # g_ae(x) = dec(z)
         return self.decoder(latent)
 
 
@@ -61,17 +61,17 @@ from jaxtyping import Array, Float
 
 # user
 class MaskedIdentity(eqx.Module):
-    """H(x) = mask ⊙ x."""
+    """h(x) = mask ⊙ x."""
 
     def __call__(
         self, x: Float[Array, " N"], mask: Float[Array, " N"] | None = None
     ) -> Float[Array, " N"]:
-        # H(x) = m ⊙ x, or x when no mask is given
+        # h(x) = m ⊙ x, or x when no mask is given
         return x * mask if mask is not None else x
 
     def linearize(self, x: Float[Array, " N"]) -> lx.AbstractLinearOperator:
         # today (lineax)
-        # H′(x) = ∂H/∂x
+        # h(x) = ∂H/∂x
         return lx.JacobianLinearOperator(self.__call__, x)  # (N, N) op
 
 
@@ -90,11 +90,11 @@ import lineax as lx
 import vardax as vdx
 
 # Shapes: N levels
-# Given: A_matrix (N, N), retrieval_prior x_a (N,), weighting_vector h (N,),
+# Given: A_matrix (N, N), retrieval_prior μ_ret (N,), weighting_vector w (N,),
 #        state x (N,), residual r (N,)
 
 # today (lineax)
-# A, or a gaussx structured operator
+# J_x̂, or a gaussx structured operator
 kernel_op = lx.MatrixLinearOperator(A_matrix)  # (N, N) op
 # today (vardax)
 ak = vdx.AveragingKernel(
@@ -104,18 +104,18 @@ ak = vdx.AveragingKernel(
 )
 
 # today (vardax)
-# ŷ = A (h ⊙ x + (1 − h) ⊙ x_a)
+# h(x) = J_x̂ (w ⊙ x + (1 − w) ⊙ μ_ret)
 y_pred = ak(x)  # (N,) → (N,)
 
 # Tangent-linear operator for incremental 4DVar
 # today (vardax)
-# H′ = A diag(h)
+# H = J_x̂ diag(w)
 obs_jacobian = ak.linearize(x)  # (N,) → (N, N) op
 # today (lineax)
-# H′ᵀ
+# Hᵀ
 obs_adjoint = obs_jacobian.transpose()  # (N, N) op
 # today (lineax)
-# H′ᵀ r
+# Hᵀ r
 y_adjoint = obs_adjoint.mv(residual)  # (N,) → (N,)
 ```
 
@@ -135,15 +135,15 @@ import vardax as vdx
 #        tropomi_uncertainty (Mᵢ,), state x (N,), batch
 
 # today (vardax)
-# Hᵢ(x) = Aᵢ (hᵢ ⊙ x + (1 − hᵢ) ⊙ x_a,i)
+# hᵢ(x) = J_x̂,ᵢ (wᵢ ⊙ x + (1 − wᵢ) ⊙ μ_ret,ᵢ)
 tropomi_ak = vdx.AveragingKernel(
     kernel_matrix=tropomi_A, prior_profile=tropomi_xa, pressure_weights=tropomi_h
 )
 # today (lineax)
-# Rᵢ = diag(σᵢ²)
+# Σ_ε,ᵢ = diag(σᵢ²)
 tropomi_cov = lx.DiagonalLinearOperator(tropomi_uncertainty)  # (Mᵢ, Mᵢ) op
 # today (vardax)
-# (Hᵢ, mᵢ, Rᵢ) for i = TROPOMI
+# (hᵢ, mᵢ, Σ_ε,ᵢ) for i = TROPOMI
 tropomi_spec = vdx.InstrumentSpec(
     obs_op=tropomi_ak,
     mask=tropomi_qa_flag,
@@ -168,12 +168,12 @@ fusion = vdx.MultiInstrumentFusion(registry=registry)
 
 # Returns dict[instrument_id, predicted_obs]
 # today* (vardax; __call__ takes the state only)
-# {i: Hᵢ(x)}
+# {i: hᵢ(x)}
 predictions = fusion(x, batch)  # (N,) → {i: (Mᵢ,)}
 
 # For strict pipekit_cycle.ObservationOperator contexts, use the adapter:
 # today (vardax)
-# H(x) = [H_TROPOMI(x); H_EMIT(x); H_GHGSat(x)]
+# h(x) = [h_TROPOMI(x); h_EMIT(x); h_GHGSat(x)]
 fusion_as_op = fusion.to_observation_operator()
 # today (pipekit_cycle)
 assert isinstance(fusion_as_op, pc.ObservationOperator)
@@ -184,7 +184,7 @@ assert isinstance(fusion_as_op, pc.ObservationOperator)
 ## Implementing `GradModulator` — ConvLSTM (FourDVarNet only)
 
 ```{code-block} python
-:caption: Implements the learned gradient modulator Φ of the 4DVarNet update [](#eq-4dvarnet-update) as a ConvLSTM.
+:caption: Implements the learned gradient modulator g_mod of the 4DVarNet update [](#eq-4dvarnet-update) as a ConvLSTM.
 :label: code-design-components-grad-mod
 import equinox as eqx
 import vardax as vdx
@@ -198,7 +198,7 @@ Carry = tuple[Float[Array, "G H W"], Float[Array, "G H W"]]
 
 # user
 class ConvLSTMGradMod(eqx.Module):
-    """Φ(∇ₓJ, h) → (update, h′) with a ConvLSTM cell and a projection."""
+    """g_mod(∇ₓ𝒥, h) → (update, h′) with a ConvLSTM cell and a projection."""
 
     conv_lstm: eqx.Module
     output_proj: eqx.nn.Conv2d
@@ -207,9 +207,9 @@ class ConvLSTMGradMod(eqx.Module):
         self, grad: Float[Array, "C H W"], carry: Carry
     ) -> tuple[Float[Array, "C H W"], Carry]:
         hidden, cell = carry
-        # (h′, c′) = ConvLSTM(∇ₓJ, (h, c))
+        # (h′, c′) = ConvLSTM(∇ₓ𝒥, (h, c))
         hidden, cell = self.conv_lstm(grad, (hidden, cell))
-        # Φ(∇ₓJ, h) = W h′
+        # g_mod(∇ₓ𝒥, h) = W h′
         update = self.output_proj(hidden)
         return update, (hidden, cell)
 
@@ -231,7 +231,7 @@ use `optimistix.AbstractMinimiser` for the inner solver instead.
 import optimistix as optx
 import vardax as vdx
 
-# Given: obs_op, background x_b, prior_cov B op, obs_cov R op
+# Given: obs_op, background μ_x, prior_cov Σ_x op, obs_cov Σ_ε op
 
 # Pick any optimistix minimiser
 # proposed (D6; vdx.Minimiser ships as a Protocol, the wrapper is
@@ -245,7 +245,7 @@ bfgs = vdx.Minimiser(optx.BFGS(rtol=1e-5, atol=1e-5))
 ncg = vdx.Minimiser(optx.NonlinearCG(rtol=1e-5, atol=1e-5))
 
 # today* (vardax; gn.minimiser and gn.adjoint are proposed)
-# x* = argmin J(x)
+# x⋆ = argmin 𝒥(x)
 model = vdx.ThreeDVar(
     obs_op=obs_op,
     prior_mean=background,
@@ -279,7 +279,7 @@ swm = somax.ShallowWaterModel(grid=grid, params=params)
 
 # Wrap as a Prior (integrates n_steps forward)
 # today* (vardax; ships as DynamicalPrior(model, params, solver, stepsize, adjoint))
-# φ(x₀) = M₁₀(x₀)
+# g_ae(x₀) = f₁₀(x₀)
 prior = vdx.DynamicalPrior(
     forward=swm,
     n_steps=10,
@@ -301,7 +301,7 @@ import vardax as vdx
 # not pinned (plumax)
 plume = plumax.GaussianPlumeForward(met=met_field, dispersion="MO")
 # today* (vardax; ships as DynamicalPrior(model, params, solver, stepsize, adjoint))
-# single-shot for Tier I: φ(x) = M₁(x)
+# single-shot for Tier I: g_ae(x) = f₁(x)
 prior = vdx.DynamicalPrior(forward=plume, n_steps=1)
 ```
 
@@ -317,19 +317,19 @@ import lineax as lx
 import vardax as vdx
 
 # Shapes: S windows; N state cells; M observations; D = 2 coordinates
-# Given: H_lin_op (M, N) lineax op, background x_b (N,), coords (N, D),
+# Given: H_lin_op (M, N) lineax op, background μ_x (N,), coords (N, D),
 #        obs_uncertainty (M,), batch
 
 # today (vardax)
-# H(x) = H x, must be linear
+# h(x) = H x, must be linear
 obs_op = vdx.LinearObs(operator=H_lin_op)
 # proposed (gaussx)
-# Bᵢⱼ = k_Matérn(sᵢ, sⱼ; ℓ = 10, σ = 0.1)
+# (Σ_x)ᵢⱼ = k_Matérn(sᵢ, sⱼ; ℓ = 10, σ = 0.1)
 prior_cov = gx.MaternLinearOperator(  # (N, D) → (N, N) PSD op
     coords, length_scale=10.0, sigma=0.1
 )
 # today (lineax)
-# R = diag(σ²)
+# Σ_ε = diag(σ²)
 obs_cov = lx.DiagonalLinearOperator(obs_uncertainty)  # (M,) → (M, M) op
 
 # today (vardax)
@@ -341,10 +341,10 @@ model = vdx.OptimalInterpolation(
 )
 
 # today (vardax)
-# closed form: x* = x_b + K (y − H x_b)
+# closed form: x⋆ = μ_x + G (y − H μ_x)
 analysis = model(batch)  # → (S, N)
 # today (vardax)
-# closed form: P* = (I − K H) B, with mean and provenance
+# closed form: Σ_x|y = (I − G H) Σ_x, with mean and provenance
 posterior = model.posterior(batch)  # Posterior(mean (N,), cov (N, N) op)
 ```
 
@@ -359,16 +359,16 @@ import optimistix as optx
 import vardax as vdx
 
 # Shapes: S windows; N levels
-# Given: A (N, N) lineax op, xa x_a (N,), h (N,), background x_b (N,),
-#        prior_cov B op, obs_cov R op, batch
+# Given: J_x̂ (N, N) lineax op, xa μ_ret (N,), w (N,), background μ_x (N,),
+#        prior_cov Σ_x op, obs_cov Σ_ε op, batch
 
 # today (vardax)
-# ŷ = A (h ⊙ x + (1 − h) ⊙ x_a), nonlinear via the h ⊙ x term
+# h(x) = J_x̂ (w ⊙ x + (1 − w) ⊙ μ_ret), nonlinear via the w ⊙ x term
 obs_op = vdx.AveragingKernel(kernel_matrix=A, prior_profile=xa, pressure_weights=h)
 
 # today* (vardax; optx.GaussNewton is a least-squares solver, not an
 #   AbstractMinimiser, so the model rejects it: use optx.BFGS or NonlinearCG)
-# J(x) = ½ ‖x − x_b‖²_{B⁻¹} + ½ ‖y − H(x)‖²_{R⁻¹}
+# 𝒥(x) = ½ ‖x − μ_x‖²_Σ_x⁻¹ + ½ ‖y − h(x)‖²_Σ_ε⁻¹
 model = vdx.ThreeDVar(
     obs_op=obs_op,
     prior_mean=background,
@@ -378,7 +378,7 @@ model = vdx.ThreeDVar(
     minimiser_adjoint=optx.ImplicitAdjoint(),
 )
 # today (vardax)
-# x* = argmin J(x)
+# x⋆ = argmin 𝒥(x)
 analysis = model(batch)  # → (S, N)
 ```
 
@@ -393,15 +393,15 @@ import diffrax as dfx
 import vardax as vdx
 
 # Shapes: S windows; T times; N state cells
-# Given: somax_model, A (N, N) lineax op, xa x_a (N,), h (N,),
-#        background x_b (N,), prior_cov B op, obs_cov R op, batch
+# Given: somax_model, J_x̂ (N, N) lineax op, xa μ_ret (N,), w (N,),
+#        background μ_x (N,), prior_cov Σ_x op, obs_cov Σ_ε op, batch
 
 # today (vardax)
-# ŷ = A (h ⊙ x + (1 − h) ⊙ x_a)
+# h(x) = J_x̂ (w ⊙ x + (1 − w) ⊙ μ_ret)
 obs_op = vdx.AveragingKernel(kernel_matrix=A, prior_profile=xa, pressure_weights=h)
 
 # today (vardax)
-# 3 outer relinearisations, 20 CG steps each, in χ with x₀ − x_b = S χ
+# 3 outer relinearisations, 20 CG steps each, in z with x₀ − μ_x = L_x z
 model = vdx.IncrementalFourDVar(
     forward=somax_model,
     obs_op=obs_op,
@@ -413,10 +413,10 @@ model = vdx.IncrementalFourDVar(
 )
 
 # today (vardax)
-# x₀* after the last outer iteration
+# x₀⋆ after the last outer iteration
 analysis = model(batch)  # → (S, N)
 # today (vardax)
-# P*_GN = 𝐇_GN⁻¹, reusing the Hessian of the last outer iteration
+# Σ_x|y,GN = 𝐇_GN⁻¹, reusing the Hessian of the last outer iteration
 posterior = model.posterior(batch)  # Posterior(mean (N,), cov (N, N) op)
 ```
 
@@ -434,7 +434,7 @@ import vardax as vdx
 #        ConvLSTMGradMod
 
 # proposed (D14; ships today as vdx.FourDVarNet1D / vdx.FourDVarNet2D)
-# x_{k+1} = x_k − Φ(∇ₓJ(x_k), h_k), k = 0 … K − 1
+# x⁽ⁱ⁺¹⁾ = x⁽ⁱ⁾ − g_mod(∇ₓ𝒥(x⁽ⁱ⁾), c⁽ⁱ⁾), i = 0 … N_iter − 1
 model = vdx.FourDVarNet(
     prior=ConvAEPrior(encoder=enc, decoder=dec),
     obs_op=MaskedIdentity(),
@@ -460,18 +460,18 @@ import vardax as vdx
 
 # Classical: pair with explicit adapter
 # today (vardax)
-# x₀* = argmin J(x₀)
+# x₀⋆ = argmin 𝒥(x₀)
 analysis = strong_4dvar(batch)  # → (S, N)
 # today* (vardax; the adapter takes one window's analysis, e.g. analysis[0])
-# P*_Laplace = (B⁻¹ + H′ᵀ R⁻¹ H′)⁻¹ at x₀*
+# Σ_x|y,Laplace = (Σ_x⁻¹ + Hᵀ Σ_ε⁻¹ H)⁻¹ at x₀⋆
 posterior = vdx.LaplaceCovariance()(analysis, strong_4dvar.as_analysis_step(), batch)
 
 # OI / Incremental: direct call, no adapter
 # today (vardax)
-# P* = (I − K H) B
+# Σ_x|y = (I − G H) Σ_x
 posterior = oi.posterior(batch)
 # today (vardax)
-# P*_GN = 𝐇_GN⁻¹
+# Σ_x|y,GN = 𝐇_GN⁻¹
 posterior = incremental.posterior(batch)
 
 # Export to population model

@@ -13,37 +13,37 @@ posterior primitives, adjoint composition.
 ## Closed-form BLUE (`OptimalInterpolation`)
 
 ```{code-block} python
-:caption: Computes the closed-form BLUE analysis [](#eq-blue-mean) and its lazy covariance [](#eq-blue-cov) with structured B and R.
+:caption: Computes the closed-form BLUE analysis [](#eq-blue-mean) and its lazy covariance [](#eq-blue-cov) with structured Σ_x and Σ_ε.
 :label: code-design-primitives-blue
 import gaussx as gx
 import lineax as lx
 import vardax as vdx
 
 # Shapes: N state cells; M observations; D = 2 coordinates
-# Given: coords (N, D), obs_variances (M,), background x_b (N,), obs y (M,),
+# Given: coords (N, D), obs_variances (M,), background μ_x (N,), obs y (M,),
 #        obs_op a linear vardax observation operator
 
 # proposed (gaussx)
-# Bᵢⱼ = k_Matérn-3/2(sᵢ, sⱼ; ℓ = 10, σ = 1)
+# (Σ_x)ᵢⱼ = k_Matérn-3/2(sᵢ, sⱼ; ℓ = 10, σ = 1)
 prior_cov = gx.MaternLinearOperator(  # (N, D) → (N, N) PSD op
     coords, length_scale=10.0, nu=1.5, sigma=1.0
 )
 # today (lineax)
-# R = diag(σ²)
+# Σ_ε = diag(σ²)
 obs_cov = lx.DiagonalLinearOperator(obs_variances)  # (M,) → (M, M) op
 # today (vardax)
-# H = H′(x_b), exact since obs_op is linear
+# H = H(μ_x), exact since obs_op is linear
 obs_jacobian = obs_op.linearize(background)  # (N,) → (M, N) op
 
 # proposed (D16)
-# x* = x_b + K (y − H x_b), P* = (I − K H) B
+# x⋆ = μ_x + G (y − H μ_x), Σ_x|y = (I − G H) Σ_x
 analysis, posterior_cov = vdx.costs.blue_analysis(  # (N,), (N, N) op
     background, obs, prior_cov, obs_cov, obs_jacobian
 )
-# P* stays an AbstractLinearOperator: mat-vecs via lineax.CG, never materialised
+# Σ_x|y stays an AbstractLinearOperator: mat-vecs via lineax.CG, never materialised
 ```
 
-The implementation picks between the $B$-space and $R$-space forms
+The implementation picks between the $\gmat{\Sigma}_x$-space and $\gmat{\Sigma}_\varepsilon$-space forms
 (Sherman-Morrison-Woodbury) based on dimensions.
 
 ---
@@ -57,27 +57,27 @@ import jax
 import vardax as vdx
 
 # Shapes: S windows; T times; N state cells
-# Given: state x (S, T, N), batch (y, m), obs_op H, obs_precision R⁻¹ op,
-#        background x_b, prior_precision B⁻¹ op, ae_prior φ
+# Given: state x (S, T, N), batch (y, m), obs_op H, obs_precision Σ_ε⁻¹ op,
+#        background μ_x, prior_precision Σ_x⁻¹ op, ae_prior g_ae
 
 # proposed (D19)
-# J_obs(x) = ½ ‖m ⊙ (y − H(x))‖²_{R⁻¹}
+# 𝒥_o(x) = ½ ‖m ⊙ (y − h(x))‖²_Σ_ε⁻¹
 obs_term = vdx.obs_cost(  # → ()
     state, batch.input, batch.mask, obs_operator=obs_op, R_inv_op=obs_precision
 )
 
 # today* (vardax)
-# J_b(x) = ½ ‖x − x_b‖²_{B⁻¹}
+# 𝒥_b(x) = ½ ‖x − μ_x‖²_Σ_x⁻¹
 prior_term_classical = vdx.prior_cost(  # → ()
     state, prior_mean=background, B_inv_op=prior_precision
 )
 
 # today* (vardax)
-# J_prior(x) = ‖x − φ(x)‖²
+# J_prior(x) = ‖x − g_ae(x)‖²
 prior_term_learned = vdx.prior_cost(state, prior_fn=ae_prior)  # → ()
 
 # today* (vardax)
-# J(x) = α_obs ½ ‖H(x) − y‖²_{R⁻¹} + α_prior ‖x − φ(x)‖²
+# 𝒥(x) = α_obs ½ ‖h(x) − y‖²_Σ_ε⁻¹ + α_prior ‖x − g_ae(x)‖²
 total_cost = vdx.variational_cost(  # → ()
     state,
     batch,
@@ -88,7 +88,7 @@ total_cost = vdx.variational_cost(  # → ()
 )
 
 # today* (vardax)
-# ∇ₓJ(x)
+# ∇ₓ𝒥(x)
 cost_grad = jax.grad(vdx.variational_cost)(  # (S, T, N)
     state, batch, ae_prior, obs_op, 1.0, 0.1
 )
@@ -107,27 +107,27 @@ import vardax as vdx
 from jaxtyping import Array, Float
 
 # Shapes: N state cells; M observations
-# Given: background x_b (N,), batch, forward_model and its step length dt,
-#        obs_op, prior_precision B⁻¹ op, obs_precision R⁻¹ op, plus
-#        initial_state, prior_cov B, obs_cov R and config for the helper
+# Given: background μ_x (N,), batch, forward_model and its step length dt,
+#        obs_op, prior_precision Σ_x⁻¹ op, obs_precision Σ_ε⁻¹ op, plus
+#        initial_state, prior_cov Σ_x, obs_cov Σ_ε and config for the helper
 
 
 # user
 def step(state: Float[Array, " N"]) -> Float[Array, " N"]:
-    """One model step Mₜ(x) of the forward."""
+    """One model step fₜ(x) of the forward."""
     return forward_model.step(state, dt)
 
 
-# Mₜ(x_b + δx) ≈ Mₜ(x_b) + M′ₜ δx
-forward_lin = jax.linearize(step, background)  # (Mₜ(x_b), δx ↦ M′ₜ δx)
+# fₜ(μ_x + δx) ≈ fₜ(μ_x) + Fₜ δx
+forward_lin = jax.linearize(step, background)  # (fₜ(μ_x), δx ↦ Fₜ δx)
 # today (vardax)
-# Hₜ(z + δz) ≈ Hₜ(z) + H′ₜ δz
+# hₜ(z + δz) ≈ hₜ(z) + Hₜ δz
 obs_op_lin = obs_op.linearize(background)  # (N,) → (M, N) op
 # δx⁽⁰⁾ = 0
 increment_start = jnp.zeros_like(background)  # (N,)
 
 # proposed (D11)
-# 𝐇_GN δx* = −∇J(x_b), solved with at most 20 CG steps
+# 𝐇_GN δx⋆ = −∇𝒥(μ_x), solved with at most 20 CG steps
 increment = vdx.solver.gauss_newton_inner(  # (N,)
     dx0=increment_start,
     x_b=background,
@@ -141,11 +141,11 @@ increment = vdx.solver.gauss_newton_inner(  # (N,)
     cg_rtol=1e-5,
 )
 
-# x⁽ᵏ⁺¹⁾ = x⁽ᵏ⁾ + δx*
+# x⁽ⁱ⁺¹⁾ = x⁽ⁱ⁾ + δx⋆
 background = background + increment  # (N,)
 
 # proposed (D11)
-# x* after config.n_outer relinearisations
+# x⋆ after config.n_outer relinearisations
 analysis = vdx.solver.incremental_outer(  # (N,)
     initial_state, batch, forward_model, obs_op, prior_cov, obs_cov, config
 )
@@ -156,32 +156,32 @@ analysis = vdx.solver.incremental_outer(  # (N,)
 ## Control-variable transform
 
 ```{code-block} python
-:caption: Maps a state to control variables and back with the Matérn square root S = B^{1/2} of the control-variable transform [](#eq-cvt).
+:caption: Maps a state to control variables and back with the Matérn square root L_x = Σ_x^{1/2} of the control-variable transform [](#eq-cvt).
 :label: code-design-primitives-cvt
 import gaussx as gx
 import vardax as vdx
 
 # Shapes: N state cells; D = 2 coordinates
-# Given: coords (N, D), state x (N,), background x_b (N,)
+# Given: coords (N, D), state x (N,), background μ_x (N,)
 
 # proposed (gaussx)
-# Bᵢⱼ = k_Matérn-3/2(sᵢ, sⱼ; ℓ = 10, σ = 1)
+# (Σ_x)ᵢⱼ = k_Matérn-3/2(sᵢ, sⱼ; ℓ = 10, σ = 1)
 prior_cov = gx.MaternLinearOperator(  # (N, D) → (N, N) PSD op
     grid_coords=coords, length_scale=10.0, nu=1.5, sigma=1.0
 )
 # proposed (gaussx; gaussx ships gx.sqrt(operator))
-# S = B^{1/2}
+# S = L_x
 prior_sqrt = prior_cov.half()  # (N, N) op
 
 # proposed (D11)
-# χ = B^{−1/2} (x − x_b)
+# z = L_x⁻¹ (x − μ_x)
 control = vdx.cvt.cvt_transform(state, background, prior_sqrt)  # (N,) → (N,)
 # proposed (D11)
-# x = x_b + B^{1/2} χ
+# x = μ_x + L_x z
 state = vdx.cvt.cvt_inverse(control, background, prior_sqrt)  # (N,) → (N,)
 ```
 
-In CVT coordinates the prior cost is $\|\chi\|^2$, preconditioning CG.
+In CVT coordinates the prior cost is $\Vert \vect{z} \Vert^2$, preconditioning CG.
 
 ---
 
@@ -199,13 +199,13 @@ import optimistix as optx
 import vardax as vdx
 
 # Shapes: N state cells; T times
-# Given: somax_model (a diffrax-integrated forward), obs_op, background x_b (N,),
-#        prior_cov B op, obs_cov R op
+# Given: somax_model (a diffrax-integrated forward), obs_op, background μ_x (N,),
+#        prior_cov Σ_x op, obs_cov Σ_ε op
 
 # today* (vardax; optx.GaussNewton is a least-squares solver, not an
 #   AbstractMinimiser, so the model rejects it: use optx.BFGS or NonlinearCG)
 # memory-efficient operational configuration
-# x₀* = argmin J(x₀), dx₀*/dθ by the implicit function theorem, λ(t) by a backsolve
+# x₀⋆ = argmin 𝒥(x₀), dx₀⋆/dθ by the implicit function theorem, λ(t) by a backsolve
 model = vdx.StrongFourDVar(
     forward=somax_model,
     obs_op=obs_op,
@@ -241,7 +241,7 @@ import optimistix as optx
 import vardax as vdx
 
 # Shapes: K = 15 inner steps
-# Given: ae_prior φ, obs_op H, conv_lstm Φ
+# Given: ae_prior g_ae, obs_op H, conv_lstm g_mod
 
 # Three adjoint options for FourDVarNet's inner solver:
 # today (optimistix)
@@ -251,11 +251,11 @@ solver_adjoint = optx.RecursiveCheckpointAdjoint()
 # O(1) memory, last step only (Bolte et al. 2023)
 solver_adjoint = vdx.adjoints.OneStepAdjoint()
 # today (optimistix)
-# O(1) memory, dx*/dθ = (I − ∂f/∂x)⁻¹ ∂f/∂θ, exact at a fixed point
+# O(1) memory, dx⋆/dθ = (I − ∂f/∂x)⁻¹ ∂f/∂θ, exact at a fixed point
 solver_adjoint = optx.ImplicitAdjoint()
 
 # proposed (D14; ships today as vdx.FourDVarNet1D / vdx.FourDVarNet2D)
-# x_{k+1} = x_k − Φ(∇ₓJ(x_k), h_k), k = 0 … K − 1
+# x⁽ⁱ⁺¹⁾ = x⁽ⁱ⁾ − g_mod(∇ₓ𝒥(x⁽ⁱ⁾), c⁽ⁱ⁾), i = 0 … N_iter − 1
 model = vdx.FourDVarNet(
     prior=ae_prior,
     obs_op=obs_op,
@@ -277,15 +277,15 @@ import jax
 import vardax as vdx
 
 # Shapes: N state cells
-# Given: analysis x* (N,), threedvar_cost J, batch, forward_model, obs_op,
-#        prior_precision B⁻¹ op, obs_precision R⁻¹ op, prior_cov B op, obs_cov R op
+# Given: analysis x⋆ (N,), threedvar_cost 𝒥, batch, forward_model, obs_op,
+#        prior_precision Σ_x⁻¹ op, obs_precision Σ_ε⁻¹ op, prior_cov Σ_x op, obs_cov Σ_ε op
 
-# ∇J
+# ∇𝒥
 cost_grad_fn = jax.grad(threedvar_cost)
 
 # proposed (D10; ships today as the vdx.LaplaceCovariance adapter)
 # Laplace at MAP, for ThreeDVar / StrongFourDVar / WeakFourDVar / FourDVarNet
-# P*_Laplace = (∇²J(x*))⁻¹ ≈ (B⁻¹ + H′ᵀ R⁻¹ H′)⁻¹
+# Σ_x|y,Laplace = (∇²𝒥(x⋆))⁻¹ ≈ (Σ_x⁻¹ + Hᵀ Σ_ε⁻¹ H)⁻¹
 posterior_cov = vdx.posterior.laplace_covariance(  # (N, N) op
     analysis,
     cost_grad_fn=cost_grad_fn,
@@ -295,7 +295,7 @@ posterior_cov = vdx.posterior.laplace_covariance(  # (N, N) op
 
 # proposed (D10; ships today as the vdx.GaussNewtonHessian adapter)
 # reused inside IncrementalFourDVar.posterior(batch)
-# P*_GN = 𝐇_GN⁻¹, from 50 Lanczos vectors
+# Σ_x|y,GN = 𝐇_GN⁻¹, from 50 Lanczos vectors
 gn_posterior_cov = vdx.posterior.gauss_newton_hessian(  # (N, N) op
     analysis, batch, forward_model, obs_op, prior_cov, obs_cov, n_krylov=50
 )
