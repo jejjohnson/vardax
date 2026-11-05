@@ -1,40 +1,9 @@
-r"""ODE-based dynamical priors (ported from ``mfourdvar``).
+"""ODE-based dynamical priors: the flow Ψ_Δt of ẋ = f(t, x; θ) as a regulariser.
 
-A *dynamical prior* treats a differential-equation forward model as the
-regulariser of a variational assimilation: it penalises state sequences
-that are inconsistent with the flow of an ODE ``dx/dt = f(t, x; θ)``.
-This is the missing physics-informed ingredient that enables
-strong/weak-constraint 4DVar with a (possibly learnable) ODE model.
-
-Ported from ``mfourdvar._src.priors.dynamical`` and adapted to vardax's
-conventions:
-
-- Implemented as :class:`equinox.Module` (matching the rest of vardax).
-  The ``flax.linen`` note in issue #14 predates the vardax rewrite; the
-  legacy code was itself Equinox-based.
-- The forward model ``model`` is any diffrax-compatible ODE right-hand
-  side — a callable ``f(t, y, args) -> dy`` operating directly on state
-  arrays (e.g. [`Lorenz63`][vardax.utils.dynamical_systems.Lorenz63] /
-  ``Lorenz96``). The legacy ``init_state`` / ``.array`` indirection is
-  dropped in favour of plain arrays.
-- ``diffrax`` is already a core dependency.
-
-Two concrete variants are provided:
-
-- [`DynIncrements`][vardax.DynIncrements] — one-step increments. The loss
-  compares each state to a *single* ODE step from the previous state:
-
-  $$
-  R(u; \theta) = \sum_t \| u_{t+1} - \varphi_{\Delta t}(u_t; \theta) \|^2 .
-  $$
-
-- [`DynTrajectory`][vardax.DynTrajectory] — full rollout. The loss
-  compares the whole trajectory to a single integration from the initial
-  state:
-
-  $$
-  R(u; \theta) = \sum_t \| u_t - \varphi_t(u_0; \theta) \|^2 .
-  $$
+The right-hand side is a diffrax-compatible callable ``f(t, y, args) -> dy`` acting
+directly on state arrays, and the priors score a state sequence by its mismatch
+with the flow, either one step at a time (``DynIncrements``) or as a full rollout
+(``DynTrajectory``).
 """
 
 from __future__ import annotations
@@ -57,13 +26,15 @@ Adjoint = dfx.AbstractAdjoint
 
 
 class DynamicalPrior(eqx.Module):
-    r"""Base class for ODE-based dynamical priors.
+    """Base class for ODE-based dynamical priors.
 
-    Wraps a diffrax ``diffeqsolve`` around an ODE right-hand side
-    $\mathrm{d}x/\mathrm{d}t = f(t, x; \theta)$ with pluggable solver, step-size
-    controller, and adjoint strategy. The adjoint choice trades memory against
-    speed for reverse-mode differentiation through the solve (relevant for long
-    windows).
+    Wraps a diffrax ``diffeqsolve`` around the ODE
+
+        ẋ = f(t, x; θ),   Ψ_Δt(x; θ) = x(t + Δt) from x(t) = x
+
+    with pluggable solver, step-size controller, and adjoint strategy. The
+    adjoint choice trades memory against speed for reverse-mode differentiation
+    through the solve (relevant for long windows).
 
     Concrete subclasses implement ``__call__`` (the integration) and
     ``loss`` (the dynamical residual). Instantiating ``DynamicalPrior``
@@ -72,7 +43,7 @@ class DynamicalPrior(eqx.Module):
     Args:
         model: Diffrax-compatible ODE right-hand side ``f(t, y, args) -> dy``.
         params: Optional default ``args`` threaded to ``model`` /
-            ``diffeqsolve`` (e.g. learnable ODE parameters $\theta$).
+            ``diffeqsolve`` (e.g. learnable ODE parameters θ).
             Overridable per call.
         solver: Diffrax solver (default :class:`diffrax.Tsit5`).
         stepsize: Diffrax step-size controller. Defaults to an adaptive
@@ -151,8 +122,10 @@ class DynamicalPrior(eqx.Module):
 
         ``adjoint`` overrides this prior's ``adjoint`` for one call.
         """
+        # t₀ and t₁ of the flow Ψ_{t₁−t₀}
         start_time = ts[0]
         end_time = ts[-1]
+        # first step Δt₀ = t₁ − t₀ of the window unless ``dt`` is given
         initial_step = ts[1] - ts[0] if dt is None else dt
         solution = dfx.diffeqsolve(
             terms=dfx.ODETerm(self.model),
@@ -175,6 +148,7 @@ class DynamicalPrior(eqx.Module):
         dt: float | None = None,
         params: PyTree | None = None,
     ) -> PyTree:
+        """Integrate the dynamics; implemented by the subclasses."""
         raise NotImplementedError
 
     def loss(
@@ -184,6 +158,7 @@ class DynamicalPrior(eqx.Module):
         x_gt: Array | None = None,
         params: PyTree | None = None,
     ) -> Array:
+        """Dynamical residual 𝒥_p; implemented by the subclasses."""
         raise NotImplementedError
 
     def reconstruct(
@@ -192,16 +167,16 @@ class DynamicalPrior(eqx.Module):
         ts: Array,
         params: PyTree | None = None,
     ) -> Array:
-        r"""Dynamics-consistent reconstruction of a state sequence.
+        """Dynamics-consistent reconstruction x̂ of a state sequence.
 
         Returns an array of the *same shape* as ``x`` such that
-        $\|x - \mathrm{reconstruct}(x, t_s)\|^2$ is the prior's dynamical residual,
-        the temporal analogue of the autoencoder reconstruction used by the
-        static [`Prior`][vardax.Prior] seam (Decision D18).
+        ‖x − x̂‖² is the prior's dynamical residual, the temporal analogue of the
+        autoencoder reconstruction x̂ = g_ae(x; θ) of the static
+        [`Prior`][vardax.Prior] seam.
 
         Args:
-            x: State sequence.
-            ts: Time coordinates $t_s$ of the sequence.
+            x: State sequence x.
+            ts: Time coordinates of the sequence.
             params: ODE ``args`` override.
 
         Returns:
@@ -224,7 +199,7 @@ class DynamicalPrior(eqx.Module):
         term into a weak-constraint dynamical residual.
 
         Args:
-            ts: Time coordinates $t_s$ to close over.
+            ts: Time coordinates to close over.
             params: ODE ``args`` override to close over.
 
         Returns:
@@ -254,16 +229,17 @@ class DynamicalPrior(eqx.Module):
     def as_forward_model(
         self, dt: float, adjoint: Adjoint | None = None
     ) -> _DynamicalForwardModel:
-        r"""Adapt this prior's dynamics to ``pipekit_cycle.ForwardModel``.
+        """Adapt this prior's dynamics to ``pipekit_cycle.ForwardModel``.
+
+            step(x, Δt) = Ψ_Δt(x; θ)
 
         The returned adapter exposes ``step(state, dt)``, ``dt``, and
         ``state_signature``, so the wrapped ODE can drive anything that
         consumes the pipekit forward-model seam,
         [`StrongFourDVar`][vardax.StrongFourDVar], ``pipekit_cycle.DACycle``,
-        etc. (Decisions D8/D18). ``step`` integrates the ODE over
-        $[0, \Delta t]$; the dynamics are therefore treated as autonomous
-        (time-shift invariant), which holds for the standard testbeds
-        (Lorenz-63/96) and any RHS that ignores ``t``.
+        etc. ``step`` integrates the ODE over [0, Δt]; the dynamics are therefore
+        treated as autonomous (time-shift invariant), which holds for the standard
+        testbeds (Lorenz-63/96) and any RHS that ignores ``t``.
 
         Each step integrates one short interval, so the adapter
         differentiates it with ``diffrax.DirectAdjoint``, which supports
@@ -274,7 +250,7 @@ class DynamicalPrior(eqx.Module):
         its long-window ``__call__``.
 
         Args:
-            dt: Default integration step $\Delta t$ advertised as the adapter's ``dt``.
+            dt: Default integration step Δt advertised as the adapter's ``dt``.
             adjoint: Diffrax adjoint of each step. Default ``None``:
                 ``diffrax.DirectAdjoint()``.
 
@@ -308,25 +284,24 @@ class DynamicalPrior(eqx.Module):
 
 
 class DynIncrements(DynamicalPrior):
-    r"""One-step-increment dynamical prior.
+    """One-step-increment dynamical prior.
 
     The loss integrates each state a *single* step forward and compares it
-    to the next observed state, so the dynamics act locally in time:
+    to the next observed state, so the dynamics act locally in time. It is a sum
+    of squares, not a mean:
 
-    $$
-    R(u; \theta) = \sum_t \| u_{t+1} - \varphi_{\Delta t}(u_t; \theta) \|^2 .
-    $$
+        𝒥_p(x; θ) = ∑ₜ ‖x_{t+1} − Ψ_Δt(xₜ; θ)‖²
 
     Algorithm:
-        1. Split the time grid into consecutive pairs
-           $(t_t, t_{t+1})$ with [`time_patches`][vardax.time_patches].
-        2. Propagate every state $u_t$ one step with the ODE solver, in
-           parallel over $t$.
+        1. Split the time grid into consecutive pairs (tₜ, t_{t+1}) with
+           [`time_patches`][vardax.time_patches].
+        2. Propagate every state xₜ one step with the ODE solver, in
+           parallel over t.
         3. Sum the squared differences to the next states.
 
     Args:
         model: Diffrax-compatible ODE right-hand side ``f(t, y, args) -> dy``.
-        params: Optional default ``args`` threaded to ``model`` (e.g. $\theta$).
+        params: Optional default ``args`` threaded to ``model`` (e.g. θ).
         solver: Diffrax solver (default :class:`diffrax.Tsit5`).
         stepsize: Diffrax step-size controller (adaptive by default for
             adaptive solvers).
@@ -372,7 +347,7 @@ class DynIncrements(DynamicalPrior):
         dt: float | None = None,
         params: PyTree | None = None,
     ) -> Array:
-        """Integrate ``x`` one step from ``ts[0]`` to ``ts[-1]``.
+        """Integrate ``x`` one step from ``ts[0]`` to ``ts[-1]``: Ψ_Δt(x; θ).
 
         Args:
             x: State at ``ts[0]``.
@@ -394,17 +369,19 @@ class DynIncrements(DynamicalPrior):
         x_gt: Array | None = None,
         params: PyTree | None = None,
     ) -> Array:
-        r"""One-step-increment dynamical loss.
+        """One-step-increment dynamical loss.
+
+            𝒥_p = ∑ₜ ‖Ψ_Δt(xₜ; θ) − x_gt,t+1‖²
 
         Args:
-            x: State sequence whose entries are the sources for the one-step
+            x: State sequence whose entries xₜ are the sources for the one-step
                 predictions.
             ts: Time coordinates of the sequence.
             x_gt: Target state sequence. Defaults to ``x`` (self-consistency).
-            params: ODE ``args`` override.
+            params: ODE ``args`` override, the θ of the flow.
 
         Returns:
-            Scalar dynamical residual $\sum_t \|\varphi(u_t) - u_{t+1}\|^2$.
+            Scalar dynamical residual 𝒥_p.
 
         Raises:
             ShapeError: If ``len(x) - 1``, the number of time pairs and
@@ -421,9 +398,12 @@ class DynIncrements(DynamicalPrior):
             )
             raise ShapeError(msg)
         propagate = ft.partial(self, params=params)
+        # Ψ_Δt(xₜ; θ) for every pair (tₜ, t_{t+1}), in parallel over t
         predicted_states = jax.vmap(propagate, in_axes=(0, 0))(x[:-1], ts_pairs)
-        # R = Σ_t ‖φ(u_t) − u_{t+1}‖²
-        return jnp.sum((predicted_states - x_gt[1:]) ** 2)
+        # Ψ_Δt(xₜ; θ) − x_gt,t+1
+        residual = predicted_states - x_gt[1:]
+        # 𝒥_p = ∑ₜ ‖Ψ_Δt(xₜ; θ) − x_gt,t+1‖²
+        return jnp.sum(residual**2)
 
     def reconstruct(
         self,
@@ -431,20 +411,21 @@ class DynIncrements(DynamicalPrior):
         ts: Array,
         params: PyTree | None = None,
     ) -> Array:
-        r"""One-step-increment reconstruction.
+        """One-step-increment reconstruction.
 
-        ``reconstruct(x, ts)[t+1]`` is the one-step propagation
-        $\varphi_{\Delta t}(x_t)$ and ``reconstruct(x, ts)[0] = x[0]``, so
-        $\|x - \text{reconstruct}(x, t_s)\|^2$ equals the increment
-        residual of [`loss`][vardax.DynIncrements.loss] (the $t=0$ term vanishes).
+            x̂ = [x₀, Ψ_Δt(x₀; θ), …, Ψ_Δt(x_{T−2}; θ)]
+
+        ``reconstruct(x, ts)[t+1]`` is the one-step propagation Ψ_Δt(xₜ; θ) and
+        ``reconstruct(x, ts)[0] = x[0]``, so ‖x − x̂‖² equals the increment
+        residual of [`loss`][vardax.DynIncrements.loss] (the t = 0 term vanishes).
 
         Args:
-            x: State sequence.
-            ts: Time coordinates $t_s$ of the sequence.
-            params: ODE ``args`` override.
+            x: State sequence x.
+            ts: Time coordinates of the sequence.
+            params: ODE ``args`` override, the θ of the flow.
 
         Returns:
-            The sequence $[x_0, \varphi(x_0), \dots, \varphi(x_{T-2})]$.
+            The reconstruction x̂, with the shape of ``x``.
 
         Examples:
             The residual of the reconstruction is the increment loss:
@@ -466,35 +447,34 @@ class DynIncrements(DynamicalPrior):
         """
         ts_pairs = time_patches(ts)
         propagate = ft.partial(self, params=params)
+        # Ψ_Δt(xₜ; θ) for every pair (tₜ, t_{t+1}), in parallel over t
         predicted_states = jax.vmap(propagate, in_axes=(0, 0))(x[:-1], ts_pairs)
-        # x̂ = [x₀; φ(x₀), …, φ(x_{T−1})]
+        # x̂ = [x₀, Ψ_Δt(x₀; θ), …, Ψ_Δt(x_{T−2}; θ)]
         # jnp, not einx: a one-state trajectory has no predictions to size
         return jnp.concatenate([x[:1], predicted_states])
 
 
 class DynTrajectory(DynamicalPrior):
-    r"""Full-rollout dynamical prior.
+    """Full-rollout dynamical prior.
 
     The loss integrates the initial state across the whole window and
     compares the resulting trajectory to the target sequence, enforcing the
-    dynamics as a global (strong) constraint:
+    dynamics as a global (strong) constraint. It is a sum of squares, not a mean:
 
-    $$
-    R(u; \theta) = \sum_t \| u_t - \varphi_t(u_0; \theta) \|^2 .
-    $$
+        𝒥_p(x; θ) = ∑ₜ ‖xₜ − Ψ_{tₜ−t₀}(x₀; θ)‖²
 
     This is the propagation used by strong-constraint 4DVar, see
     [`strong_variational_cost`][vardax.strong_variational_cost].
 
     Algorithm:
-        1. Integrate the ODE from the initial state $u_0$, saving the state at
+        1. Integrate the ODE from the initial state x₀, saving the state at
            every time in ``ts``.
         2. Sum the squared differences between the saved trajectory and the
            target sequence.
 
     Args:
         model: Diffrax-compatible ODE right-hand side ``f(t, y, args) -> dy``.
-        params: Optional default ``args`` threaded to ``model`` (e.g. $\theta$).
+        params: Optional default ``args`` threaded to ``model`` (e.g. θ).
         solver: Diffrax solver (default :class:`diffrax.Tsit5`).
         stepsize: Diffrax step-size controller (adaptive by default for
             adaptive solvers).
@@ -539,7 +519,7 @@ class DynTrajectory(DynamicalPrior):
         dt: float | None = None,
         params: PyTree | None = None,
     ) -> Array:
-        """Integrate the initial state ``x`` across all of ``ts``.
+        """Integrate the initial state ``x`` across all of ``ts``: Ψ_{tₜ−t₀}(x₀; θ).
 
         Args:
             x: Initial condition (state at ``ts[0]``).
@@ -560,22 +540,27 @@ class DynTrajectory(DynamicalPrior):
         x_gt: Array | None = None,
         params: PyTree | None = None,
     ) -> Array:
-        r"""Full-trajectory dynamical loss.
+        """Full-trajectory dynamical loss.
+
+            𝒥_p = ∑ₜ ‖Ψ_{tₜ−t₀}(x₀; θ) − x_gt,t‖²
 
         Args:
             x: State sequence; the initial condition ``x[0]`` seeds the rollout.
             ts: Time coordinates of the sequence.
             x_gt: Target trajectory. Defaults to ``x``.
-            params: ODE ``args`` override.
+            params: ODE ``args`` override, the θ of the flow.
 
         Returns:
-            Scalar dynamical residual $\sum_t \|\varphi_t(u_0) - u_t\|^2$.
+            Scalar dynamical residual 𝒥_p.
         """
         if x_gt is None:
             x_gt = x
+        # Ψ_{tₜ−t₀}(x₀; θ): only the initial state seeds the rollout
         predicted_states = self(x[0], ts, params=params)
-        # R = Σ_t ‖φ_t(u_0) − u_t‖²
-        return jnp.sum((predicted_states - x_gt) ** 2)
+        # Ψ_{tₜ−t₀}(x₀; θ) − x_gt,t
+        residual = predicted_states - x_gt
+        # 𝒥_p = ∑ₜ ‖Ψ_{tₜ−t₀}(x₀; θ) − x_gt,t‖²
+        return jnp.sum(residual**2)
 
     def reconstruct(
         self,
@@ -583,24 +568,27 @@ class DynTrajectory(DynamicalPrior):
         ts: Array,
         params: PyTree | None = None,
     ) -> Array:
-        r"""Full-rollout reconstruction: the trajectory from ``x[0]``.
+        """Full-rollout reconstruction: the trajectory from ``x[0]``.
 
-        $\|x - \text{reconstruct}(x, t_s)\|^2$ equals the trajectory
-        residual of [`loss`][vardax.DynTrajectory.loss].
+            x̂ₜ = Ψ_{tₜ−t₀}(x₀; θ)
+
+        ‖x − x̂‖² equals the trajectory residual of
+        [`loss`][vardax.DynTrajectory.loss].
 
         Args:
             x: State sequence; ``x[0]`` seeds the rollout.
-            ts: Time coordinates $t_s$ of the sequence.
+            ts: Time coordinates of the sequence.
             params: ODE ``args`` override.
 
         Returns:
             The rolled-out trajectory, same shape as ``x``.
         """
+        # x̂ₜ = Ψ_{tₜ−t₀}(x₀; θ)
         return self(x[0], ts, params=params)
 
 
 # ---------------------------------------------------------------------------
-# Adapters (Decision D18)
+# Adapters
 # ---------------------------------------------------------------------------
 
 
@@ -615,7 +603,8 @@ class _BoundTemporalPrior(eqx.Module):
     params: PyTree | None
 
     def __call__(self, x: Array) -> Array:
-        """One-argument reconstruction, per the static `Prior` seam."""
+        """One-argument reconstruction x̂ = reconstruct(x, ts), per the `Prior` seam."""
+        # x̂ with the time grid ts and parameters θ closed over
         return self.prior.reconstruct(x, self.ts, params=self.params)
 
 
@@ -632,7 +621,8 @@ class _DynamicalForwardModel(eqx.Module):
     adjoint: Adjoint
 
     def step(self, state: Array, dt: float) -> Array:
-        """Advance ``state`` by ``dt`` through the wrapped ODE."""
+        """Advance ``state`` by ``dt`` through the wrapped ODE: Ψ_dt(x; θ)."""
+        # autonomous dynamics: integrate over [0, Δt] whatever the true time
         ts = jnp.asarray([0.0, dt])
         saveat = dfx.SaveAt(t1=True)
         saved_states = self.prior._integrate(
