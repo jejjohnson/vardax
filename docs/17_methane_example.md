@@ -9,19 +9,19 @@ Methane source attribution from satellite XCH₄ observations is the
 flagship multi-instrument inversion problem. A single overpass gives
 observations from TROPOMI, EMIT, and (sometimes) GHGSat over a
 suspected emission event. The question: what was the source rate $Q$
-at the facility, and how uncertain is the answer?
+(kg h⁻¹) at the facility, and how uncertain is the answer?
 
 This chapter walks an end-to-end methane inversion using `IncrementalFourDVar` ([chapter 8](08_incremental_4dvar.md)) with multi-instrument fusion and averaging-kernel operators ([chapter 11](11_observation_operators.md)). The forward model comes from `plumax` (Tier I Gaussian plume); the inference is vardax.
 
 ## Problem setup
 
-- **State**: source parameters $(Q, x_0, y_0, H_\text{eff})$ for a
-  single point source. Tier I assumes a Gaussian plume forward.
-- **Observations**: per-instrument XCH₄ retrievals (TROPOMI L2, EMIT
+- **State**: source parameters $\vect{x} = (Q, s_1, s_2, H_\text{eff}) \in \mathbb{R}^{D_x}$ with $D_x = 4$ for a
+  single point source, the source position $(s_1, s_2)$ in m and the effective release height $H_\text{eff}$ in m (the code carries $\log Q$ in place of $Q$). Tier I assumes a Gaussian plume forward.
+- **Observations**: per-instrument XCH₄ retrievals $\vect{y}_i \in \mathbb{R}^{D_{y,i}}$ for the instruments $i = 1, \ldots, N_\text{inst}$ (TROPOMI L2, EMIT
   L2, GHGSat L2) within a 50 km radius / 2 hour window of the event
-  geometry.
+  geometry, stacked into $\vect{y} \in \mathbb{R}^{D_y}$ with $D_y = \sum_i D_{y,i}$.
 - **Met forcing**: ERA5 or WRF wind, PBL height and stability, supplied as static metadata (not a control variable).
-- **Goal**: posterior on $(Q, x_0, y_0, H_\text{eff})$, exported as a
+- **Goal**: posterior on $\vect{x}$, exported as a
   mark-likelihood for downstream population models.
 
 ## Data flow
@@ -81,7 +81,7 @@ This chapter walks an end-to-end methane inversion using `IncrementalFourDVar` (
 
 ## Sketch
 
-The inversion has a single observation time and uses $H \circ M$ as its observation operator.
+The inversion has a single observation time and uses $h \circ f$ as its observation operator.
 
 ```{code-block} python
 :caption: Builds one averaging-kernel operator [](#eq-averaging-kernel) per instrument, stacks them as in the fusion cost [](#eq-fusion-cost), minimises the strong-constraint cost [](#eq-strong4dvar-cost) for the source parameters and returns the Gauss-Newton posterior [](#eq-gn-cov).
@@ -91,8 +91,8 @@ import lineax as lx
 import plumax
 import vardax as vdx
 
-# Shapes: P = 4 source parameters (log Q, x₀, y₀, H_eff); M retrieved pixels;
-#         Mᵢ pixels of instrument i
+# Shapes: D_x = 4 source parameters (log Q, s₁, s₂, H_eff); D_y retrieved pixels;
+#         D_y,i pixels of instrument i; N_inst = 3 instruments
 
 # (1) Load satellite + met
 # not pinned (GeoCatalog)
@@ -115,10 +115,10 @@ plume = plumax.tier1.GaussianPlume(met=met, dispersion="MO")
 instrument_specs = {}
 for overpass in overpasses:
     # user; returns a vdx.AveragingKernel
-    # Hᵢ(x) = Aᵢ (hᵢ ⊙ x + (1 − hᵢ) ⊙ x_a,i)
+    # hᵢ(x) = J_x̂,i (wᵢ ⊙ x + (1 − wᵢ) ⊙ μ_ret,i)
     kernel_op = averaging_kernel_from_l2(overpass.l2_ds)
     # today (lineax)
-    # Rᵢ = diag(σᵢ²)
+    # Σ_ε,i = diag(σᵢ²)
     retrieval_cov = lx.DiagonalLinearOperator(overpass.retrieval_variance)
     # today (vardax)
     instrument_specs[overpass.instrument] = vdx.InstrumentSpec(
@@ -132,22 +132,22 @@ instrument_registry = vdx.InstrumentRegistry(entries=instrument_specs)
 # today (vardax)
 fusion = vdx.MultiInstrumentFusion(registry=instrument_registry)
 # today (vardax)
-# H(x) = [Hᵢ(x)]ᵢ, concatenated in sorted instrument order; the fusion itself
+# h(x) = [hᵢ(x)]ᵢ, concatenated in sorted instrument order; the fusion itself
 # returns a dict per instrument, which the cost cannot take
 fused_obs_op = fusion.to_observation_operator()
 
 # (4) Prior: lognormal on Q from the EDGAR inventory, Gaussian on log Q
 # user
 edgar_rate = edgar_lookup(event.facility_id)  # → ()
-# μ = log Q_EDGAR
+# log Q_EDGAR, the first entry of μ_x
 log_rate_prior_mean = jnp.log(edgar_rate)  # → ()
 # σ_log = 1, a coefficient of variation of about 100 %
 log_rate_prior_sd = 1.0
-# illustrative spreads on the source location and effective height
+# illustrative spreads σ_pos on the source location and σ_H on the effective height
 position_prior_sd_m = 500.0
 height_prior_sd_m = 25.0
-# B = diag(σ²_log, σ²_x, σ²_y, σ²_H)
-prior_variance = jnp.array(  # (P,)
+# Σ_x = diag(σ_log², σ_pos², σ_pos², σ_H²)
+prior_variance = jnp.array(  # (D_x,)
     [
         log_rate_prior_sd**2,
         position_prior_sd_m**2,
@@ -156,25 +156,25 @@ prior_variance = jnp.array(  # (P,)
     ]
 )
 # today (lineax)
-prior_cov = lx.DiagonalLinearOperator(prior_variance)  # (P, P) op
-# x_b = (log Q_EDGAR, 0, 0, 50 m)
-background = jnp.array([log_rate_prior_mean, 0.0, 0.0, 50.0])  # (P,)
+prior_cov = lx.DiagonalLinearOperator(prior_variance)  # (D_x, D_x) op
+# μ_x = (log Q_EDGAR, 0, 0, 50 m)
+background = jnp.array([log_rate_prior_mean, 0.0, 0.0, 50.0])  # (D_x,)
 
-# (5) Block-diagonal R across instruments
+# (5) Block-diagonal Σ_ε across instruments
 entries = fusion.registry.entries
 instrument_order = sorted(entries)
 instrument_variances = [entries[name].obs_cov_op.diagonal for name in instrument_order]
 # σ² = [σᵢ²]ᵢ, in the sorted order of the fused observations
-obs_variance = jnp.concatenate(instrument_variances)  # (Mᵢ,) each → (M,)
+obs_variance = jnp.concatenate(instrument_variances)  # (D_y,i) each → (D_y,)
 # today (lineax)
-# R = diag(Rᵢ); each Rᵢ is diagonal, so R is one diagonal
-obs_cov = lx.DiagonalLinearOperator(obs_variance)  # (M, M) op
+# Σ_ε = diag(Σ_ε,i); each Σ_ε,i is diagonal, so Σ_ε is one diagonal
+obs_cov = lx.DiagonalLinearOperator(obs_variance)  # (D_y, D_y) op
 
 # (6) Configure incremental 4DVar inversion
 # today (vardax)
 inversion_config = vdx.IncrementalConfig(n_outer=5, n_inner=20, cvt=True)
 # today* (vardax)
-# J(x) = ½ ‖x − x_b‖²_{B⁻¹} + ½ ‖m ⊙ (y − H(M(x)))‖²_{R⁻¹}
+# 𝒥(x) = ½ ‖x − μ_x‖²_Σ_x⁻¹ + ½ ‖m ⊙ (y − h(f(x)))‖²_Σ_ε⁻¹
 inversion = vdx.IncrementalFourDVar(
     forward=plume,
     obs_op=fused_obs_op,
@@ -185,21 +185,21 @@ inversion = vdx.IncrementalFourDVar(
 )
 
 # (7) Build batch from overpasses
-# user; overpasses → vdx.Batch1D of shape (1, 1, M)
+# user; overpasses → vdx.Batch1D of shape (1, 1, D_y)
 batch = build_event_batch(overpasses, met=met)
 
 # (8) Invert
 # today (vardax)
-# x* = argminₓ J(x)
-analysis = inversion(batch)  # (1, P)
+# x⋆ = argminₓ 𝒥(x)
+analysis = inversion(batch)  # (1, D_x)
 
 # (9) Gauss-Newton posterior at the analysis (model's own B and R)
 # today (vardax)
 hessian_adapter = vdx.GaussNewtonHessian()
 # today (vardax)
-# P* = (B⁻¹ + Gᵀ R⁻¹ G)⁻¹, G = H′ M′ at x*
+# Σ_x|y = (Σ_x⁻¹ + (H F)ᵀ Σ_ε⁻¹ (H F))⁻¹, with H and F the Jacobians of h and f at x⋆
 posterior = inversion.posterior(batch, adapter=hessian_adapter)
-# Posterior(mean=x*, cov=lazy P*, samples=None, provenance={...})
+# Posterior(mean=x⋆, cov=lazy Σ_x|y, samples=None, provenance={...})
 
 # (10) Export to population layer
 # today (vardax)
@@ -226,7 +226,7 @@ catalog.write_posterior(event.id, mark_record)
 - **`MultiInstrumentFusion`**: likelihood-level composition without pre-regridding
 - **`GaussNewtonHessian` posterior**: free from the last outer iteration
 - **`GaussianMarkLikelihood` export**: hand-off to Tier V population models (D10)
-- **`lineax` diagonal prior and block-diagonal obs cov**: the per-instrument blocks are diagonal, so $R$ is one `DiagonalLinearOperator`
+- **`lineax` diagonal prior and block-diagonal obs cov**: the per-instrument blocks are diagonal, so $\gmat{\Sigma}_\varepsilon$ is one `DiagonalLinearOperator`
 - **`plumax.tier1.GaussianPlume`** as `pipekit_cycle.ForwardModel` (D8)
 - **GeoCatalog query, inference and write loop**: the operational pattern
 
@@ -240,7 +240,7 @@ The example above is Step 2 (classical inference). The full cycle:
 | 2 (classical) | `IncrementalFourDVar` above |
 | 3 (emulator) | Train `plumax.NeuralPlume(net)` + adjoint calibration |
 | 4 (emulator inference) | Swap `forward=plume` → `forward=neural_plume`; vardax code unchanged |
-| 5 (amortized) | `AmortizedPosterior(encoder, head=ConditionalFlowHead)` trained on simulated $(Q, y)$ pairs |
+| 5 (amortized) | `AmortizedPosterior(encoder, head=ConditionalFlowHead)` trained on simulated $(Q, \vect{y})$ pairs |
 | 6 (improve) | Swap any block; previous step is the oracle for validation |
 
 At Step 5, `AmortizedPosterior` replaces the Step 2 classes entirely, validated against Step 2's output with the posterior gate [](#eq-gate-posterior) of chapter 14.
@@ -265,7 +265,7 @@ For population-level analysis (annual emissions from a basin, persistent super-e
 ```{code-block} python
 :caption: Collects the per-event Gauss-Newton posteriors [](#eq-gn-cov) of a basin as mark likelihoods for a population model.
 :label: code-methane-aggregation
-# Shapes: E events; P = 4 source parameters
+# Shapes: N_event events; D_x = 4 source parameters
 
 # not pinned (GeoCatalog)
 events = catalog.query_events(basin="permian", year=2024)
@@ -274,8 +274,10 @@ for event in events:
     # user
     batch = build_event_batch(event)
     # today (vardax)
-    # p(x | y) ≈ 𝒩(x*, P*), one per event
-    event_posterior = inversion.posterior(batch, adapter=hessian_adapter)  # event (P,)
+    # p(x ∣ y) ≈ 𝒩(x⋆, Σ_x|y), one per event
+    event_posterior = inversion.posterior(  # event (D_x,)
+        batch, adapter=hessian_adapter
+    )
     posteriors.append(event_posterior)
 
 # Pass to TMTPP / hierarchical Bayesian model
