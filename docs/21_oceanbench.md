@@ -26,7 +26,7 @@ The ML method is the smallest part of an operational chain. The parts that domin
 Three families of product, all reachable through the Copernicus
 Marine Data Store:
 
-- **Observations**: along-track satellite altimetry (NADIR pencil-beam tracks; SWOT wide-swath), plus in-situ profiles. Sparse, gappy, noisy: the $y$ of the observation model [](#eq-obs-model) and of every cost in this library.
+- **Observations**: along-track satellite altimetry (NADIR pencil-beam tracks; SWOT wide-swath), plus in-situ profiles. Sparse, gappy, noisy: the $\vect{y}$ of the observation model [](#eq-obs-model) and of every cost in this library.
 - **Reanalysis**: GLORYS12V1, the CMEMS global eddy-resolving reanalysis at $1/12^\circ$ with 50 vertical levels (1993 to 2020), assimilating along-track altimetry, SST, sea ice, and in-situ T/S profiles. Reanalyses blend model and observations, which makes them the standard training target for learned methods.
 - **Free-run simulation**: NEMO runs without assimilation; the ground truth generator for observing-system simulation experiments (OSSE), where "truth" must be known exactly.
 
@@ -54,7 +54,7 @@ evaluation falls back to withheld tracks and physical diagnostics.
 
 Fill the gaps between altimeter tracks to produce daily gap-free SSH maps. This is the first OceanBench edition, and the task chapter [16](16_ssh_example.md) implements three ways (OI baseline, `IncrementalFourDVar`, learned `FourDVarNet`). The learned configuration in brief:
 
-The toy SSH field is $\eta(t, y, x) = \sin(x - 0.2 t) \cos(y)$ on $16 \times 16$ cells, observed along diagonal ground tracks. A real configuration uses $128 \times 128$ patches, `latent_dim=32`, `hidden_dim=48` and 15 solver steps, and is trained before use (chapter [16](16_ssh_example.md)).
+The toy SSH field is $x(t, \vect{s}) = \sin(s_1 - 0.2 t) \cos(s_2)$ with zonal coordinate $s_1$ and meridional coordinate $s_2$, on $N_\text{lat} \times N_\text{lon} = 16 \times 16$ cells over a window of $T = 4$ steps (so $T + 1 = 5$ days), observed along diagonal ground tracks. A real configuration uses $128 \times 128$ patches, `latent_dim=32`, `hidden_dim=48` and 15 solver steps, and is trained before use (chapter [16](16_ssh_example.md)).
 
 ```{code-block} python
 :caption: Runs an untrained 4DVarNet, the update [](#eq-4dvarnet-update) on the cost [](#eq-4dvarnet-cost), on a toy SSH field observed along tracks through the masked identity [](#eq-masked-identity).
@@ -64,62 +64,69 @@ import jax
 import jax.numpy as jnp
 import vardax as vdx
 
-# Shapes: B = 1 patch; T = 5 days; H = W = 16 lat-lon cells
+# Shapes: N_batch = 1 patch; T = 4 steps, so T + 1 = 5 days
+# N_lat = N_lon = 16 cells
 
 key = jax.random.PRNGKey(0)
 key_model, key_noise = jax.random.split(key)
-cells = jnp.arange(16)  # (H,)
-grid = jnp.linspace(0.0, 2.0 * jnp.pi, 16)  # (H,)
-days = jnp.arange(5)  # (T,)
+cells = jnp.arange(16)  # (N_lat,)
+grid = jnp.linspace(0.0, 2.0 * jnp.pi, 16)  # (N_lat,)
+days = jnp.arange(5)  # (T + 1,)
 
 # 0.2 t
-drift = 0.2 * days  # (T,)
-# x − 0.2 t
-phase = einx.subtract("w, t -> t w", grid, drift)  # (T, W)
-# sin(x − 0.2 t)
-zonal_wave = jnp.sin(phase)  # (T, W)
-# cos(y)
-meridional_wave = jnp.cos(grid)  # (H,)
-# η(t, y, x) = sin(x − 0.2 t) cos(y), a toy SSH field drifting west
-ssh_truth = einx.multiply(  # (T, H, W)
+drift = 0.2 * days  # (T + 1,)
+# s₁ − 0.2 t
+phase = einx.subtract("w, t -> t w", grid, drift)  # (T + 1, N_lon)
+# sin(s₁ − 0.2 t)
+zonal_wave = jnp.sin(phase)  # (T + 1, N_lon)
+# cos(s₂)
+meridional_wave = jnp.cos(grid)  # (N_lat,)
+# x(t, s) = sin(s₁ − 0.2 t) cos(s₂), a toy SSH field drifting west
+ssh_truth = einx.multiply(  # (T + 1, N_lat, N_lon)
     "t w, h -> t h w", zonal_wave, meridional_wave
 )
 # i + j
-diagonal_index = einx.add("h, w -> h w", cells, cells)  # (H, W)
+diagonal_index = einx.add("h, w -> h w", cells, cells)  # (N_lat, N_lon)
 # 3t
-track_shift = 3 * days  # (T,)
+track_shift = 3 * days  # (T + 1,)
 # i + j − 3t, the along-track coordinate of a diagonal ground track
-track_coord = einx.subtract(  # (T, H, W)
+track_coord = einx.subtract(  # (T + 1, N_lat, N_lon)
     "h w, t -> t h w", diagonal_index, track_shift
 )
 # (i + j − 3t) mod 8
-track_phase = track_coord % 8  # (T, H, W)
+track_phase = track_coord % 8  # (T + 1, N_lat, N_lon)
 # i + j − 3t ≡ 0 (mod 8)
-on_track = track_phase == 0  # (T, H, W)
+on_track = track_phase == 0  # (T + 1, N_lat, N_lon)
 # m = 1 on track, 0 in the gaps
-track_mask = on_track.astype(jnp.float32)  # (T, H, W)
+track_mask = on_track.astype(jnp.float32)  # (T + 1, N_lat, N_lon)
 # ε ~ 𝒩(0, I)
-noise = jax.random.normal(key_noise, (5, 16, 16))  # (T, H, W)
+noise = jax.random.normal(key_noise, (5, 16, 16))  # (T + 1, N_lat, N_lon)
 # 0.02 ε
-scaled_noise = 0.02 * noise  # (T, H, W)
-# η + 0.02 ε
-noisy_ssh = ssh_truth + scaled_noise  # (T, H, W)
-# y = m ⊙ (η + 0.02 ε), zero-filled gaps
-ssh_tracks = track_mask * noisy_ssh  # (T, H, W)
+scaled_noise = 0.02 * noise  # (T + 1, N_lat, N_lon)
+# x + 0.02 ε
+noisy_ssh = ssh_truth + scaled_noise  # (T + 1, N_lat, N_lon)
+# y = m ⊙ (x + 0.02 ε), zero-filled gaps
+ssh_tracks = track_mask * noisy_ssh  # (T + 1, N_lat, N_lon)
 
 # today (vardax)
 model = vdx.FourDVarNet2D(
-    n_time=5,  # T: days in the assimilation window
-    height=16,  # H, W: regional lat-lon patch
+    n_time=5,  # T + 1: days in the assimilation window
+    height=16,  # N_lat, N_lon: regional lat-lon patch
     width=16,
     latent_dim=8,
     hidden_dim=8,
     n_solver_steps=3,
     key=key_model,
 )
-tracks_patch = einx.id("t h w -> 1 t h w", ssh_tracks)  # (T, H, W) → (B, T, H, W)
-mask_patch = einx.id("t h w -> 1 t h w", track_mask)  # (T, H, W) → (B, T, H, W)
-truth_patch = einx.id("t h w -> 1 t h w", ssh_truth)  # (T, H, W) → (B, T, H, W)
+tracks_patch = einx.id(  # (T + 1, N_lat, N_lon) → (N_batch, T + 1, N_lat, N_lon)
+    "t h w -> 1 t h w", ssh_tracks
+)
+mask_patch = einx.id(  # (T + 1, N_lat, N_lon) → (N_batch, T + 1, N_lat, N_lon)
+    "t h w -> 1 t h w", track_mask
+)
+truth_patch = einx.id(  # (T + 1, N_lat, N_lon) → (N_batch, T + 1, N_lat, N_lon)
+    "t h w -> 1 t h w", ssh_truth
+)
 # today (vardax)
 batch = vdx.Batch2D(
     input=tracks_patch,
@@ -127,9 +134,9 @@ batch = vdx.Batch2D(
     target=truth_patch,  # OSSE only
 )
 # today (vardax)
-# x* = argminₓ U(x), unrolled by the learned solver
-ssh_maps = model(batch)  # → (B, T, H, W)
-# (1/(T H W)) Σ m
+# x⋆ = argminₓ 𝒥(x), unrolled by the learned solver
+ssh_maps = model(batch)  # → (N_batch, T + 1, N_lat, N_lon)
+# mean(m), the observed fraction
 observed_fraction = einx.mean("t h w ->", track_mask)  # → ()
 print(f"observed fraction {observed_fraction:.3f}, maps {ssh_maps.shape}")
 ```

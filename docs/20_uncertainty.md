@@ -14,7 +14,7 @@ Chapter [13](13_posterior_covariance.md) covers *how* to compute a posterior cov
 
 ## Three kinds of uncertainty
 
-- **Aleatoric**: irreducible randomness in the measurement process, such as sensor noise, representativeness error and sampling gaps. More data of the same kind does not remove it; it belongs in the likelihood ($R$).
+- **Aleatoric**: irreducible randomness in the measurement process, such as sensor noise, representativeness error and sampling gaps. More data of the same kind does not remove it; it belongs in the likelihood ($\gmat{\Sigma}_\varepsilon$).
 - **Epistemic**: reducible ignorance about the system, such as imperfect model physics, unknown parameters and limited training data. More information (observations, better physics, more training) shrinks it; it belongs in priors and posteriors.
 - **Intrinsic variability**: chaotic sensitivity of the dynamics itself. Even a perfect model with perfect parameters diverges from truth under infinitesimal initial-condition error; it bounds predictability (forecast horizon) rather than estimation quality.
 
@@ -22,9 +22,9 @@ The mfourdvar notes organise the *loci* of these uncertainties into four groups 
 
 ## Uncertain data
 
-The likelihood side. Observation error enters the cost through the observation-error covariance $R$ of the observation cost [](#eq-obs-cost), and real data also arrive with gaps.
+The likelihood side. Observation error enters the cost through the observation-error covariance $\gmat{\Sigma}_\varepsilon$ of the observation cost [](#eq-obs-cost), and real data also arrive with gaps.
 
-- **Error covariance**: every analysis method takes an `obs_cov_op` ($R$ as a `lineax` operator); per-instrument $R$ blocks compose through [`MultiInstrumentFusion`](11_observation_operators.md), as in the fusion cost [](#eq-fusion-cost).
+- **Error covariance**: every analysis method takes an `obs_cov_op` ($\gmat{\Sigma}_\varepsilon$ as a `lineax` operator); per-instrument $\gmat{\Sigma}_\varepsilon$ blocks compose through [`MultiInstrumentFusion`](11_observation_operators.md), as in the fusion cost [](#eq-fusion-cost).
 - **Gaps and NaNs**: real products encode missing data as `NaN`
   rather than a clean mask; the `nan_to_num` flag of
   [`obs_cost_1d` / `obs_cost_2d`](xref:api#vardax.obs_cost_1d) and the
@@ -43,8 +43,8 @@ The likelihood side. Observation error enters the cost through the observation-e
 The dynamics side. A forward model is wrong in ways that range from
 "ignore it" to "model it":
 
-- **Deterministic (perfect-model)**: strong-constraint 4DVar [](#eq-strong4dvar-cost) treats $M_t$ as exact; all model error is silently folded into the initial-condition posterior.
-- **Additive model error**: weak-constraint 4DVar promotes the per-step error terms $\boldsymbol{\eta}_t$ of [](#eq-weak-model) to control variables with their own covariance $Q$; the dynamical-residual priors ([`DynIncrements`](19_physical_models.md), [](#eq-residual-one-step)) are the functional version of the same idea, with the dynamics as a soft penalty rather than a hard constraint.
+- **Deterministic (perfect-model)**: strong-constraint 4DVar [](#eq-strong4dvar-cost) treats $f_t$ as exact; all model error is silently folded into the initial-condition posterior.
+- **Additive model error**: weak-constraint 4DVar promotes the per-step error terms $\gvect{\eta}_t \in \mathbb{R}^{D_x}$ of [](#eq-weak-model) to control variables with their own covariance $\gmat{\Sigma}_{\eta,t} \in \mathbb{R}^{D_x \times D_x}$; the dynamical-residual priors ([`DynIncrements`](19_physical_models.md), [](#eq-residual-one-step)) are the functional version of the same idea, with the dynamics as a soft penalty rather than a hard constraint.
 - **Fully Bayesian**: placing distributions over the model structure
   itself is out of vardax's scope; the pragmatic surrogate is
   ensembles over model variants, scored through the same analysis
@@ -52,12 +52,12 @@ The dynamics side. A forward model is wrong in ways that range from
 
 ## Uncertain parameters
 
-Between data and model sit the parameters $\theta$ (ODE forcings, closure coefficients, neural-prior weights):
+Between data and model sit the parameters $\gvect{\theta} \in \mathbb{R}^{D_\theta}$ (ODE forcings, closure coefficients, neural-prior weights):
 
-- **Deterministic point estimates**: fit $\theta$ by gradient
+- **Deterministic point estimates**: fit $\gvect{\theta}$ by gradient
   descent through the solve
   ([`DynamicalPrior.loss(..., params=θ)`](19_physical_models.md) is
-  differentiable in $\theta$).
+  differentiable in $\gvect{\theta}$).
 - **Probabilistic**: the amortized family (chapter
   [10](10_amortized_inference.md)) returns distributions, not points:
   `ConditionalFlowHead` for flow-based posteriors, with the
@@ -74,7 +74,7 @@ The output side: attaching error bars to the analysis itself.
 - **Curvature-based**: the posterior adapters of chapter [13](13_posterior_covariance.md), `LaplaceCovariance` [](#eq-laplace-cov) and `GaussNewtonHessian` [](#eq-gn-cov), both matrix-free via `lineax`.
 - **Monte Carlo / ensemble**: `EnsembleCovariance` [](#eq-ensemble-cov) estimates the posterior spread from an ensemble of analyses (perturbed observations, perturbed parameters, or both).
 - **Amortized**: the heads of chapter
-  [10](10_amortized_inference.md) emit $q_\phi(x \mid y)$ directly.
+  [10](10_amortized_inference.md) emit $q(\vect{x} \mid \vect{y}; \gvect{\nu})$ directly, with $\vect{x} \in \mathbb{R}^{D_x}$, $\vect{y} \in \mathbb{R}^{D_y}$ and $\gvect{\nu} \in \mathbb{R}^{D_\nu}$.
 - **Conformal prediction**: distribution-free calibrated intervals
   wrapped around any point estimator; listed in the mfourdvar outline
   as future work and deliberately left outside vardax (it is a
@@ -87,7 +87,7 @@ treats "is it calibrated?" as a first-class question. The validation
 gates of the [six-step cycle](14_six_step_cycle.md) are the
 enforcement mechanism:
 
-The toy problem is conjugate Gaussian: $x \sim \mathcal{N}(0, I)$ in two dimensions and $y = x + \sigma \varepsilon$ with $\sigma = 0.5$, whose exact posterior is $\mathcal{N}(\mu(y), s^2 I)$ with $\mu(y) = y / (1 + \sigma^2)$ and $s^2 = \sigma^2 / (1 + \sigma^2)$ (the BLUE [](#eq-blue-mean) and [](#eq-blue-cov) with $H = B = I$ and $R = \sigma^2 I$).
+The toy problem is conjugate Gaussian: $\vect{x} \sim \mathcal{N}(\mathbf{0}, \mat{I})$ in $D_x = 2$ dimensions and $\vect{y} = \vect{x} + \sigma \gvect{\varepsilon}$ with $\gvect{\varepsilon} \sim \mathcal{N}(\mathbf{0}, \mat{I})$ and $\sigma = 0.5$, whose exact posterior is $\mathcal{N}(\vect{x}^\star(\vect{y}), s^2 \mat{I})$ with $\vect{x}^\star(\vect{y}) = \vect{y} / (1 + \sigma^2)$ and $s^2 = \sigma^2 / (1 + \sigma^2)$ (the BLUE [](#eq-blue-mean) and [](#eq-blue-cov) with $\mat{H} = \gmat{\Sigma}_x = \mat{I}$ and $\gmat{\Sigma}_\varepsilon = \sigma^2 \mat{I}$, so $D_y = D_x$).
 
 ```{code-block} python
 :caption: Runs simulation-based calibration, the posterior gate [](#eq-gate-posterior) and the Jacobian gate [](#eq-gate-jacobian) on a conjugate Gaussian toy whose exact posterior is the BLUE [](#eq-blue-mean) and [](#eq-blue-cov).
@@ -99,7 +99,7 @@ import lineax as lx
 import vardax as vdx
 from jaxtyping import Array, Float, PRNGKeyArray
 
-# Shapes: N = 2 state; S = 50 posterior samples; K = 100 calibration runs
+# Shapes: D_x = 2 state components; N_E = 50 posterior samples; N_runs = 100 runs
 
 key = jax.random.PRNGKey(0)
 key_calibration, key_truth, key_noise, key_probe = jax.random.split(key, 4)
@@ -126,7 +126,7 @@ def simulate_obs(state: Float[Array, " n"], key: PRNGKeyArray) -> Float[Array, "
 
 # user
 def posterior_mean(obs: Float[Array, " n"]) -> Float[Array, " n"]:
-    # μ(y) = y / (1 + σ²)
+    # x⋆(y) = y / (1 + σ²)
     return obs / (1.0 + noise_std**2)
 
 
@@ -135,27 +135,27 @@ def sample_posterior(
     obs: Float[Array, " n"], key: PRNGKeyArray, n_samples: int
 ) -> Float[Array, "s n"]:
     # δ ~ 𝒩(0, I)
-    noise = jax.random.normal(key, (n_samples, 2))  # (S, N)
+    noise = jax.random.normal(key, (n_samples, 2))  # (N_E, D_x)
     # user
-    # μ(y)
-    mean = posterior_mean(obs)  # (N,)
+    # x⋆(y)
+    mean = posterior_mean(obs)  # (D_x,)
     # s = √(s²)
     posterior_std = jnp.sqrt(posterior_var)  # → ()
     # s δ
-    scaled_noise = posterior_std * noise  # (S, N)
-    # x = μ(y) + s δ
+    scaled_noise = posterior_std * noise  # (N_E, D_x)
+    # x⁽ᵉ⁾ = x⋆(y) + s δ⁽ᵉ⁾
     return einx.add("n, s n -> s n", mean, scaled_noise)
 
 
 # user
 def fast_mean_map(obs: Float[Array, " n"]) -> Float[Array, " n"]:
-    # μ_fast(y) = 0.79 y, a slightly wrong posterior-mean map
+    # x̂_fast(y) = 0.79 y, a slightly wrong posterior-mean map
     return 0.79 * obs
 
 
 # today (vardax)
-# rank of ‖x‖ among ‖xˢ‖, xˢ ~ q(x | y), y ~ p(y | x), x ~ p(x)
-ranks = vdx.simulation_based_calibration(  # → (K,)
+# rank of ‖x‖ among ‖x⁽ᵉ⁾‖, x⁽ᵉ⁾ ~ q(x | y), y ~ p(y | x), x ~ p(x)
+ranks = vdx.simulation_based_calibration(  # → (N_runs,)
     sample_posterior,
     sample_prior,
     simulate_obs,
@@ -164,31 +164,31 @@ ranks = vdx.simulation_based_calibration(  # → (K,)
     n_samples=50,
 )
 # rank counts in five bins of [0, 50]
-rank_counts, _ = jnp.histogram(ranks, bins=5, range=(0, 50))  # (K,) → (5,)
+rank_counts, _ = jnp.histogram(ranks, bins=5, range=(0, 50))  # (N_runs,) → (5,)
 print(rank_counts)
 
 # user
 # x ~ 𝒩(0, I), one fresh truth
-fresh_truth = sample_prior(key_truth)  # (N,)
+fresh_truth = sample_prior(key_truth)  # (D_x,)
 # user
 # y = x + σ ε
-obs = simulate_obs(fresh_truth, key_noise)  # (N,)
+obs = simulate_obs(fresh_truth, key_noise)  # (D_x,)
 # s² at every component
-oracle_variance = jnp.full((2,), posterior_var)  # (N,)
+oracle_variance = jnp.full((2,), posterior_var)  # (D_x,)
 # today (lineax)
-# Σ = s² I
-oracle_cov = lx.DiagonalLinearOperator(oracle_variance)  # (N, N) op
+# Σ_x|y = s² I
+oracle_cov = lx.DiagonalLinearOperator(oracle_variance)  # (D_x, D_x) op
 # user
-# μ_oracle = μ(y)
-oracle_mean = posterior_mean(obs)  # (N,)
+# x⋆ = y / (1 + σ²)
+oracle_mean = posterior_mean(obs)  # (D_x,)
 # today (vardax)
 oracle = vdx.Posterior(mean=oracle_mean, cov=oracle_cov)
-# a fast mean off by 0.1, below the oracle σ = s ≈ 0.45
-fast_mean = oracle_mean + 0.1  # (N,)
+# a fast mean off by 0.1, below the oracle standard deviation s ≈ 0.45
+fast_mean = oracle_mean + 0.1  # (D_x,)
 # today (vardax)
 fast = vdx.Posterior(mean=fast_mean)
 # today (vardax)
-# |μ_fast − μ_oracle| / σ_oracle ≤ 1
+# |x̂_fast − x⋆| / s ≤ 1
 vdx.assert_posterior_agreement(fast, oracle, tolerance_sigma=1.0)
 # today (vardax)
 # ‖J_fast v − J_oracle v‖ / ‖J_oracle v‖ < 0.05, J_fast = 0.79 I, J_oracle = 0.8 I

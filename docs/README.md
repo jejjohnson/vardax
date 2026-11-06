@@ -16,24 +16,24 @@ layers:
 
 1. [Problem Setting](01_problem_setting.md) — Bayesian state
    estimation, the seven analysis methods
-2. [Observation Model](02_observation_model.md) — likelihood, $H$,
-   $R$, the `ObservationOperator` protocol
-3. [Dynamical Model](03_dynamical_model.md) — $M_t$, the
+2. [Observation Model](02_observation_model.md) — likelihood, $\mathbf{H}$,
+   $\boldsymbol{\Sigma}_\varepsilon$, the `ObservationOperator` protocol
+3. [Dynamical Model](03_dynamical_model.md) — $f_t$, the
    `ForwardModel` protocol, `diffrax` adjoint composition
 
 ### The seven analysis methods (chapters 4–10)
 
 4. [Optimal Interpolation / BLUE](04_oi_blue.md) — closed-form
    linear-Gaussian
-5. [3DVar](05_threedvar.md) — nonlinear $H$, single time
-6. [Strong-constraint 4DVar](06_strong_4dvar.md) — control = $x_0$
-7. [Weak-constraint 4DVar](07_weak_4dvar.md) — control = $(x_0, \boldsymbol{\eta})$
+5. [3DVar](05_threedvar.md) — nonlinear $h$, single time
+6. [Strong-constraint 4DVar](06_strong_4dvar.md) — control = $\mathbf{x}_0$
+7. [Weak-constraint 4DVar](07_weak_4dvar.md) — control = $(\mathbf{x}_0, \boldsymbol{\eta}_{1:T})$
 8. [Incremental 4DVar with CVT](08_incremental_4dvar.md) — operational
    fast path
 9. [4DVarNet — Learned 4DVar](09_4dvarnet.md) — learned prior +
    learned grad modulator
 10. [Amortized Inference](10_amortized_inference.md) — direct
-    $q_\phi(x \mid y)$ heads
+    $q(\mathbf{x} \mid \mathbf{y}; \boldsymbol{\nu})$ heads
 
 ### Cross-cutting (chapters 11–14)
 

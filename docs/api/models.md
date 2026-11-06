@@ -35,7 +35,7 @@ window. `IncrementalConfig` collects the outer/inner-loop knobs of
 
 ## Optimal estimation
 
-`optimal_estimation` is the Rodgers (2000) retrieval of a small state from many measurements: the MAP by Levenberg–Marquardt on the whitened residual, with the retrieval covariance, averaging kernel, degrees of freedom for signal and information content in an `OEResult`. `OEResult.as_observation_operator()` is the retrieval's view of the state, $x_a + A (x - x_a)$, for assimilating it downstream with `OEResult.retrieval_noise_cov` as its $R$.
+`optimal_estimation` is the Rodgers (2000) retrieval of a small state from many measurements: the MAP by Levenberg–Marquardt on the whitened residual, with the retrieval covariance, averaging kernel, degrees of freedom for signal and information content in an `OEResult`. `OEResult.as_observation_operator()` is the retrieval's view of the state, $\gvect{\mu}_x + \mat{J}_{\hat{x}} (\vect{x} - \gvect{\mu}_x)$ with the averaging kernel $\mat{J}_{\hat{x}} \in \mathbb{R}^{D_x \times D_x}$, for assimilating it downstream with `OEResult.retrieval_noise_cov` as its observation-error covariance $\gmat{\Sigma}_{\hat{x},\varepsilon} = \mat{G} \gmat{\Sigma}_\varepsilon \mat{G}^\top$.
 
 ::: vardax
     options:
@@ -46,9 +46,9 @@ window. `IncrementalConfig` collects the outer/inner-loop knobs of
 ## Neural-field 4DVar
 
 [`SpaceTimeFieldVar`](https://jejjohnson.github.io/vardax/neural-field-4dvar/) fits one continuous
-field $u(t, s) = f_\theta(t, s)$ over the whole window to point
+field $x(t, \vect{s}) = g_\text{field}(t, \vect{s}; \gvect{\theta})$ over the whole window to point
 observations, with an optional PDE residual as a soft constraint and
-weight decay in place of $B$; no rollout. It returns a
+weight decay in place of $\gmat{\Sigma}_x$; no rollout. It returns a
 `SpaceTimeFieldResult`, queryable anywhere, and `ensemble(...)` gives a
 deep-ensemble spread.
 

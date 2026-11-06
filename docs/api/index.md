@@ -29,16 +29,16 @@ import lineax as lx
 import pipekit_cycle as pc
 import vardax as vdx
 
-# Shapes: T = 1 time; N = 4 grid cells
+# Shapes: T = 0 steps, so T + 1 = 1 time; D_x = 4 grid cells
 
 state_structure = jax.ShapeDtypeStruct((1, 4), jnp.float32)
-# x_b = 0
-background = jnp.zeros((1, 4))  # (T, N)
+# μ_x = 0
+background = jnp.zeros((1, 4))  # (T + 1, D_x)
 # today (lineax)
-# B = R = I
-identity = lx.IdentityLinearOperator(state_structure)  # (T N, T N) op
+# Σ_x = Σ_ε = I
+identity = lx.IdentityLinearOperator(state_structure)  # (D_x, D_x) op
 # today (vardax)
-# J(x) = ½ ‖x − x_b‖²_{B⁻¹} + ½ ‖y − H(x)‖²_{R⁻¹}
+# 𝒥(x) = ½ ‖x − μ_x‖²_Σ_x⁻¹ + ½ ‖y − h(x)‖²_Σ_ε⁻¹
 model = vdx.ThreeDVar(
     obs_op=vdx.MaskedIdentity(),
     prior_mean=background,

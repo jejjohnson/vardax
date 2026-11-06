@@ -27,13 +27,13 @@ implementations:
 
 | Class | Method | Use when |
 |---|---|---|
-| `OptimalInterpolation` | BLUE / OI — closed-form linear-Gaussian | Linear $H$, Gaussian $B$ / $R$. The right default. |
-| `ThreeDVar` | 3D variational, nonlinear $H$ | Snapshot inversion |
-| `StrongFourDVar` | Strong-constraint 4DVar, control = $x_0$ | Multi-time, exact dynamics |
-| `WeakFourDVar` | Weak-constraint 4DVar, control = $(x_0, \boldsymbol{\eta})$ | Multi-time, model error active |
+| `OptimalInterpolation` | BLUE / OI — closed-form linear-Gaussian | Linear $\mat{H}$, Gaussian $\gmat{\Sigma}_x$ / $\gmat{\Sigma}_\varepsilon$. The right default. |
+| `ThreeDVar` | 3D variational, nonlinear $h$ | Snapshot inversion |
+| `StrongFourDVar` | Strong-constraint 4DVar, control = $\vect{x}_0$ | Multi-time, exact dynamics |
+| `WeakFourDVar` | Weak-constraint 4DVar, control = $(\vect{x}_0, \gvect{\eta}_{1:T})$ | Multi-time, model error active |
 | `IncrementalFourDVar` | Gauss–Newton outer + CG inner | Operational fast path |
-| `FourDVarNet1D` / `FourDVarNet2D` | Learned $\varphi_\theta$ + learned $\Phi_\phi$ | Learned variant of 4DVar |
-| `AmortizedPosterior` | Direct $q_\phi(x \mid y)$ head | Real-time / many-event regimes |
+| `FourDVarNet1D` / `FourDVarNet2D` | Learned $g_\text{ae}$ + learned $g_\text{mod}$ | Learned variant of 4DVar |
+| `AmortizedPosterior` | Direct $q(\vect{x} \mid \vect{y}; \gvect{\nu})$ head | Real-time / many-event regimes |
 
 Gradients through dynamics and the inner minimiser are composed via
 [`diffrax.AbstractAdjoint`](12_adjoint_methods.md) and
@@ -46,21 +46,18 @@ subclass targeting upstream contribution.
 
 Every analysis method in vardax is a special case of
 
-$$
-x^* = \underset{x, \boldsymbol{\eta}}{\arg\min} \quad
-\underbrace{\tfrac{1}{2} \Vert x - x_b \Vert^2_{B^{-1}}}_{\text{background term}} +
-\underbrace{\tfrac{1}{2}\sum_{t=0}^{T} \Vert y_t - H_t(M_t(x; \boldsymbol{\eta})) \Vert^2_{R_t^{-1}}}_{\text{observation term}}
-\quad \Big[ + \underbrace{\tfrac{1}{2}\sum_{t=1}^{T} \Vert \eta_t \Vert^2_{Q_t^{-1}}}_{\text{model-error term}} \Big].
-$$
+$$\vect{x}_0^\star = \underset{\vect{x}_0, \gvect{\eta}_{1:T}}{\op{argmin}} \underbrace{\frac{1}{2} \Vert \vect{x}_0 - \gvect{\mu}_x \Vert^2_{\gmat{\Sigma}_x^{-1}}}_{\text{background term}} + \underbrace{\frac{1}{2} \sum_{t=0}^{T} \Vert \vect{y}_t - h_t(\vect{x}_t) \Vert^2_{\gmat{\Sigma}_{\varepsilon,t}^{-1}}}_{\text{observation term}} \left[ + \underbrace{\frac{1}{2} \sum_{t=1}^{T} \Vert \gvect{\eta}_t \Vert^2_{\gmat{\Sigma}_{\eta,t}^{-1}}}_{\text{model-error term}} \right]$$
+
+where the window has $T$ steps and $T + 1$ times, $\vect{x}_t = f(\vect{x}_{t-1}) + \gvect{\eta}_t$ is the trajectory from $\vect{x}_0$ (with $\gvect{\eta}_t = \mathbf{0}$ when the model-error term is absent), and the shapes are $\vect{x}_t, \gvect{\mu}_x, \gvect{\eta}_t \in \mathbb{R}^{D_x}$, $\vect{y}_t \in \mathbb{R}^{D_y}$, $f: \mathbb{R}^{D_x} \to \mathbb{R}^{D_x}$, $h_t: \mathbb{R}^{D_x} \to \mathbb{R}^{D_y}$, $\gmat{\Sigma}_x, \gmat{\Sigma}_{\eta,t} \in \mathbb{R}^{D_x \times D_x}$ and $\gmat{\Sigma}_{\varepsilon,t} \in \mathbb{R}^{D_y \times D_y}$.
 
 Different methods specialise differently:
 
-- $T = 0$ + linear $H$ + Gaussian $B/R$ → `OptimalInterpolation` (closed form)
-- $T = 0$ + nonlinear $H$ → `ThreeDVar`
+- $T = 0$ + linear $\mat{H}$ + Gaussian $\gmat{\Sigma}_x$, $\gmat{\Sigma}_\varepsilon$ → `OptimalInterpolation` (closed form)
+- $T = 0$ + nonlinear $h$ → `ThreeDVar`
 - $T > 0$, model-error term absent → `StrongFourDVar` / `IncrementalFourDVar`
 - $T > 0$, model-error term active → `WeakFourDVar`
-- Learned $\varphi_\theta$ replacing $\Vert x - x_b \Vert^2_{B^{-1}}$ + learned inner solver → `FourDVarNet1D` / `FourDVarNet2D`
-- Direct posterior head $q_\phi(x \mid y)$ → `AmortizedPosterior`
+- Learned $g_\text{ae}$ replacing $\Vert \vect{x} - \gvect{\mu}_x \Vert^2_{\gmat{\Sigma}_x^{-1}}$ + learned inner solver → `FourDVarNet1D` / `FourDVarNet2D`
+- Direct posterior head $q(\vect{x} \mid \vect{y}; \gvect{\nu})$ → `AmortizedPosterior`
 
 See the [Problem Setting](01_problem_setting.md) chapter for the full derivation.
 
@@ -77,8 +74,9 @@ vardax is not yet on PyPI; install from the checkout.
 ## Quickstart: optimal interpolation
 
 A single forward pass: no iteration, no convergence criterion. The analysis
-is the $B$/$R$-weighted combination of background and observations, so it
+is the $\gmat{\Sigma}_x$/$\gmat{\Sigma}_\varepsilon$-weighted combination of background and observations, so it
 beats both.
+The state is $\vect{x} \in \mathbb{R}^{D_x}$ with $D_x = 64$ cells, the background mean is $\gvect{\mu}_x = \mathbf{0}$ with $\gmat{\Sigma}_x = \mat{I}$, and the observation noise has $\gmat{\Sigma}_\varepsilon = \sigma_\varepsilon^2 \mat{I}$ with $\sigma_\varepsilon = 0.3$.
 
 ```{code-block} python
 :caption: Computes the OI analysis [](#eq-blue-mean) of a noisy sine wave from a flat background.
@@ -90,34 +88,34 @@ import lineax as lx
 import vardax as vdx
 from jaxtyping import Array, Float
 
-# Shapes: S = 1 sample; T = 1 time; N = 64 grid cells
+# Shapes: S = 1 sample; T = 0 steps, so T + 1 = 1 time; D_x = 64 grid cells
 
 key_noise = jax.random.PRNGKey(1)
 state_structure = jax.ShapeDtypeStruct((1, 64), jnp.float32)
 
 # sᵢ, cell positions on [0, 6]
-positions = jnp.linspace(0.0, 6.0, 64)  # (N,)
+positions = jnp.linspace(0.0, 6.0, 64)  # (D_x,)
 # sᵢ laid out as a state
-grid = einx.id("n -> 1 n", positions)  # (N,) → (T, N)
+grid = einx.id("n -> 1 n", positions)  # (D_x,) → (T + 1, D_x)
 # x_true = sin s
-truth = jnp.sin(grid)  # (T, N)
-# x_b = 0, a flat background
-background = jnp.zeros((1, 64))  # (T, N)
-# σ_o ε, σ_o = 0.3, ε ~ 𝒩(0, I)
-noise = 0.3 * jax.random.normal(key_noise, (1, 64))  # (T, N)
-# y = x_true + σ_o ε
-obs = truth + noise  # (T, N)
+truth = jnp.sin(grid)  # (T + 1, D_x)
+# μ_x = 0, a flat background
+background = jnp.zeros((1, 64))  # (T + 1, D_x)
+# σ_ε ε, σ_ε = 0.3, ε ~ 𝒩(0, I)
+noise = 0.3 * jax.random.normal(key_noise, (1, 64))  # (T + 1, D_x)
+# y = x_true + σ_ε ε
+obs = truth + noise  # (T + 1, D_x)
 
 # today (lineax)
-# B = I
-prior_cov = lx.IdentityLinearOperator(state_structure)  # (T N, T N) op
+# Σ_x = I
+prior_cov = lx.IdentityLinearOperator(state_structure)  # (D_x, D_x) op
 # today (lineax)
-# R = σ_o² I; tagged PSD so the default CG solve accepts it
-obs_cov = lx.TaggedLinearOperator(  # (T N, T N) op
+# Σ_ε = σ_ε² I; tagged PSD so the default CG solve accepts it
+obs_cov = lx.TaggedLinearOperator(  # (D_x, D_x) op
     0.09 * prior_cov, lx.positive_semidefinite_tag
 )
 # today (vardax)
-# H(x) = m ⊙ x and K = B Hᵀ (H B Hᵀ + R)⁻¹
+# h(x) = m ⊙ x and G = Σ_x Hᵀ (H Σ_x Hᵀ + Σ_ε)⁻¹
 model = vdx.OptimalInterpolation(
     obs_op=vdx.MaskedIdentity(),
     prior_mean=background,
@@ -126,17 +124,17 @@ model = vdx.OptimalInterpolation(
 )
 # today (vardax)
 batch = vdx.Batch1D(
-    input=einx.id("t n -> 1 t n", obs),  # (T, N) → (S, T, N)
+    input=einx.id("t n -> 1 t n", obs),  # (T + 1, D_x) → (S, T + 1, D_x)
     mask=jnp.ones((1, 1, 64)),
 )
-# x* = x_b + K (y − H x_b), one pass, no iteration
-analysis = model(batch)  # → (S, T, N)
+# x⋆ = μ_x + G (y − H μ_x), one pass, no iteration
+analysis = model(batch)  # → (S, T + 1, D_x)
 
 
 # user
 def rms_error(state: Float[Array, "t n"]) -> Float[Array, ""]:
     # (x − x_true)²
-    squared_error = (state - truth) ** 2  # (T, N)
+    squared_error = (state - truth) ** 2  # (T + 1, D_x)
     # √(mean (x − x_true)²)
     return jnp.sqrt(einx.mean("t n ->", squared_error))  # → ()
 
@@ -154,57 +152,59 @@ For a correlated background, pass any `lineax` operator in place of the identity
 ## Quickstart: incremental 4DVar
 
 Gauss-Newton outer loops around a conjugate-gradient inner solve, on a window of Lorenz-63 observed every other step.
+The state has $D_x = 3$ components and the window $T = 20$ steps, so $T + 1 = 21$ times; $\gmat{\Sigma}_x = 4 \mat{I}$, $\gmat{\Sigma}_\varepsilon = \sigma_\varepsilon^2 \mat{I}$ with $\sigma_\varepsilon = 0.5$, and the mask selects the observed times.
 
 ```{code-block} python
 :caption: Minimises the incremental cost [](#eq-incremental-cost) through the Gauss-Newton system [](#eq-gn-system) on a Lorenz-63 [](#eq-lorenz63) window.
 :label: code-index-incremental-quickstart
 import diffrax as dfx
 
-# Shapes: S = 1 window; K = 2,000 steps; T = 21 times; N = 3 state components
+# Shapes: S = 1 window; N_run = 2,000 steps; T = 20 steps, so T + 1 = 21 times
+# D_x = 3 state components
 
 key = jax.random.PRNGKey(0)
 key_truth, key_noise = jax.random.split(key)
 state_structure = jax.ShapeDtypeStruct((3,), jnp.float32)
 
 # today (vardax)
-# f(s) = (σ (y − x), x (ρ − z) − y, x y − β z)
+# f(x) = (σ (x₂ − x₁), x₁ (ρ − x₃) − x₂, x₁ x₂ − β x₃)
 lorenz = vdx.Lorenz63(sigma=10.0, rho=28.0, beta=8.0 / 3.0)
 # today (vardax)
 # DirectAdjoint, because the CG inner solve needs jvp as well as vjp (issue #148)
 dynamics = vdx.DynTrajectory(model=lorenz, adjoint=dfx.DirectAdjoint())
 # today (vardax)
-# Mₜ, steps of Δt = 0.05
+# f, steps of Δt = 0.05
 forward = dynamics.as_forward_model(dt=0.05)
 # today (vardax)
 # a run at Δt = 0.01 after 1,000 burn-in steps
-_, run = vdx.simulate_lorenz63(  # → (K, N)
+_, run = vdx.simulate_lorenz63(  # → (N_run, D_x)
     key_truth, dt=0.01, n_steps=2000, n_burn_in=1000
 )
 # xₜ, every fifth state of the run, so Δt = 0.05 apart
-truth = run[500:605:5]  # (K, N) → (T, N)
+truth = run[500:605:5]  # (N_run, D_x) → (T + 1, D_x)
 # m, every other time observed
-mask = jnp.zeros((21, 3)).at[::2].set(1.0)  # (T, N)
-# σ_o ε, σ_o = 0.5, ε ~ 𝒩(0, I)
-noise = 0.5 * jax.random.normal(key_noise, (21, 3))  # (T, N)
-# xₜ + σ_o ε
-noisy_truth = truth + noise  # (T, N)
-# yₜ = m ⊙ (xₜ + σ_o ε)
-obs = mask * noisy_truth  # (T, N)
-# x_b = x_true(t₀) + (1.5, −1.5, 1.5)
-background = truth[0] + jnp.array([1.5, -1.5, 1.5])  # (N,)
+mask = jnp.zeros((21, 3)).at[::2].set(1.0)  # (T + 1, D_x)
+# σ_ε ε, σ_ε = 0.5, ε ~ 𝒩(0, I)
+noise = 0.5 * jax.random.normal(key_noise, (21, 3))  # (T + 1, D_x)
+# xₜ + σ_ε ε
+noisy_truth = truth + noise  # (T + 1, D_x)
+# yₜ = m ⊙ (xₜ + σ_ε ε)
+obs = mask * noisy_truth  # (T + 1, D_x)
+# μ_x = x_true(t₀) + (1.5, −1.5, 1.5)
+background = truth[0] + jnp.array([1.5, -1.5, 1.5])  # (D_x,)
 
 # today (lineax)
-identity = lx.IdentityLinearOperator(state_structure)  # (N, N) op
+identity = lx.IdentityLinearOperator(state_structure)  # (D_x, D_x) op
 # today (lineax)
-# B = 4 I
+# Σ_x = 4 I
 prior_cov = lx.TaggedLinearOperator(4.0 * identity, lx.positive_semidefinite_tag)
 # today (lineax)
-# R = σ_o² I
+# Σ_ε = σ_ε² I
 obs_cov = lx.TaggedLinearOperator(0.25 * identity, lx.positive_semidefinite_tag)
 # today (vardax)
 config = vdx.IncrementalConfig(n_outer=3, n_inner=20)
 # today (vardax)
-# δJ(δx) = ½ ‖x⁽ᵏ⁾ + δx − x_b‖²_{B⁻¹} + ½ Σₜ ‖dₜ⁽ᵏ⁾ − H′ₜ M′ₜ δx‖²_{R⁻¹}
+# δ𝒥(δx) = ½ ‖x⁽ⁱ⁾ + δx − μ_x‖²_Σ_x⁻¹ + ½ Σₜ ‖rₜ⁽ⁱ⁾ − Hₜ Fₜ←₀ δx‖²_Σ_ε⁻¹
 model = vdx.IncrementalFourDVar(
     forward=forward,
     obs_op=vdx.MaskedIdentity(),
@@ -215,15 +215,16 @@ model = vdx.IncrementalFourDVar(
 )
 # today (vardax)
 window = vdx.Batch1D(
-    input=einx.id("t n -> 1 t n", obs),  # (T, N) → (S, T, N)
-    mask=einx.id("t n -> 1 t n", mask),  # (T, N) → (S, T, N)
+    input=einx.id("t n -> 1 t n", obs),  # (T + 1, D_x) → (S, T + 1, D_x)
+    mask=einx.id("t n -> 1 t n", mask),  # (T + 1, D_x) → (S, T + 1, D_x)
 )
-# 𝐇_GN δx* = −∇J(x⁽ᵏ⁾) by CG, then x⁽ᵏ⁺¹⁾ = x⁽ᵏ⁾ + δx*
-analysis = model(window)  # → (S, N)
+# ∇²𝒥(x⁽ⁱ⁾) δx⋆ = −∇𝒥(x⁽ⁱ⁾) in Gauss-Newton form by CG, then
+# x⁽ⁱ⁺¹⁾ = x⁽ⁱ⁾ + δx⋆
+analysis = model(window)  # → (S, D_x)
 
-# ‖x_b − x_true(t₀)‖
+# ‖μ_x − x_true(t₀)‖
 background_error = jnp.linalg.norm(background - truth[0])  # → ()
-# ‖x₀* − x_true(t₀)‖
+# ‖x₀⋆ − x_true(t₀)‖
 analysis_error = jnp.linalg.norm(analysis[0] - truth[0])  # → ()
 print(f"background error {background_error:.2f}, analysis error {analysis_error:.2f}")
 ```
@@ -240,12 +241,12 @@ All seven methods satisfy `pipekit_cycle.AnalysisStep` via `.as_analysis_step()`
 import pipekit as pk
 import pipekit_cycle as pc
 
-# Shapes: C = 20 cycles; T = 21 times; N = 3 state components
+# Shapes: N_cycle = 20 cycles; T = 20 steps, so T + 1 = 21 times; D_x = 3
 
-# yₜ = xₜ + σ_o ε at every time, one per cycle
-cycle_obs = truth + noise  # (T, N)
+# yₜ = xₜ + σ_ε ε at every time, one per cycle
+cycle_obs = truth + noise  # (T + 1, D_x)
 # today (vardax)
-# x_a = x_f + K (y − H x_f), with the forecast x_f as the background
+# x_{t|t} = x_{t|t−1} + G (y − H x_{t|t−1}), the forecast as the background
 oi = vdx.OptimalInterpolation(
     obs_op=vdx.MaskedIdentity(),
     prior_mean=background,
@@ -266,9 +267,9 @@ da_cycle = pc.DACycle(
 )
 # today (pipekit_cycle)
 initial_state = pc.DAState(t=0.0, cycle_count=0)
-# x_a at t_C, after C forecast-analysis cycles from x_b
-final_analysis, final_state = da_cycle(background, initial_state)  # (N,) → (N,)
-# ‖x_a − x_true(t_C)‖
+# x_{t|t} after N_cycle forecast-analysis cycles from μ_x
+final_analysis, final_state = da_cycle(background, initial_state)  # (D_x,) → (D_x,)
+# ‖x_{t|t} − x_true‖ at the last cycle
 final_error = jnp.linalg.norm(final_analysis - truth[-1])  # → ()
 print(f"{final_state.cycle_count} cycles, final error {final_error:.2f}")
 ```
