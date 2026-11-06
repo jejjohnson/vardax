@@ -13,10 +13,10 @@ inversions) without re-running the inner inference.
 Two of the seven Layer 2 classes have closed-form fast paths that emit
 the posterior as part of the analysis call:
 
-- **`OptimalInterpolation`** — closed-form $P^* = (B^{-1} + H^\top R^{-1} H)^{-1}$
+- **`OptimalInterpolation`** — closed-form $\gmat{\Sigma}_{x \mid y} = (\gmat{\Sigma}_x^{-1} + \mat{H}^\top \gmat{\Sigma}_\varepsilon^{-1} \mat{H})^{-1}$
   is returned directly by `.posterior(batch)`.
 - **`IncrementalFourDVar`** — the Gauss-Newton Hessian assembled during
-  the last outer iteration is reused for $P^*$.
+  the last outer iteration is reused for $\gmat{\Sigma}_{x \mid y}$.
 
 For the other five (`ThreeDVar`, `StrongFourDVar`, `WeakFourDVar`,
 `FourDVarNet`, `AmortizedPosterior`), pair the analysis with an
@@ -25,7 +25,7 @@ explicit `PosteriorAdapter`.
 ## The `Posterior` container
 
 ```{code-block} python
-:caption: Declares the `Posterior` container that every analysis returns, carrying the mean x* and covariance P* of [](#eq-oi-posterior) (Decision D10).
+:caption: Declares the `Posterior` container that every analysis returns, carrying the mean x⋆ and covariance Σ_x|y of [](#eq-oi-posterior) (Decision D10).
 :label: code-design-posterior-container
 import equinox as eqx
 import lineax as lx
@@ -37,11 +37,11 @@ from jaxtyping import Array, Float
 
 # today* (vardax)
 class Posterior(eqx.Module):
-    # x*, the MAP or posterior mean
+    # x⋆, the MAP or posterior mean
     mean: Float[Array, "*window N"]
-    # P*, a gaussx / lineax operator; None for sampling-only heads
+    # Σ_x|y, a gaussx / lineax operator; None for sampling-only heads
     cov: lx.AbstractLinearOperator | None
-    # x⁽ᵐ⁾, m = 1, …, M, for ensemble and flow heads
+    # x⁽ᵉ⁾, e = 1, …, N_ℰ, for ensemble and flow heads
     samples: Float[Array, "*window M N"] | None
     # forward_model_id, n_iter, J_star, …
     provenance: dict
@@ -62,11 +62,11 @@ Conventions:
 
 ### `LaplaceCovariance` — cheap, Gaussian-only
 
-At the MAP $x^*$:
+At the MAP $\vect{x}^\star$:
 
-$$P^* = \big(H'^\top R^{-1} H' + B^{-1}\big)^{-1}$$
+$$\gmat{\Sigma}_{x \mid y} = \left(\mat{H}^\top \gmat{\Sigma}_\varepsilon^{-1} \mat{H} + \gmat{\Sigma}_x^{-1}\right)^{-1}$$
 
-where $H' = \partial H / \partial x$ at $x^*$. Returned as an
+where $\mat{H} = \partial h / \partial \vect{x}$ at $\vect{x}^\star$. Returned as an
 `AbstractLinearOperator` so mat-vec via `lineax.CG` is cheap; full
 materialisation only on request.
 
@@ -74,8 +74,8 @@ materialisation only on request.
 (confirmed by SBC). Default for `IncrementalFourDVar`.
 
 **Cost.** One Hessian-vector product family per query. Posterior samples by
-$x^* + (H'^\top R^{-1} H' + B^{-1})^{-1/2} \xi$ where $\xi \sim \mathcal{N}(0,I)$ —
-requires square-root which may be expensive for unstructured $B$.
+$\vect{x}^\star + (\mat{H}^\top \gmat{\Sigma}_\varepsilon^{-1} \mat{H} + \gmat{\Sigma}_x^{-1})^{-1/2} \gvect{\xi}$ where $\gvect{\xi} \sim \mathcal{N}(\mathbf{0}, \mat{I})$ —
+requires square-root which may be expensive for unstructured $\gmat{\Sigma}_x$.
 
 ```{code-block} python
 :caption: Declares `LaplaceCovariance`, which returns the Laplace covariance [](#eq-laplace-cov) at the MAP as a lazy operator.
@@ -91,7 +91,7 @@ from jaxtyping import Array, Float
 
 # today* (vardax)
 class LaplaceCovariance(eqx.Module):
-    # P* = (H′ᵀ R⁻¹ H′ + B⁻¹)⁻¹, with H′ = ∂H/∂x at x*
+    # Σ_x|y = (Hᵀ Σ_ε⁻¹ H + Σ_x⁻¹)⁻¹, with H = ∂h/∂x at x⋆
     def __call__(
         self,
         analysis: Float[Array, " N"],
@@ -102,7 +102,7 @@ class LaplaceCovariance(eqx.Module):
 
 ### `GaussNewtonHessian` — mid-cost, exact at MAP
 
-Krylov / Lanczos inversion of $J''(x^*)$ via `lineax.CG`. For incremental
+Krylov / Lanczos inversion of $\nabla^2 \mathcal{J}(\vect{x}^\star)$ via `lineax.CG`. For incremental
 4DVar this is the natural posterior — the inner Hessian is already assembled
 during the last outer iteration.
 
@@ -128,7 +128,7 @@ from jaxtyping import Array, Float
 class GaussNewtonHessian(eqx.Module):
     n_krylov: int = eqx.field(static=True, default=50)
 
-    # P*_GN = 𝐇_GN⁻¹, applied by n_krylov CG mat-vecs
+    # Σ_x|y,GN = 𝐇_GN⁻¹, applied by n_krylov CG mat-vecs
     def __call__(
         self,
         analysis: Float[Array, " N"],
@@ -139,18 +139,18 @@ class GaussNewtonHessian(eqx.Module):
 
 ### `EnsembleCovariance` — non-Gaussian-aware
 
-Delegates to `filterax`. Build $M$ analyses from $M$ perturbed initial
+Delegates to `filterax`. Build $N_\mathcal{E}$ analyses from $N_\mathcal{E}$ perturbed initial
 conditions / observation realisations, return the sample covariance.
 
 **When to use.** Multimodal posterior, non-Gaussian likelihood, hybrid
 EnVar inversion.
 
-**Cost.** $M$ vardax analyses (parallel via `eqx.filter_vmap`). Sample
-covariance materialisation O($M N^2$) for full; localised / shrunk
+**Cost.** $N_\mathcal{E}$ vardax analyses (parallel via `eqx.filter_vmap`). Sample
+covariance materialisation O($N_\mathcal{E} D_x^2$) for full; localised / shrunk
 estimators available via `filterax`.
 
 ```{code-block} python
-:caption: Declares `EnsembleCovariance`, which turns M member analyses into the inflated sample covariance [](#eq-ensemble-cov).
+:caption: Declares `EnsembleCovariance`, which turns N_ℰ member analyses into the inflated sample covariance [](#eq-ensemble-cov).
 :label: code-design-posterior-ensemble
 import equinox as eqx
 from jaxtyping import Array, Float
@@ -168,7 +168,7 @@ class EnsembleCovariance(eqx.Module):
     # proposed (D10)
     localization_radius: float | None = None
 
-    # P*_ens = λ / (M − 1) Σₘ (x⁽ᵐ⁾ − x̄)(x⁽ᵐ⁾ − x̄)ᵀ
+    # Σ_x|y,ens = ζ / (N_ℰ − 1) ∑ₑ (x⁽ᵉ⁾ − x̄)(x⁽ᵉ⁾ − x̄)ᵀ
     def __call__(
         self,
         analyses: Float[Array, "M N"],
@@ -218,12 +218,12 @@ class GaussianMarkLikelihood(eqx.Module):
     def to_dict(self) -> dict[str, Any]:
         metadata = self.event_metadata
         samples = self.posterior.samples
-        # x* as nested lists
+        # x⋆ as nested lists
         mean = self.posterior.mean.tolist()  # (N,) → list
         # proposed (D10)
-        # P* as a diagonal, Cholesky or low-rank record
+        # Σ_x|y as a diagonal, Cholesky or low-rank record
         cov = self._serialise_cov()  # (N, N) op → dict
-        # x⁽ᵐ⁾ as nested lists, or None
+        # x⁽ᵉ⁾ as nested lists, or None
         sample_list = None if samples is None else samples.tolist()  # (M, N) → list
         return {
             "event_id": metadata["event_id"],
@@ -253,7 +253,7 @@ Six-step cycle requires:
    of Step 2 (physics MAP). Failed when CV(amortized) / CV(physics) > 2 or
    when |mean_amortized - mean_physics| / σ_physics > 1.
 
-2. **Adjoint calibration.** $\|\partial H_\text{em} / \partial x - \partial H_\text{phys} / \partial x\|_\text{op} < 5\%$
+2. **Adjoint calibration.** $\Vert \partial h_\text{em} / \partial \vect{x} - \partial h_\text{phys} / \partial \vect{x} \Vert_\text{op} < 5\%$
    measured by random-vector probing.
 
 3. **Simulation-based calibration (SBC).** Rank histograms uniform across
@@ -282,19 +282,19 @@ def test_posterior_agreement(
     laplace = vdx.LaplaceCovariance()
     for batch in val_batches:
         # today* (vardax)
-        # x*_phys = argmin J_phys(x)
+        # x⋆_phys = argmin 𝒥_phys(x)
         physics_analysis = physics_model(batch)  # → (N,)
         # today* (vardax)
-        # x*_em = argmin J_em(x)
+        # x⋆_em = argmin 𝒥_em(x)
         emulator_analysis = emulator_model(batch)  # → (N,)
         # today (vardax)
-        # P*_phys = (H′ᵀ R⁻¹ H′ + B⁻¹)⁻¹ at x*_phys
+        # Σ_x|y,phys = (Hᵀ Σ_ε⁻¹ H + Σ_x⁻¹)⁻¹ at x⋆_phys
         physics_posterior = laplace(physics_analysis, physics_model, batch)
         # today (vardax)
-        # P*_em at x*_em
+        # Σ_x|y,em at x⋆_em
         emulator_posterior = laplace(emulator_analysis, emulator_model, batch)
         # today (vardax)
-        # |x*_em − x*_phys| / σ_post,phys ≤ 1
+        # |x⋆_em − x⋆_phys| / σ_post,phys ≤ 1
         vdx.assert_posterior_agreement(
             emulator_posterior, physics_posterior, tolerance_sigma=1.0
         )
@@ -307,13 +307,13 @@ def test_adjoint_calibration(
 ) -> None:
     for state in val_states:
         # today (vardax)
-        # H′_phys = ∂H_phys/∂x at x
+        # H_phys = ∂H_phys/∂x at x
         physics_tangent = physics_obs_op.linearize(state)  # (N,) → (D, N) op
         # today (vardax)
-        # H′_em = ∂H_em/∂x at x
+        # H_em = ∂H_em/∂x at x
         emulator_tangent = emulator_obs_op.linearize(state)  # (N,) → (D, N) op
         # proposed (D12); vdx.assert_adjoint_calibrated ships the probing gate
-        # ‖H′_em − H′_phys‖_op, by 20 random-vector probes
+        # ‖H_em − H_phys‖_op, by 20 random-vector probes
         op_norm = estimate_operator_norm_diff(  # → ()
             physics_tangent, emulator_tangent, n_probe=20
         )
@@ -333,7 +333,7 @@ def test_adjoint_calibration(
 | `J_star` | `float` | Final cost value |
 | `converged` | `bool` | True if convergence criterion met |
 | `model_hash` | `str \| None` | For learned heads, content hash of trained weights |
-| `gaussx_op_hash` | `str \| None` | Hash of $B$ / $R$ operators used |
+| `gaussx_op_hash` | `str \| None` | Hash of $\gmat{\Sigma}_x$ / $\gmat{\Sigma}_\varepsilon$ operators used |
 | `met_source` | `str \| None` | Met forcing identifier (e.g. `"era5_2024-01-15T12Z"`) |
 | `vardax_version` | `str` | Package version |
 

@@ -19,19 +19,19 @@ import lineax as lx
 import vardax as vdx
 
 # Shapes: S windows; N grid cells; M along-track observations; D = 2 coordinates
-# Given: along_track_op H (M, N) lineax op, climatology_ssh x_b (N,),
+# Given: along_track_op H (M, N) lineax op, climatology_ssh μ_x (N,),
 #        coords (N, D), altika_variances (M,), batch
 
 # today (vardax)
-# H(x) = H x, must be linear
+# h(x) = H x, must be linear
 obs_op = vdx.LinearObs(operator=along_track_op)
 # proposed (gaussx)
-# Bᵢⱼ = k_Matérn(sᵢ, sⱼ; ℓ = 100, σ = 0.1)
+# (Σ_x)ᵢⱼ = k_Matérn(sᵢ, sⱼ; ℓ = 100, σ = 0.1)
 prior_cov = gx.MaternLinearOperator(  # (N, D) → (N, N) PSD op
     coords, length_scale=100.0, sigma=0.1
 )
 # today (lineax)
-# R = diag(σ²)
+# Σ_ε = diag(σ²)
 obs_cov = lx.DiagonalLinearOperator(altika_variances)  # (M,) → (M, M) op
 
 # today (vardax)
@@ -44,14 +44,14 @@ model = vdx.OptimalInterpolation(
 
 # Single forward pass, no iteration
 # today (vardax)
-# x* = x_b + K (y − H x_b)
+# x⋆ = μ_x + G (y − H μ_x)
 analysis = model(batch)  # → (S, N)
 # today (vardax)
-# P* = (I − K H) B
+# Σ_x|y = (I − G H) Σ_x
 posterior = model.posterior(batch)  # Posterior(mean (N,), cov (N, N) op)
 ```
 
-Use when $H$ is linear, $B$ and $R$ are Gaussian. The right default for
+Use when $h$ is linear, $\gmat{\Sigma}_x$ and $\gmat{\Sigma}_\varepsilon$ are Gaussian. The right default for
 SSH altimetry with along-track observations and a Matérn prior.
 
 ---
@@ -65,16 +65,16 @@ import optimistix as optx
 import vardax as vdx
 
 # Shapes: S windows; N levels
-# Given: A (N, N) lineax op, xa x_a (N,), h (N,), background x_b (N,),
-#        prior_cov B op, obs_cov R op, batch
+# Given: J_x̂ (N, N) lineax op, xa μ_ret (N,), w (N,), background μ_x (N,),
+#        prior_cov Σ_x op, obs_cov Σ_ε op, batch
 
 # today (vardax)
-# ŷ = A (h ⊙ x + (1 − h) ⊙ x_a), nonlinear via h ⊙ x
+# h(x) = J_x̂ (w ⊙ x + (1 − w) ⊙ μ_ret), nonlinear via w ⊙ x
 obs_op = vdx.AveragingKernel(kernel_matrix=A, prior_profile=xa, pressure_weights=h)
 
 # today* (vardax; optx.GaussNewton is a least-squares solver, not an
 #   AbstractMinimiser, so the model rejects it: use optx.BFGS or NonlinearCG)
-# J(x) = ½ ‖x − x_b‖²_{B⁻¹} + ½ ‖y − H(x)‖²_{R⁻¹}
+# 𝒥(x) = ½ ‖x − μ_x‖²_Σ_x⁻¹ + ½ ‖y − h(x)‖²_Σ_ε⁻¹
 model = vdx.ThreeDVar(
     obs_op=obs_op,
     prior_mean=background,
@@ -84,11 +84,11 @@ model = vdx.ThreeDVar(
     minimiser_adjoint=optx.ImplicitAdjoint(),
 )
 # today (vardax)
-# x* = argmin J(x)
+# x⋆ = argmin 𝒥(x)
 analysis = model(batch)  # → (S, N)
 ```
 
-Use when $H$ is nonlinear (averaging kernel, RTM, custom retrieval) but
+Use when $h$ is nonlinear (averaging kernel, RTM, custom retrieval) but
 there are no dynamics — snapshot inversion.
 
 ---
@@ -103,11 +103,11 @@ import optimistix as optx
 import vardax as vdx
 
 # Shapes: S windows; T times; N state cells
-# Given: somax_model (a pipekit_cycle.ForwardModel), background x_b (N,),
-#        prior_cov B op, obs_cov R op, batch
+# Given: somax_model (a pipekit_cycle.ForwardModel), background μ_x (N,),
+#        prior_cov Σ_x op, obs_cov Σ_ε op, batch
 
 # today (vardax)
-# J(x₀) = ½ ‖x₀ − x_b‖²_{B⁻¹} + ½ Σₜ ‖mₜ ⊙ (yₜ − Mₜ(x₀))‖²_{R⁻¹}
+# 𝒥(x₀) = ½ ‖x₀ − μ_x‖²_Σ_x⁻¹ + ½ ∑ₜ ‖mₜ ⊙ (yₜ − fₜ(x₀))‖²_Σ_ε⁻¹
 model = vdx.StrongFourDVar(
     forward=somax_model,
     obs_op=vdx.MaskedIdentity(),
@@ -119,7 +119,7 @@ model = vdx.StrongFourDVar(
     forward_adjoint=dfx.RecursiveCheckpointAdjoint(),
 )
 # today (vardax)
-# x₀* = argmin J(x₀)
+# x₀⋆ = argmin 𝒥(x₀)
 analysis = model(batch)  # → (S, N)
 ```
 
@@ -131,7 +131,7 @@ For long assimilation windows, switch the dynamics adjoint:
 import diffrax as dfx
 
 # today (diffrax)
-# dλ/dt = −M′(x(t))ᵀ λ(t) − ∇J, O(1) memory
+# dλ/dt = −F(x(t))ᵀ λ(t) − ∇𝒥, O(1) memory
 forward_adjoint = dfx.BacksolveAdjoint()
 # or
 # today (diffrax)
@@ -151,11 +151,11 @@ import optimistix as optx
 import vardax as vdx
 
 # Shapes: S windows; T times; N state cells
-# Given: somax_model M_t^free, obs_op, background x_b (N,), prior_cov B op,
-#        obs_cov R op, model_err_cov Q op (prior on ηₜ), batch
+# Given: somax_model f_t^free, obs_op, background μ_x (N,), prior_cov Σ_x op,
+#        obs_cov Σ_ε op, model_err_cov Σ_η op (prior on ηₜ), batch
 
 # today* (vardax; optx.NonlinearCG also requires atol)
-# J(x₀, η) = ½ ‖x₀ − x_b‖²_{B⁻¹} + ½ Σₜ ‖yₜ − Hₜ(xₜ)‖²_{R⁻¹} + ½ Σₜ ‖ηₜ‖²_{Q⁻¹}
+# 𝒥(x₀, η) = ½ ‖x₀ − μ_x‖²_Σ_x⁻¹ + ½ ∑ₜ ‖yₜ − hₜ(xₜ)‖²_Σ_ε⁻¹ + ½ ∑ₜ ‖ηₜ‖²_Σ_η⁻¹
 model = vdx.WeakFourDVar(
     forward=somax_model,
     obs_op=obs_op,
@@ -169,12 +169,12 @@ model = vdx.WeakFourDVar(
 
 # Returns both the analysis IC and the model-error trajectory
 # today (vardax)
-# (x₀*, η*) = argmin J(x₀, η)
+# (x₀⋆, η⋆) = argmin 𝒥(x₀, η)
 analysis, model_error = model(batch)  # → (S, N), (S, T, N)
 ```
 
 Use when the model has known biases (climatological drift) and you need
-to estimate the time-varying $\eta_t$ alongside the initial state.
+to estimate the time-varying $\gvect{\eta}_t$ alongside the initial state.
 
 ---
 
@@ -188,23 +188,23 @@ import lineax as lx
 import vardax as vdx
 
 # Shapes: S windows; T times; N state cells; M observations; D = 2 coordinates
-# Given: somax_model, A (N, N) lineax op, xa x_a (N,), h (N,),
-#        background x_b (N,), coords (N, D), obs_uncertainty (M,), batch
+# Given: somax_model, J_x̂ (N, N) lineax op, xa μ_ret (N,), w (N,),
+#        background μ_x (N,), coords (N, D), obs_uncertainty (M,), batch
 
 # today (vardax)
-# ŷ = A (h ⊙ x + (1 − h) ⊙ x_a)
+# h(x) = J_x̂ (w ⊙ x + (1 − w) ⊙ μ_ret)
 obs_op = vdx.AveragingKernel(kernel_matrix=A, prior_profile=xa, pressure_weights=h)
 # proposed (gaussx)
-# Bᵢⱼ = k_Matérn(sᵢ, sⱼ; ℓ = 10, σ = 0.1)
+# (Σ_x)ᵢⱼ = k_Matérn(sᵢ, sⱼ; ℓ = 10, σ = 0.1)
 prior_cov = gx.MaternLinearOperator(  # (N, D) → (N, N) PSD op
     coords, length_scale=10.0, sigma=0.1
 )
 # today (lineax)
-# R = diag(σ²)
+# Σ_ε = diag(σ²)
 obs_cov = lx.DiagonalLinearOperator(obs_uncertainty)  # (M,) → (M, M) op
 
 # today (vardax)
-# 3 outer relinearisations, 20 CG steps each, in χ with x₀ − x_b = S χ
+# 3 outer relinearisations, 20 CG steps each, in z with x₀ − μ_x = L_x z
 model = vdx.IncrementalFourDVar(
     forward=somax_model,
     obs_op=obs_op,
@@ -216,12 +216,12 @@ model = vdx.IncrementalFourDVar(
 
 # Operational analysis
 # today (vardax)
-# x₀* after the last outer iteration
+# x₀⋆ after the last outer iteration
 analysis = model(batch)  # → (S, N)
 
 # Posterior reuses GN Hessian from last outer iteration
 # today (vardax)
-# P*_GN = 𝐇_GN⁻¹
+# Σ_x|y,GN = 𝐇_GN⁻¹
 posterior = model.posterior(batch)  # Posterior(mean (N,), cov (N, N) op)
 ```
 
@@ -245,7 +245,7 @@ from jaxtyping import Array, Float
 # Given: enc_2d, dec_2d autoencoder halves, dataloader of vdx.Batch2D
 
 # proposed (D14; ships today as vdx.FourDVarNet2D(n_time, height, width, ..., key))
-# x_{k+1} = x_k − Φ(∇ₓJ(x_k), h_k), with J = α_obs ½ ‖H(x) − y‖² + α_prior ‖x − φ(x)‖²
+# x⁽ⁱ⁺¹⁾ = x⁽ⁱ⁾ − g_mod(∇ₓ𝒥(x⁽ⁱ⁾), c⁽ⁱ⁾), with 𝒥 = α_obs ½ ‖h(x) − y‖² + α_prior ‖x − g_ae(x)‖²
 model = vdx.FourDVarNet(
     # proposed (D14; vardax ships ConvAEPrior1D and BilinAEPrior2D)
     prior=vdx.ConvAEPrior(encoder=enc_2d, decoder=dec_2d),
@@ -269,7 +269,7 @@ def step(
 ) -> tuple[eqx.Module, optax.OptState, Float[Array, ""]]:
     """One optimiser step on the 4DVarNet loss."""
     # today (vardax)
-    # ℒ(θ, φ) = E ‖x*(θ, φ; y) − x_true‖²
+    # ℒ(θ, ν) = E ‖x⋆(θ, ν; y) − x_true‖²
     model, opt_state, loss = vdx.train_step(model, batch, optimizer, opt_state)
     return model, opt_state, loss
 
@@ -302,10 +302,10 @@ key_infer = jax.random.PRNGKey(0)
 # today (vardax)
 model = vdx.AmortizedPosterior(
     # proposed (D12; vardax ships MLPObsEncoder and IdentityObsEncoder)
-    # c = c_ψ(y, m)
+    # c = c_ν(y, m)
     encoder=vdx.ConvObsEncoder(...),
     # proposed (D12; vdx.ConditionalFlowHead is a stub that raises until gauss_flows)
-    # x = f_φ(z; c), z ~ 𝒩(0, I)
+    # x = f_ν(z; c), z ~ 𝒩(0, I)
     head=vdx.ConditionalFlowHead(...),
     config=vdx.AmortizedConfig(head_type="flow", n_samples=64),
 )
@@ -329,15 +329,15 @@ def sample_train_pair(key: PRNGKeyArray) -> vdx.Batch2D:
 
 for batch in simulation_loader:
     # today* (vardax; the amortized step ships as vdx.amortized_train_step)
-    # φ* = argmin E KL(q_φ(· ∣ y) ‖ p(· ∣ y))
+    # ν⋆ = argmin E KL(q(· ∣ y; ν) ‖ p(· ∣ y))
     model, opt_state, loss = vdx.train_step(model, batch, optimizer, opt_state)
 
 # Inference: sub-second
 # today (vardax)
-# x̂ = mode of q_φ(· ∣ y)
+# x̂ = mode of q(· ∣ y; ν)
 point_estimate = model(batch)  # → (B, N)
 # today (vardax)
-# xⁱ ~ q_φ(· ∣ y), i = 1 … n
+# xⁱ ~ q(· ∣ y; ν), i = 1 … n
 samples = model.sample(batch, key_infer, n=200)  # → (B, n, N)
 ```
 
@@ -353,17 +353,17 @@ import vardax as vdx
 
 for val_batch in val_loader:
     # today* (vardax; the adapter takes one window's analysis, e.g. analysis[0])
-    # P*_amort = (B⁻¹ + H′ᵀ R⁻¹ H′)⁻¹ at the amortized estimate
+    # Σ_x|y,amort = (Σ_x⁻¹ + Hᵀ Σ_ε⁻¹ H)⁻¹ at the amortized estimate
     p_amort = vdx.LaplaceCovariance()(
         model(val_batch), model.as_analysis_step(), val_batch
     )
     # today* (vardax; the adapter takes one window's analysis, e.g. analysis[0])
-    # P*_phys at the physics MAP
+    # Σ_x|y,phys at the physics MAP
     p_phys = vdx.LaplaceCovariance()(
         strong_4dvar(val_batch), strong_4dvar.as_analysis_step(), val_batch
     )
     # today (vardax)
-    # |x*_amort − x*_phys| / σ_post,phys ≤ 1
+    # |x⋆_amort − x⋆_phys| / σ_post,phys ≤ 1
     vdx.assert_posterior_agreement(p_amort, p_phys, tolerance_sigma=1.0)
 
 # today* (vardax; takes sample_posterior, sample_prior, simulate_obs and key)
@@ -388,7 +388,7 @@ import vardax as vdx
 #        n_assimilation_windows, initial_state
 
 # today (pipekit_cycle)
-# forecast x^f_t = M_t(x^a_{t−1}), then analysis x^a_t from the model's step
+# forecast x_{t|t−1} = f_t(x_{t−1|t−1}), then analysis x_{t|t} from the model's step
 da_cycle = pc.DACycle(
     forward_model=somax_model,
     # today* (vardax)
@@ -419,15 +419,15 @@ import optimistix as optx
 import vardax as vdx
 
 # Shapes: N state cells; M observations
-# Given: linear_obs_op, background x_b (N,), prior_cov B op, obs_cov R op,
-#        static_forward (Mₜ = I)
+# Given: linear_obs_op, background μ_x (N,), prior_cov Σ_x op, obs_cov Σ_ε op,
+#        static_forward (fₜ = I)
 
 # All seven should agree in the linear-Gaussian limit
 # user
 batch = make_linear_gaussian_batch()
 
 # today (vardax)
-# x* = x_b + K (y − H x_b)
+# x⋆ = μ_x + G (y − H μ_x)
 oi = vdx.OptimalInterpolation(linear_obs_op, background, prior_cov, obs_cov)
 # today* (vardax; optx.GaussNewton also requires atol, and is a least-squares
 #   solver that ThreeDVar rejects as minimiser)
@@ -461,7 +461,7 @@ fourdvarnet = vdx.FourDVarNet(
 )
 
 # proposed (D14)
-# ‖x*_method − x*_OI‖_∞ ≤ 10⁻³ for every method
+# ‖x⋆_method − x⋆_OI‖_∞ ≤ 10⁻³ for every method
 vdx.utils.validation.assert_methods_agree(
     {
         "oi": oi,

@@ -240,13 +240,13 @@ inheriting from any of the others:
 
 | Method | Use when |
 |---|---|
-| `OptimalInterpolation` | Linear $H$, Gaussian $B$, $R$. Static field. The right default. |
-| `ThreeDVar` | Nonlinear $H$, single time. Snapshot inversion. |
-| `StrongFourDVar` | Multi-time, control = $x_0$, model treated as exact. |
-| `WeakFourDVar` | Multi-time, control = $(x_0, \eta_1, \ldots, \eta_T)$. Model-error-aware. |
+| `OptimalInterpolation` | Linear $h$, Gaussian $\gmat{\Sigma}_x$, $\gmat{\Sigma}_\varepsilon$. Static field. The right default. |
+| `ThreeDVar` | Nonlinear $h$, single time. Snapshot inversion. |
+| `StrongFourDVar` | Multi-time, control = $\vect{x}_0$, model treated as exact. |
+| `WeakFourDVar` | Multi-time, control = $(\vect{x}_0, \gvect{\eta}_1, \ldots, \gvect{\eta}_T)$. Model-error-aware. |
 | `IncrementalFourDVar` | Operational fast path: GN outer + CG inner + CVT (= `StrongFourDVar`). |
 | `FourDVarNet` | Learned prior + learned grad modulator. Research, data-rich regimes. |
-| `AmortizedPosterior` | Direct $q_\phi(x \mid y)$. Real-time / many-event regimes. |
+| `AmortizedPosterior` | Direct $q(\vect{x} \mid \vect{y}; \gvect{\nu})$. Real-time / many-event regimes. |
 
 **Why horizontal.**
 
@@ -308,7 +308,7 @@ class StrongFourDVar(eqx.Module):
     ...
     minimiser: optx.AbstractMinimiser
     # today (optimistix)
-    # dx*/dθ = −(∇²ₓJ)⁻¹ ∇²ₓθ J
+    # dx⋆/dθ = −(∇²ₓ𝒥)⁻¹ ∇²ₓθ 𝒥
     minimiser_adjoint: optx.AbstractAdjoint = optx.ImplicitAdjoint()
     # today (diffrax); vardax ships default None (keep the forward's own adjoint)
     forward_adjoint: dfx.AbstractAdjoint = dfx.RecursiveCheckpointAdjoint()
@@ -323,7 +323,7 @@ import diffrax as dfx
 import optimistix as optx
 
 # today (optimistix)
-# dx*/dθ = −(∇²ₓJ)⁻¹ ∇²ₓθ J
+# dx⋆/dθ = −(∇²ₓ𝒥)⁻¹ ∇²ₓθ 𝒥
 minimiser_adjoint = optx.ImplicitAdjoint()
 # today (diffrax)
 # dλ/dt = −(∂f/∂x)ᵀ λ, integrated backwards
@@ -378,13 +378,13 @@ its own fast path.
 
 The analysis is
 
-$$x^* = x_b + B H^\top (H B H^\top + R)^{-1} (y - H x_b),$$
+$$\vect{x}^\star = \gvect{\mu}_x + \gmat{\Sigma}_x \mat{H}^\top (\mat{H} \gmat{\Sigma}_x \mat{H}^\top + \gmat{\Sigma}_\varepsilon)^{-1} (\vect{y} - \mat{H} \gvect{\mu}_x),$$
 
 with posterior covariance
 
-$$P^* = B - B H^\top (H B H^\top + R)^{-1} H B = (B^{-1} + H^\top R^{-1} H)^{-1}.$$
+$$\gmat{\Sigma}_{x \mid y} = \gmat{\Sigma}_x - \gmat{\Sigma}_x \mat{H}^\top (\mat{H} \gmat{\Sigma}_x \mat{H}^\top + \gmat{\Sigma}_\varepsilon)^{-1} \mat{H} \gmat{\Sigma}_x = (\gmat{\Sigma}_x^{-1} + \mat{H}^\top \gmat{\Sigma}_\varepsilon^{-1} \mat{H})^{-1}.$$
 
-When $B$, $R$, $H$ are structured (Matérn, Kronecker, AveragingKernel),
+When $\gmat{\Sigma}_x$, $\gmat{\Sigma}_\varepsilon$, $\mat{H}$ are structured (Matérn, Kronecker, AveragingKernel),
 `gaussx` solves these expressions efficiently without materialising
 dense matrices. The whole analysis runs in a handful of structured
 mat-vec operations.
@@ -407,15 +407,15 @@ mat-vec operations.
 
 - `vardax/_src/models/optimal_interpolation.py` implements
   `OptimalInterpolation(eqx.Module)` with no `minimiser` slot.
-- `linearize()` is required on the observation operator. If $H$ is
+- `linearize()` is required on the observation operator. If $h$ is
   intrinsically nonlinear, the user picks `ThreeDVar` instead;
   `OptimalInterpolation.__init__` validates linearity and refuses
   nonlinear `obs_op`.
 - A new Layer 0 primitive `blue_analysis(x_b, y, B_op, R_op, H_op)`
   implements the closed-form math via `gaussx`.
 - Math chapter 4 covers BLUE / OI in detail, including the Sherman–
-  Morrison–Woodbury identity used to pick between the $B$-space and
-  the $R$-space form.
+  Morrison–Woodbury identity used to pick between the $\gmat{\Sigma}_x$-space and
+  the $\gmat{\Sigma}_\varepsilon$-space form.
 
 ---
 
@@ -429,17 +429,17 @@ learned low-dimensional latent space $\mathcal{Z}$ — is added as a
 established in D14:
 
 * `LatentThreeDVar` — single-time inversion in $\mathcal{Z}$.
-* `LatentStrongFourDVar` — multi-time, latent dynamics $M_z$.
+* `LatentStrongFourDVar` — multi-time, latent dynamics $f_z$.
 * `LatentHybridFourDVar` — multi-time, physics forecast in $\mathcal{X}$,
   control and background in $\mathcal{Z}$.
 
 **Context.** Vardax already uses learned subspaces in three places —
 the AE priors inside `FourDVarNet*`, the observation encoder inside
 `AmortizedPosterior`, and the heads of the amortised family. None of
-these promote $z$ itself to the control variable; the variational
+these promote $\vect{z}$ itself to the control variable; the variational
 problem still solves in $\mathcal{X}$. The benchmark literature
 (Peyron 2021, Cheng 2023, Fablet 2021) consistently shows that
-promoting $z$ to control gives an order-of-magnitude wall-clock win
+promoting $\vect{z}$ to control gives an order-of-magnitude wall-clock win
 and a structurally smaller posterior covariance.
 
 **Options.**
@@ -453,7 +453,7 @@ and a structurally smaller posterior covariance.
 
 **Rationale.**
 
-* The control vector ($z$ vs $x$), the cost dimensionality, the Hessian
+* The control vector ($\vect{z}$ vs $\vect{x}$), the cost dimensionality, the Hessian
   object, and the posterior covariance all live in genuinely different
   spaces. The D14 pattern argues we should not hide a structural
   difference behind a flag.
@@ -502,7 +502,7 @@ and a structurally smaller posterior covariance.
 
 Dynamics-aware priors ported from `mfourdvar` (`DynIncrements`,
 `DynTrajectory`) need the window's time coordinates; the static
-[`Prior`](xref:api#vardax.Prior) seam ($\varphi: x \mapsto x$) cannot
+[`Prior`](xref:api#vardax.Prior) seam ($g_\text{ae}: \vect{x} \mapsto \vect{x}$) cannot
 express them.
 
 **Options.**

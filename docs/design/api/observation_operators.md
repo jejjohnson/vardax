@@ -10,14 +10,14 @@ operators, not deferred features. Every class here satisfies
 `pipekit_cycle.ObservationOperator` directly (Decision D8): `__call__(state)`
 returns predicted observations, and `linearize(state)` returns an
 `AbstractLinearOperator` representing the tangent-linear operator
-$H' = \partial H / \partial x$.
+$\mat{H} = \partial h / \partial \vect{x}$.
 
 ---
 
 ## Protocol satisfaction
 
 ```{code-block} python
-:caption: Declares the observation-operator protocol, the map H of [](#eq-obs-model) plus its tangent-linear H′ of [](#eq-tlm-obs), which every vardax operator satisfies.
+:caption: Declares the observation-operator protocol, the map h of [](#eq-obs-model) plus its tangent-linear H of [](#eq-tlm-obs), which every vardax operator satisfies.
 :label: code-design-api-obsop-protocol
 import lineax as lx
 import pipekit_cycle as pc
@@ -34,7 +34,7 @@ ObservationOperator = pc.ObservationOperator
 #   def linearize(self, state: Float[Array, " N"]) -> lx.AbstractLinearOperator: ...
 #
 # The default `linearize` uses `lineax.JacobianLinearOperator` (autodiff
-# Jacobian H′ = ∂H/∂x). Operators with structure may override with a
+# Jacobian H = ∂h/∂x). Operators with structure may override with a
 # structured op (gaussx Kronecker, LowRank, BlockDiag) for efficiency.
 ```
 
@@ -56,19 +56,19 @@ from jaxtyping import Array, Float
 
 # today (vardax)
 class MaskedIdentity(eqx.Module):
-    """H(x) = m ⊙ x."""
+    """h(x) = m ⊙ x."""
 
     def __call__(
         self, x: Float[Array, " N"], mask: Float[Array, " N"] | None = None
     ) -> Float[Array, " N"]:
         if mask is None:
             return x
-        # H(x) = m ⊙ x
+        # h(x) = m ⊙ x
         return x * mask
 
     def linearize(self, x: Float[Array, " N"]) -> lx.AbstractLinearOperator:
         # today (lineax)
-        # H′ = ∂H/∂x by autodiff
+        # H = ∂h/∂x by autodiff
         return lx.JacobianLinearOperator(self.__call__, x)
 ```
 
@@ -79,7 +79,7 @@ Use case: SSH altimetry with along-track gaps, SST with cloud masks.
 ## `LinearObs`
 
 ```{code-block} python
-:caption: Declares `LinearObs`, the linear operator H(x) = H_mat x of [](#eq-linear-obs), whose tangent-linear is the operator itself.
+:caption: Declares `LinearObs`, the linear operator h(x) = H x of [](#eq-linear-obs), whose tangent-linear is the operator itself.
 :label: code-design-api-obsop-linear
 import equinox as eqx
 import lineax as lx
@@ -90,18 +90,18 @@ from jaxtyping import Array, Float
 
 # today (vardax)
 class LinearObs(eqx.Module):
-    """H(x) = operator @ x."""
+    """h(x) = operator @ x."""
 
     # gaussx / lineax operator
     operator: lx.AbstractLinearOperator
 
     def __call__(self, x: Float[Array, " N"]) -> Float[Array, " M"]:
         # today (lineax)
-        # H(x) = H_mat x
+        # h(x) = H x
         return self.operator.mv(x)
 
     def linearize(self, x: Float[Array, " N"]) -> lx.AbstractLinearOperator:
-        # linear → Jacobian is the operator itself: H′ = H_mat
+        # linear → Jacobian is the operator itself: H = H
         return self.operator
 ```
 
@@ -116,19 +116,19 @@ Decision D9: first-class day-one operator for any satellite L2 product.
 
 ### Mathematical formulation
 
-The averaging kernel maps a model state $x$ (mixing-ratio profile, surface
+The averaging kernel maps a model state $\vect{x}$ (mixing-ratio profile, surface
 field) to the L2 retrieval-equivalent observation:
 
-$$\hat{y} = A\,(h \odot x + (1 - h) \odot x_a)$$
+$$h(\vect{x}) = \mat{J}_{\hat{x}} (\vect{w} \odot \vect{x} + (1 - \vect{w}) \odot \gvect{\mu}_\text{ret})$$
 
 where:
 
-- $x \in \mathbb{R}^N$ — model state (gas profile, surface field)
-- $x_a \in \mathbb{R}^N$ — retrieval prior (a priori state from L2 metadata)
-- $h \in \mathbb{R}^N$ — weighting vector (often pressure-weighted; `h = 1`
+- $\vect{x} \in \mathbb{R}^{D_x}$ — model state (gas profile, surface field)
+- $\gvect{\mu}_\text{ret} \in \mathbb{R}^{D_x}$ — retrieval prior (a priori state from L2 metadata)
+- $\vect{w} \in \mathbb{R}^{D_x}$ — weighting vector (often pressure-weighted; `w = 1`
   for surface-only obs)
-- $A \in \mathbb{R}^{N \times N}$ — averaging kernel matrix
-- $\hat{y}$ — predicted L2 observation
+- $\mat{J}_{\hat{x}} \in \mathbb{R}^{D_x \times D_x}$ — averaging kernel matrix
+- $h(\vect{x}) \in \mathbb{R}^{D_y}$ — predicted L2 observation
 
 This operator is **mandatory** for any RTM-derived satellite product
 (TROPOMI CH₄, EMIT CH₄, OCO CO₂, MOPITT CO, …). Skipping it is the most
@@ -150,24 +150,24 @@ from jaxtyping import Array, Float
 class AveragingKernel(eqx.Module):
     # gaussx: may be Kronecker / LowRank / dense
     kernel_matrix: lx.AbstractLinearOperator
-    # retrieval prior x_a
+    # retrieval prior μ_ret
     prior_profile: Float[Array, " N"]
-    # weighting vector h
+    # weighting vector w
     pressure_weights: Float[Array, " N"]
 
     def __call__(self, x: Float[Array, " N"]) -> Float[Array, " N"]:
         weights = self.pressure_weights
-        # h ⊙ x + (1 − h) ⊙ x_a
+        # w ⊙ x + (1 − w) ⊙ μ_ret
         blended = weights * x + (1.0 - weights) * self.prior_profile  # (N,)
         # today (lineax)
-        # ŷ = A (h ⊙ x + (1 − h) ⊙ x_a)
+        # h(x) = J_x̂ (w ⊙ x + (1 − w) ⊙ μ_ret)
         return self.kernel_matrix.mv(blended)
 
     def linearize(self, x: Float[Array, " N"]) -> lx.AbstractLinearOperator:
         # today (lineax)
         # diag(h)
         weight_op = lx.DiagonalLinearOperator(self.pressure_weights)  # (N, N) op
-        # H′(x) = A diag(h), linear in x
+        # h(x) = J_x̂ diag(w), linear in x
         return self.kernel_matrix @ weight_op
 ```
 
@@ -177,7 +177,7 @@ for separable kernels) can be exploited by `gaussx.ops.solve`.
 ### Construction from L2 metadata
 
 ```{code-block} python
-:caption: Builds the `AveragingKernel` of [](#eq-averaging-kernel) from the A, x_a and h variables of an L2 dataset.
+:caption: Builds the `AveragingKernel` of [](#eq-averaging-kernel) from the J_x̂, μ_ret and w variables of an L2 dataset.
 :label: code-design-api-obsop-ak-from-l2
 import jax.numpy as jnp
 import lineax as lx
@@ -221,10 +221,10 @@ pre-regridding, no shared coordinate system imposed.
 ### Mathematical formulation
 
 Each instrument $i \in \{TROPOMI, EMIT, GHGSat, \ldots\}$ has its own
-operator $H_i$, mask $m_i$, error covariance $R_i$. The fused observation
+operator $h_i$, mask $\vect{m}_i$, error covariance $\gmat{\Sigma}_{\varepsilon,i}$. The fused observation
 cost:
 
-$$J_\text{obs}(x) = \sum_i \alpha_i \cdot \frac{1}{|\Omega_i|}\,\|m_i \odot (H_i(x) - y_i)\|^2_{R_i^{-1}}$$
+$$\mathcal{J}_o(\vect{x}) = \sum_i \alpha_i \frac{1}{\vert \Omega_i \vert} \Vert \vect{m}_i \odot (h_i(\vect{x}) - \vect{y}_i) \Vert^2_{\gmat{\Sigma}_{\varepsilon,i}^{-1}}$$
 
 Per-pixel `instrument` index on `Batch*` selects the operator. Quality
 masks zero-weight unreliable pixels (no contribution to the likelihood, not
@@ -233,7 +233,7 @@ dropped).
 ### Class contract
 
 ```{code-block} python
-:caption: Declares `MultiInstrumentFusion`, which returns the per-instrument predictions Hᵢ(x) that the fused cost [](#eq-fusion-cost) combines.
+:caption: Declares `MultiInstrumentFusion`, which returns the per-instrument predictions hᵢ(x) that the fused cost [](#eq-fusion-cost) combines.
 :label: code-design-api-obsop-fusion
 import equinox as eqx
 import lineax as lx
@@ -259,7 +259,7 @@ class MultiInstrumentFusion(eqx.Module):
         self, x: Float[Array, " N"], batch: Batch
     ) -> dict[str, Float[Array, " Mi"]]:
         """Return per-instrument predicted observations."""
-        # {i: Hᵢ(x)}
+        # {i: hᵢ(x)}
         return {
             inst_id: spec.obs_op(x) for inst_id, spec in self.registry.entries.items()
         }
@@ -269,7 +269,7 @@ class MultiInstrumentFusion(eqx.Module):
 
         Typically block-diagonal across instruments.
         """
-        # {i: H′ᵢ(x)}
+        # {i: Hᵢ(x)}
         return {
             inst_id: spec.obs_op.linearize(x)
             for inst_id, spec in self.registry.entries.items()
@@ -286,7 +286,7 @@ strict-protocol contexts.
 ### `InstrumentRegistry`
 
 ```{code-block} python
-:caption: Declares the per-instrument (Hᵢ, mᵢ, Rᵢ) bundle and the registry that feed the fused cost [](#eq-fusion-cost).
+:caption: Declares the per-instrument (hᵢ, mᵢ, Σ_ε,ᵢ) bundle and the registry that feed the fused cost [](#eq-fusion-cost).
 :label: code-design-api-obsop-registry
 import equinox as eqx
 import jax.numpy as jnp
@@ -300,14 +300,14 @@ from jaxtyping import Array, Float
 
 # today (vardax)
 class InstrumentSpec(eqx.Module):
-    """Per-instrument (A, x_a, h, mask, R) tuple."""
+    """Per-instrument (J_x̂, μ_ret, w, m, Σ_ε) tuple."""
 
     # today (pipekit_cycle)
-    # Hᵢ, often AveragingKernel
+    # hᵢ, often AveragingKernel
     obs_op: pc.ObservationOperator
     # quality mask mᵢ
     mask: Float[Array, " Mi"]
-    # obs-err covariance Rᵢ
+    # obs-err covariance Σ_ε,ᵢ
     obs_cov_op: lx.AbstractLinearOperator
     instrument_id: str = eqx.field(static=True)
 
@@ -326,14 +326,14 @@ class InstrumentRegistry(eqx.Module):
         for inst_id, ds in l2_datasets.items():
             # mᵢ
             quality_mask = jnp.asarray(ds["qa_flag"].values)  # (Mi,)
-            # diag(Rᵢ)
+            # diag(Σ_ε,ᵢ)
             uncertainty = jnp.asarray(ds["xch4_uncertainty"].values)  # (Mi,)
             entries[inst_id] = InstrumentSpec(
                 # today* (vardax._src.obs_operators): Dataset form sketched above
                 obs_op=averaging_kernel_from_l2(ds),
                 mask=quality_mask,
                 # today (lineax)
-                # Rᵢ = diag(σᵢ)
+                # Σ_ε,ᵢ = diag(σᵢ)
                 obs_cov_op=lx.DiagonalLinearOperator(uncertainty),
                 instrument_id=inst_id,
             )
@@ -348,7 +348,7 @@ For multi-instrument joint inversions where instruments may disagree
 systematically:
 
 ```{code-block} python
-:caption: Declares the planned bias-aware fusion, which adds a per-instrument bias bᵢ to each prediction Hᵢ(x) in [](#eq-fusion-cost).
+:caption: Declares the planned bias-aware fusion, which adds a per-instrument bias bᵢ to each prediction hᵢ(x) in [](#eq-fusion-cost).
 :label: code-design-api-obsop-bias-aware
 import equinox as eqx
 import vardax as vdx
@@ -373,7 +373,7 @@ class BiasAwareFusion(eqx.Module):
     def __call__(
         self, x: Float[Array, " N"], bias: dict[str, Array], batch: Batch
     ) -> dict[str, Float[Array, " Mi"]]:
-        # {i: Hᵢ(x) + bᵢ}
+        # {i: hᵢ(x) + bᵢ}
         return {
             inst_id: self.base.registry.entries[inst_id].obs_op(x) + bias[inst_id]
             for inst_id in self.base.registry.entries
@@ -391,7 +391,7 @@ For frequency-domain observations (along-track altimetry spectra, spectral
 SST products):
 
 ```{code-block} python
-:caption: Declares the planned spectral operator H(x) = F⁻¹ S F x, a linear operator in the sense of [](#eq-linear-obs).
+:caption: Declares the planned spectral operator h(x) = F⁻¹ S F x, a linear operator in the sense of [](#eq-linear-obs).
 :label: code-design-api-obsop-spectral
 import equinox as eqx
 import lineax as lx
@@ -401,7 +401,7 @@ import lineax as lx
 
 # proposed (Epic 4)
 class SpectralObs(eqx.Module):
-    """H(x) = F⁻¹ · S · F · x, selective frequency observation."""
+    """h(x) = F⁻¹ · S · F · x, selective frequency observation."""
 
     # FFT operator F
     F: lx.AbstractLinearOperator
@@ -435,11 +435,11 @@ def test_obs_op_satisfies_protocol(obs_op: pc.ObservationOperator) -> None:
     assert isinstance(obs_op, pc.ObservationOperator)
     # user (fixture, not shown)
     state = sample_state()  # → (N,)
-    # y = H(x)
+    # y = h(x)
     predicted = obs_op(state)  # (N,) → (M,)
     assert predicted.shape == expected_obs_shape
 
-    # H′ at x
+    # H at x
     tangent_linear = obs_op.linearize(state)  # (M, N) op
     assert isinstance(tangent_linear, lx.AbstractLinearOperator)
 
@@ -447,15 +447,15 @@ def test_obs_op_satisfies_protocol(obs_op: pc.ObservationOperator) -> None:
     # user (fixture, not shown)
     u, v = sample_random_arrays()  # → (N,), (M,)
     # today (lineax)
-    # H′u
+    # Hu
     forward = tangent_linear.mv(u)  # (N,) → (M,)
     # today (lineax)
-    # H′ᵀv
+    # Hᵀv
     backward = tangent_linear.transpose().mv(v)  # (M,) → (N,)
-    # ⟨H′u, v⟩
+    # ⟨Hu, v⟩
     forward_inner = einx.dot("m, m ->", forward, v)  # → ()
-    # ⟨u, H′ᵀv⟩
+    # ⟨u, Hᵀv⟩
     backward_inner = einx.dot("n, n ->", u, backward)  # → ()
-    # ⟨H′u, v⟩ = ⟨u, H′ᵀv⟩
+    # ⟨Hu, v⟩ = ⟨u, Hᵀv⟩
     assert jnp.allclose(forward_inner, backward_inner, atol=1e-5)
 ```

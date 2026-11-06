@@ -12,12 +12,12 @@ in the algorithm, not in the type hierarchy.
 | Class | Method | Decision |
 |---|---|---|
 | `OptimalInterpolation` | BLUE / OI — closed-form linear-Gaussian | D14, D16 |
-| `ThreeDVar` | 3D variational, nonlinear $H$, single time | D14 |
-| `StrongFourDVar` | 4DVar, control = $x_0$, exact dynamics | D14 |
-| `WeakFourDVar` | 4DVar, control = $(x_0, \eta_1, \ldots, \eta_T)$ | D14 |
+| `ThreeDVar` | 3D variational, nonlinear $h$, single time | D14 |
+| `StrongFourDVar` | 4DVar, control = $\vect{x}_0$, exact dynamics | D14 |
+| `WeakFourDVar` | 4DVar, control = $(\vect{x}_0, \gvect{\eta}_1, \ldots, \gvect{\eta}_T)$ | D14 |
 | `IncrementalFourDVar` | GN outer + CG inner + CVT (fast `StrongFourDVar`) | D11 |
-| `FourDVarNet` | Learned $\varphi_\theta$ + learned $\Phi_\phi$ | D3, D6 |
-| `AmortizedPosterior` | Direct $q_\phi(x \mid y)$ head | D12 |
+| `FourDVarNet` | Learned $g_\text{ae}$ + learned $g_\text{mod}$ | D3, D6 |
+| `AmortizedPosterior` | Direct $q(\vect{x} \mid \vect{y}; \gvect{\nu})$ head | D12 |
 
 All seven accept the same `Batch*` types and the same observation
 operator family. The user picks the method that matches the regime.
@@ -30,15 +30,15 @@ operator family. The user picks the method that matches the regime.
 
 The Best Linear Unbiased Estimator for linear-Gaussian state estimation:
 
-$$x^* = x_b + K(y - H x_b), \qquad K = B H^\top (H B H^\top + R)^{-1}$$
+$$\vect{x}^\star = \gvect{\mu}_x + \mat{G} (\vect{y} - \mat{H} \gvect{\mu}_x), \qquad \mat{G} = \gmat{\Sigma}_x \mat{H}^\top (\mat{H} \gmat{\Sigma}_x \mat{H}^\top + \gmat{\Sigma}_\varepsilon)^{-1}$$
 
 with posterior covariance
 
-$$P^* = (B^{-1} + H^\top R^{-1} H)^{-1} = (I - K H) B.$$
+$$\gmat{\Sigma}_{x \mid y} = (\gmat{\Sigma}_x^{-1} + \mat{H}^\top \gmat{\Sigma}_\varepsilon^{-1} \mat{H})^{-1} = (\mat{I} - \mat{G} \mat{H}) \gmat{\Sigma}_x.$$
 
-Choice of form (Sherman-Morrison-Woodbury): use the $R$-space form when
-the observation dimension $m$ is smaller than the state dimension $n$;
-the $B$-space form otherwise. `gaussx` handles structured $B$ and $R$
+Choice of form (Sherman-Morrison-Woodbury): use the $\gmat{\Sigma}_\varepsilon$-space form when
+the observation dimension $D_y$ is smaller than the state dimension $D_x$;
+the $\gmat{\Sigma}_x$-space form otherwise. `gaussx` handles structured $\gmat{\Sigma}_x$ and $\gmat{\Sigma}_\varepsilon$
 without materialising dense matrices.
 
 ### Class contract
@@ -70,21 +70,21 @@ class OptimalInterpolation(eqx.Module):
 
     # H, linear (validated in __init__)
     obs_op: pc.ObservationOperator
-    # x_b
+    # μ_x
     prior_mean: Float[Array, " N"]
-    # B (gaussx-friendly)
+    # Σ_x (gaussx-friendly)
     prior_cov_op: lx.AbstractLinearOperator
-    # R (gaussx-friendly)
+    # Σ_ε (gaussx-friendly)
     obs_cov_op: lx.AbstractLinearOperator
 
     def __call__(self, batch: Batch) -> Float[Array, "B N"]:
-        """Return x*. No iteration, no convergence criterion."""
-        # x* = x_b + K (y − H x_b)
+        """Return x⋆. No iteration, no convergence criterion."""
+        # x⋆ = μ_x + G (y − H μ_x)
         ...
 
     def posterior(self, batch: Batch) -> vdx.Posterior:
         """Closed-form (mean, cov, provenance), no PosteriorAdapter needed."""
-        # P* = (B⁻¹ + Hᵀ R⁻¹ H)⁻¹
+        # Σ_x|y = (Σ_x⁻¹ + Hᵀ Σ_ε⁻¹ H)⁻¹
         ...
 
     def as_analysis_step(self) -> pc.AnalysisStep: ...
@@ -92,12 +92,12 @@ class OptimalInterpolation(eqx.Module):
 
 ### When to use
 
-- $H$ is linear (or the linearisation around $x_b$ is good enough)
-- $B$, $R$, $H$ are Gaussian (or close enough that the posterior is
+- $h$ is linear (or the linearisation around $\gvect{\mu}_x$ is good enough)
+- $\gmat{\Sigma}_x$, $\gmat{\Sigma}_\varepsilon$, $h$ are Gaussian (or close enough that the posterior is
   unimodal Gaussian)
 - Static field (no dynamics) or a single timestep
 
-If any of these fail, `ThreeDVar` (nonlinear $H$) or
+If any of these fail, `ThreeDVar` (nonlinear $h$) or
 `StrongFourDVar` / `IncrementalFourDVar` (dynamics) is the right choice.
 `OptimalInterpolation.__init__` validates linearity and refuses
 nonlinear obs operators with a clear error message.
@@ -110,9 +110,9 @@ nonlinear obs operators with a clear error message.
 
 Minimise
 
-$$J(x) = \tfrac{1}{2} \|x - x_b\|^2_{B^{-1}} + \tfrac{1}{2} \|y - H(x)\|^2_{R^{-1}}$$
+$$\mathcal{J}(\vect{x}) = \frac{1}{2} \Vert \vect{x} - \gvect{\mu}_x \Vert^2_{\gmat{\Sigma}_x^{-1}} + \frac{1}{2} \Vert \vect{y} - h(\vect{x}) \Vert^2_{\gmat{\Sigma}_\varepsilon^{-1}}$$
 
-over $x$. For nonlinear $H$, solve iteratively via Gauss-Newton, BFGS,
+over $\vect{x}$. For nonlinear $h$, solve iteratively via Gauss-Newton, BFGS,
 or NonlinearCG (chosen by the user via the `minimiser` slot).
 
 In the linear-Gaussian limit, `ThreeDVar` recovers `OptimalInterpolation`
@@ -148,7 +148,7 @@ class ThreeDVar(eqx.Module):
     # today (optimistix)
     minimiser_adjoint: optx.AbstractAdjoint = optx.ImplicitAdjoint()
 
-    # x* = argmin_x J(x)
+    # x⋆ = argmin_x 𝒥(x)
     def __call__(self, batch: Batch) -> Float[Array, "B N"]: ...
 
     def as_analysis_step(self) -> pc.AnalysisStep: ...
@@ -156,7 +156,7 @@ class ThreeDVar(eqx.Module):
 
 ### When to use
 
-- Nonlinear $H$ (e.g. averaging kernel + nonlinear retrieval)
+- Nonlinear $h$ (e.g. averaging kernel + nonlinear retrieval)
 - Single timestep (snapshot inversion)
 - Posterior assumed Gaussian-around-MAP (`LaplaceCovariance` adapter)
 
@@ -166,13 +166,13 @@ class ThreeDVar(eqx.Module):
 
 ### Mathematical formulation
 
-Control variable is the initial state $x_0$ alone; dynamics $M_t$ are
+Control variable is the initial state $\vect{x}_0$ alone; dynamics $f_t$ are
 treated as exact:
 
-$$J(x_0) = \tfrac{1}{2} \|x_0 - x_b\|^2_{B^{-1}} + \tfrac{1}{2} \sum_{t=0}^{T} \|y_t - H_t(M_t(x_0))\|^2_{R_t^{-1}}$$
+$$\mathcal{J}(\vect{x}_0) = \frac{1}{2} \Vert \vect{x}_0 - \gvect{\mu}_x \Vert^2_{\gmat{\Sigma}_x^{-1}} + \frac{1}{2} \sum_{t=0}^{T} \Vert \vect{y}_t - h_t(f_t(\vect{x}_0)) \Vert^2_{\gmat{\Sigma}_{\varepsilon,t}^{-1}}$$
 
-Gradients of $J$ with respect to $x_0$ are computed by integrating the
-adjoint of $M_t$ backwards in time — vardax delegates this to
+Gradients of $\mathcal{J}$ with respect to $\vect{x}_0$ are computed by integrating the
+adjoint of $f_t$ backwards in time — vardax delegates this to
 `diffrax.AbstractAdjoint` (see Decision D15). The default
 `RecursiveCheckpointAdjoint` is autodiff with recursive checkpointing;
 `BacksolveAdjoint` solves the continuous adjoint ODE in reverse time
@@ -213,7 +213,7 @@ class StrongFourDVar(eqx.Module):
     # today (diffrax)
     forward_adjoint: diffrax.AbstractAdjoint = diffrax.RecursiveCheckpointAdjoint()
 
-    # x₀* = argmin_{x₀} J(x₀)
+    # x₀⋆ = argmin_{x₀} 𝒥(x₀)
     def __call__(self, batch: Batch) -> Float[Array, "B N"]: ...
 
     def as_analysis_step(self) -> pc.AnalysisStep: ...
@@ -234,13 +234,13 @@ class StrongFourDVar(eqx.Module):
 
 Control vector is augmented to include per-step model error:
 
-$$\boldsymbol{\eta} = (\eta_1, \ldots, \eta_T), \quad x_t = M_t^\text{free}(x_{t-1}) + \eta_t$$
+$$\gvect{\eta} = (\gvect{\eta}_1, \ldots, \gvect{\eta}_T), \quad \vect{x}_t = f_t^\text{free}(\vect{x}_{t-1}) + \gvect{\eta}_t$$
 
 with cost
 
-$$J(x_0, \boldsymbol{\eta}) = \tfrac{1}{2} \|x_0 - x_b\|^2_{B^{-1}} + \tfrac{1}{2} \sum_t \|y_t - H_t(x_t)\|^2_{R_t^{-1}} + \tfrac{1}{2} \sum_t \|\eta_t\|^2_{Q_t^{-1}}$$
+$$\mathcal{J}(\vect{x}_0, \gvect{\eta}) = \frac{1}{2} \Vert \vect{x}_0 - \gvect{\mu}_x \Vert^2_{\gmat{\Sigma}_x^{-1}} + \frac{1}{2} \sum_t \Vert \vect{y}_t - h_t(\vect{x}_t) \Vert^2_{\gmat{\Sigma}_{\varepsilon,t}^{-1}} + \frac{1}{2} \sum_t \Vert \gvect{\eta}_t \Vert^2_{\gmat{\Sigma}_{\eta,t}^{-1}}$$
 
-The model-error covariance $Q_t$ is a separate input.
+The model-error covariance $\gmat{\Sigma}_{\eta,t}$ is a separate input.
 
 ### Class contract
 
@@ -264,16 +264,16 @@ Batch = vdx.Batch1D | vdx.Batch2D | vdx.Batch2DMultivar
 # today* (vardax): also ships cov_solver, max_steps, parameterization and checkpoint
 class WeakFourDVar(eqx.Module):
     # today (pipekit_cycle)
-    # M_t^free
+    # f_t^free
     forward: pc.ForwardModel
     # today (pipekit_cycle)
     obs_op: pc.ObservationOperator
     prior_mean: Float[Array, " N"]
-    # B
+    # Σ_x
     prior_cov_op: lx.AbstractLinearOperator
-    # R
+    # Σ_ε
     obs_cov_op: lx.AbstractLinearOperator
-    # Q
+    # Σ_η
     model_err_cov_op: lx.AbstractLinearOperator
     # today (optimistix)
     minimiser: optx.AbstractMinimiser
@@ -285,8 +285,8 @@ class WeakFourDVar(eqx.Module):
     def __call__(
         self, batch: Batch
     ) -> tuple[Float[Array, "B N"], Float[Array, "B T N"]]:
-        """Return (x_0*, η*): analysis initial condition and model error."""
-        # (x₀*, η*) = argmin J(x₀, η)
+        """Return (x₀⋆, η⋆): analysis initial condition and model error."""
+        # (x₀⋆, η⋆) = argmin 𝒥(x₀, η)
         ...
 
     def as_analysis_step(self) -> pc.AnalysisStep: ...
@@ -296,12 +296,12 @@ class WeakFourDVar(eqx.Module):
 
 - Multi-timestep observations with non-negligible model error
 - Long assimilation windows where dynamics drift away from observations
-- Climatological or seasonal mismatch between $M_t^\text{free}$ and
+- Climatological or seasonal mismatch between $f_t^\text{free}$ and
   reality
 
 `WeakFourDVar` is computationally heavier than `StrongFourDVar` because
 the control vector dimension scales with $T$. Use sparingly; consider
-`StrongFourDVar` with a learned $\varphi_\theta$ as a cheaper
+`StrongFourDVar` with a learned $g_\text{ae}$ as a cheaper
 alternative.
 
 ---
@@ -312,20 +312,20 @@ alternative.
 
 Functionally equivalent to `StrongFourDVar`, but uses Gauss-Newton outer
 iterations on the full nonlinear cost with CG / Lanczos inner iterations
-on the linearised quadratic subproblem. At each outer iterate $x^{(k)}$
-(with $x^{(0)} = x_b$; the background $x_b$ stays fixed), linearise $M_t$
-and $H_t$ via `jax.linearize`:
+on the linearised quadratic subproblem. At each outer iterate $\vect{x}^{(i)}$
+(with $\vect{x}^{(0)} = \gvect{\mu}_x$; the background $\gvect{\mu}_x$ stays fixed), linearise $f_t$
+and $h_t$ via `jax.linearize`:
 
-$$\delta J(\delta x) = \tfrac{1}{2} \|x^{(k)} + \delta x - x_b\|^2_{B^{-1}} + \tfrac{1}{2} \sum_t \|d_t^{(k)} - H'_t M'_t \delta x\|^2_{R_t^{-1}}$$
+$$\delta\mathcal{J}(\delta\vect{x}) = \frac{1}{2} \Vert \vect{x}^{(i)} + \delta\vect{x} - \gvect{\mu}_x \Vert^2_{\gmat{\Sigma}_x^{-1}} + \frac{1}{2} \sum_t \Vert \vect{r}_t^{(i)} - \mat{H}_t \mat{F}_{t \leftarrow 0} \delta\vect{x} \Vert^2_{\gmat{\Sigma}_{\varepsilon,t}^{-1}}$$
 
-with innovation $d_t^{(k)} = y_t - H_t(M_t(x^{(k)}))$. Solve
-$\mathbf{H}_\text{GN}\,\delta x^* = -\nabla J(x^{(k)})$ by CG (the
-right-hand side keeps the background misfit $-B^{-1}(x^{(k)} - x_b)$),
-update $x^{(k+1)} = x^{(k)} + \delta x^*$, relinearise.
+with innovation $\vect{r}_t^{(i)} = \vect{y}_t - h_t(f_t(\vect{x}^{(i)}))$. Solve
+$\mat{H}_\text{GN} \delta\vect{x}^\star = -\nabla \mathcal{J}(\vect{x}^{(i)})$ by CG (the
+right-hand side keeps the background misfit $-\gmat{\Sigma}_x^{-1}(\vect{x}^{(i)} - \gvect{\mu}_x)$),
+update $\vect{x}^{(i+1)} = \vect{x}^{(i)} + \delta\vect{x}^\star$, relinearise.
 
-**Control-variable transform** (CVT): set $\chi = B^{-1/2}(\delta x)$;
-the prior term becomes $\|\chi\|^2$ and the inner CG operates on a
-well-conditioned problem. $B^{1/2}$ comes from
+**Control-variable transform** (CVT): set $\vect{z} = \mat{L}_x^{-1} \delta\vect{x}$;
+the prior term becomes $\Vert \vect{z} \Vert^2$ and the inner CG operates on a
+well-conditioned problem. $\mat{L}_x = \gmat{\Sigma}_x^{1/2}$ comes from
 `gaussx.MaternLinearOperator.half()`.
 
 ### Class contract
@@ -361,12 +361,12 @@ class IncrementalFourDVar(eqx.Module):
     # today (diffrax)
     forward_adjoint: diffrax.AbstractAdjoint = diffrax.RecursiveCheckpointAdjoint()
 
-    # 𝐇_GN δx* = −∇J(x⁽ᵏ⁾), x⁽ᵏ⁺¹⁾ = x⁽ᵏ⁾ + δx*
+    # 𝐇_GN δx⋆ = −∇𝒥(x⁽ⁱ⁾), x⁽ⁱ⁺¹⁾ = x⁽ⁱ⁾ + δx⋆
     def __call__(self, batch: Batch) -> Float[Array, "B N"]: ...
 
     def posterior(self, batch: Batch) -> vdx.Posterior:
         """Reuse the Hessian from the last outer iteration for GN-Hessian UQ."""
-        # P* ≈ 𝐇_GN⁻¹
+        # Σ_x|y ≈ 𝐇_GN⁻¹
         ...
 
     def as_analysis_step(self) -> pc.AnalysisStep: ...
@@ -389,20 +389,20 @@ class IncrementalFourDVar(eqx.Module):
 
 ### Mathematical formulation
 
-Replace the Gaussian prior $\|x - x_b\|^2_{B^{-1}}$ with a learned prior
-$\|x - \varphi_\theta(x)\|^2$, where $\varphi_\theta$ is an autoencoder
+Replace the Gaussian prior $\Vert \vect{x} - \gvect{\mu}_x \Vert^2_{\gmat{\Sigma}_x^{-1}}$ with a learned prior
+$\Vert \vect{x} - g_\text{ae}(\vect{x}; \gvect{\theta}) \Vert^2$, where $g_\text{ae}$ is an autoencoder
 (`BilinAE`, `ConvAE`, `MLPAE`). Replace the standard gradient-descent
-inner solver with a learned gradient modulator $\Phi_\phi$:
+inner solver with a learned gradient modulator $g_\text{mod}$:
 
-$$x_{k+1} = x_k - \Phi_\phi(\nabla_x J(x_k),\; h_k)$$
+$$\vect{x}^{(i+1)} = \vect{x}^{(i)} - g_\text{mod}(\nabla_{\vect{x}} \mathcal{J}(\vect{x}^{(i)}), \vect{c}^{(i)})$$
 
-with $J(x) = \alpha_\text{obs} \|H(x) - y\|^2 + \alpha_\text{prior} \|x - \varphi_\theta(x)\|^2$.
+with $\mathcal{J}(\vect{x}) = \alpha_\text{obs} \Vert h(\vect{x}) - \vect{y} \Vert^2 + \alpha_\text{prior} \Vert \vect{x} - g_\text{ae}(\vect{x}; \gvect{\theta}) \Vert^2$.
 
 Training minimises reconstruction MSE against ground truth:
 
-$$\mathcal{L}(\theta, \phi) = \|x^*(\theta, \phi) - x_\text{true}\|^2.$$
+$$\mathcal{L}(\gvect{\theta}, \gvect{\theta}_\text{mod}) = \Vert \vect{x}^\star(\gvect{\theta}, \gvect{\theta}_\text{mod}) - \vect{x}_\text{true} \Vert^2.$$
 
-The training gradient $\nabla_{\theta, \phi} \mathcal{L}$ flows through
+The training gradient $\nabla_{\gvect{\theta}, \gvect{\theta}_\text{mod}} \mathcal{L}$ flows through
 the inner solver via the `solver_adjoint` slot (an
 `optimistix.AbstractAdjoint`).
 
@@ -428,12 +428,12 @@ Batch = vdx.Batch1D | vdx.Batch2D | vdx.Batch2DMultivar
 # n_solver_steps, alpha and prior_weight fields and no forward_adjoint
 class FourDVarNet(eqx.Module):
     # today (vardax)
-    # φ_θ
+    # g_ae
     prior: vdx.Prior
     # today (pipekit_cycle)
     obs_op: pc.ObservationOperator
     # today (vardax)
-    # Φ_φ
+    # g_mod
     grad_mod: vdx.GradModulator
     # proposed (components.md)
     config: SolverConfig
@@ -445,7 +445,7 @@ class FourDVarNet(eqx.Module):
 
     def __call__(self, batch: Batch) -> Float[Array, "B T N"]:
         """Training interface: batch → x_reconstructed."""
-        # x_{k+1} = x_k − Φ_φ(∇_x J(x_k), h_k)
+        # x⁽ⁱ⁺¹⁾ = x⁽ⁱ⁾ − g_mod(∇ₓ𝒥(x⁽ⁱ⁾), c⁽ⁱ⁾)
         ...
 
     def as_analysis_step(self) -> pc.AnalysisStep: ...
@@ -455,7 +455,7 @@ class FourDVarNet(eqx.Module):
 
 | Adjoint | Memory | Convergence requirement | Notes |
 |---|---|---|---|
-| `optimistix.RecursiveCheckpointAdjoint()` | $O(K)$ checkpoints | None | Default; standard backprop with recursive checkpointing |
+| `optimistix.RecursiveCheckpointAdjoint()` | $O(N_\text{iter})$ checkpoints | None | Default; standard backprop with recursive checkpointing |
 | `vardax.adjoints.OneStepAdjoint()` | $O(1)$ | None | Bolte et al. 2023; only the last step differentiable |
 | `optimistix.ImplicitAdjoint()` | $O(1)$ | Yes | IFT-based at the fixed point; exact at convergence |
 
@@ -466,10 +466,10 @@ class FourDVarNet(eqx.Module):
 
 ### When to use
 
-- Research / benchmarks where ground-truth $x_\text{true}$ is available
+- Research / benchmarks where ground-truth $\vect{x}_\text{true}$ is available
   for training
-- Data-rich regimes (the learned $\varphi_\theta$ shines)
-- Settings where the classical $B$ is hard to specify or known to be
+- Data-rich regimes (the learned $g_\text{ae}$ shines)
+- Settings where the classical $\gmat{\Sigma}_x$ is hard to specify or known to be
   inadequate
 
 ---
@@ -478,12 +478,10 @@ class FourDVarNet(eqx.Module):
 
 ### Mathematical formulation
 
-Learn a conditional density $q_\phi(x \mid y)$ that approximates
-$p(x \mid y)$. Train on simulated pairs from the prior and forward:
+Learn a conditional density $q(\vect{x} \mid \vect{y}; \gvect{\nu})$ that approximates
+$p(\vect{x} \mid \vect{y})$. Train on simulated pairs from the prior and forward:
 
-$$\phi^* = \underset{\phi}{\arg\min}\;
-  \mathbb{E}_{(x, y) \sim p(x, y)}\;
-  \mathrm{KL}\big(q_\phi(\cdot \mid y) \,\|\, p(\cdot \mid y)\big).$$
+$$\gvect{\nu}^\star = \underset{\gvect{\nu}}{\op{argmin}} \mathbb{E}_{(\vect{x}, \vect{y}) \sim p(\vect{x}, \vect{y})} \mathrm{KL}\left(q(\cdot \mid \vect{y}; \gvect{\nu}) \Vert p(\cdot \mid \vect{y})\right).$$
 
 Head variants: conditional normalising flow (`gauss_flows`), score-based
 diffusion, regression (Gaussian heads).
@@ -491,7 +489,7 @@ diffusion, regression (Gaussian heads).
 ### Class contract
 
 ```{code-block} python
-:caption: Declares `AmortizedPosterior`, the conditional density q_φ(x ∣ y) trained on the amortized objective [](#eq-amortized-objective).
+:caption: Declares `AmortizedPosterior`, the conditional density q(x ∣ y; ν) trained on the amortized objective [](#eq-amortized-objective).
 :label: code-design-api-models-amortized
 import equinox as eqx
 import pipekit_cycle as pc
@@ -515,16 +513,16 @@ class AmortizedPosterior(eqx.Module):
     config: vdx.AmortizedConfig
 
     def __call__(self, batch: Batch) -> Float[Array, "B N"]:
-        """Return MAP / mode of q_φ(x | y)."""
-        # x̂ = mode q_φ(x ∣ y)
+        """Return MAP / mode of q(x | y; ν)."""
+        # x̂ = mode q(x ∣ y; ν)
         ...
 
-    # xˢ ~ q_φ(x ∣ y)
+    # xˢ ~ q(x ∣ y; ν)
     def sample(
         self, batch: Batch, key: PRNGKeyArray, n: int
     ) -> Float[Array, "B S N"]: ...
 
-    # log q_φ(x ∣ y)
+    # log q(x ∣ y; ν)
     def log_prob(self, x: Float[Array, "B N"], batch: Batch) -> Float[Array, ""]: ...
 
     def as_analysis_step(self) -> pc.AnalysisStep: ...
@@ -544,7 +542,7 @@ class AmortizedPosterior(eqx.Module):
 All seven classes expose `.as_analysis_step()`:
 
 ```{code-block} python
-:caption: Shows the pipekit-cycle analysis signature that `.as_analysis_step()` returns, mapping a forecast x_b and observations y to an analysis such as [](#eq-blue-mean).
+:caption: Shows the pipekit-cycle analysis signature that `.as_analysis_step()` returns, mapping a forecast μ_x and observations y to an analysis such as [](#eq-blue-mean).
 :label: code-design-api-models-analysis-step
 import lineax as lx
 import pipekit_cycle as pc
@@ -565,9 +563,9 @@ def analysis_fn(
 
 The adapter shells the model's `__call__` to match the pipekit-cycle
 analysis signature. The `OptimalInterpolation` and `ThreeDVar` adapters
-analyse around `forecast` (the background $x_b$, not the model's
-`prior_mean`) and use the cycle's `obs_op` and `obs_err_cov` ($H$ and $R$;
-`None` falls back to the model's own), keeping the model's $B$. Use it in
+analyse around `forecast` (the background $\gvect{\mu}_x$, not the model's
+`prior_mean`) and use the cycle's `obs_op` and `obs_err_cov` ($h$ and $\gmat{\Sigma}_\varepsilon$;
+`None` falls back to the model's own), keeping the model's $\gmat{\Sigma}_x$. Use it in
 `pipekit_cycle.DACycle`:
 
 ```{code-block} python
@@ -599,7 +597,7 @@ the orchestration code.
 
 ## Linear-Gaussian baseline (Decision D14 invariant)
 
-In the linear-Gaussian limit (linear $H$, Gaussian $B$ and $R$), all
+In the linear-Gaussian limit (linear $h$, Gaussian $\gmat{\Sigma}_x$ and $\gmat{\Sigma}_\varepsilon$), all
 seven methods must agree:
 
 ```
@@ -650,24 +648,24 @@ def train_step(
     opt_state: optax.OptState,
 ) -> tuple[eqx.Module, optax.OptState, Float[Array, ""]]:
     # today (vardax)
-    # ℒ(θ, φ), ∇_{θ, φ} ℒ
+    # ℒ(θ, ν), ∇_{θ, ν} ℒ
     loss, grads = eqx.filter_value_and_grad(vdx.train_loss_fn)(model, batch)
     # today (optax)
     updates, opt_state = optimizer.update(grads, opt_state)
-    # (θ, φ) ← (θ, φ) + Δ
+    # (θ, ν) ← (θ, ν) + Δ
     model = eqx.apply_updates(model, updates)
     return model, opt_state, loss
 
 
 # today* (vardax): shipped eval_step returns the scalar loss, not a dict
 def eval_step(model: eqx.Module, batch: Batch) -> dict[str, Array]:
-    # x*(θ, φ)
+    # x⋆(θ, ν)
     x_recon = model(batch)  # → (B, T, N)
-    # x* − x_true
+    # x⋆ − x_true
     residual = x_recon - batch.target  # (B, T, N)
-    # (x* − x_true)²
+    # (x⋆ − x_true)²
     squared = residual**2  # (B, T, N)
-    # ℒ = mean (x* − x_true)²
+    # ℒ = mean (x⋆ − x_true)²
     mse = einx.mean("b t n ->", squared)  # (B, T, N) → ()
     return {"reconstruction": x_recon, "mse": mse}
 ```
@@ -675,7 +673,7 @@ def eval_step(model: eqx.Module, batch: Batch) -> dict[str, Array]:
 Only `FourDVarNet` and `AmortizedPosterior` have learned parameters and
 therefore use `train_step` / `eval_step`. The classical methods are
 non-learnable — there are no parameters to optimise over (the prior
-covariance $B$ is supplied, not learned).
+covariance $\gmat{\Sigma}_x$ is supplied, not learned).
 
 ### Integration with `pipekit-train` (`[train]` extra)
 
@@ -725,10 +723,10 @@ posterior_adapter = vdx.LaplaceCovariance()
 # vdx.EnsembleCovariance(n_members=32)
 
 # user
-# x* = argmin J(x)
+# x⋆ = argmin 𝒥(x)
 analysis = model(batch)  # → (B, N)
 # today (vardax)
-# P* = (∇²J(x*))⁻¹
+# Σ_x|y = (∇²𝒥(x⋆))⁻¹
 posterior = posterior_adapter(analysis, model, batch)
 # Posterior(mean=..., cov=AbstractLinearOperator, samples=None, provenance={...})
 ```

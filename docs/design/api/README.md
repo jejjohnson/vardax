@@ -28,11 +28,11 @@ slots from `optimistix` / `diffrax` (Decision D15).
 |---|---|---|
 | `OptimalInterpolation` | BLUE / OI (closed-form) | No |
 | `ThreeDVar` | 3D variational | No |
-| `StrongFourDVar` | 4DVar, control = $x_0$ | No |
-| `WeakFourDVar` | 4DVar, control = $(x_0, \boldsymbol{\eta})$ | No |
+| `StrongFourDVar` | 4DVar, control = $\vect{x}_0$ | No |
+| `WeakFourDVar` | 4DVar, control = $(\vect{x}_0, \gvect{\eta})$ | No |
 | `IncrementalFourDVar` | GN + CG + CVT (operational) | No |
 | `FourDVarNet` | Learned 4DVar | Yes |
-| `AmortizedPosterior` | Direct $q_\phi(x \mid y)$ head | Yes |
+| `AmortizedPosterior` | Direct $q(\vect{x} \mid \vect{y}; \gvect{\nu})$ head | Yes |
 
 All seven implement `.as_analysis_step()` returning a
 `pipekit_cycle.AnalysisStep`-compliant callable.

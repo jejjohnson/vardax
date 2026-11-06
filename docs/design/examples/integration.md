@@ -19,7 +19,7 @@ import somax
 import vardax as vdx
 
 # Shapes: N state cells; K = 15 inner steps
-# Given: grid, params, background x_b (N,), prior_cov B op, obs_cov R op
+# Given: grid, params, background μ_x (N,), prior_cov Σ_x op, obs_cov Σ_ε op
 
 # not pinned (somax)
 # somax forwards satisfy pipekit_cycle.ForwardModel natively
@@ -27,12 +27,12 @@ swm = somax.ShallowWaterModel(grid=grid, params=params)
 
 # Wrap as a Prior for the variational cost
 # today* (vardax; ships as DynamicalPrior(model, params, solver, stepsize, adjoint))
-# φ(x₀) = M₁₀(x₀)
+# g_ae(x₀) = f₁₀(x₀)
 prior = vdx.DynamicalPrior(forward=swm, n_steps=10)
 
 # Plug into FourDVarNet
 # proposed (D14; ships today as vdx.FourDVarNet1D / vdx.FourDVarNet2D)
-# x_{k+1} = x_k − Φ(∇ₓJ(x_k), h_k), with J's prior term ‖x − φ(x)‖²
+# x⁽ⁱ⁺¹⁾ = x⁽ⁱ⁾ − g_mod(∇ₓ𝒥(x⁽ⁱ⁾), c⁽ⁱ⁾), with the prior term ‖x − g_ae(x)‖²
 model = vdx.FourDVarNet(
     prior=prior,
     obs_op=vdx.MaskedIdentity(),
@@ -44,7 +44,7 @@ model = vdx.FourDVarNet(
 
 # Or into IncrementalFourDVar (no prior wrap: forward is used directly)
 # today (vardax)
-# δJ(δx) with the somax steps as the dynamics Mₜ
+# δ𝒥(δx) with the somax steps as the dynamics fₜ
 incremental = vdx.IncrementalFourDVar(
     forward=swm,
     obs_op=vdx.MaskedIdentity(),
@@ -81,7 +81,7 @@ plume_fwd = plumax.tier1.GaussianPlume(met=met_field, dispersion="MO")
 
 # Observation: averaging kernel from TROPOMI L2 metadata
 # proposed (D9)
-# ŷ = A (h ⊙ x + (1 − h) ⊙ x_a), with A, h, x_a read from the L2 file
+# h(x) = J_x̂ (w ⊙ x + (1 − w) ⊙ μ_ret), with J_x̂, w, μ_ret read from the L2 file
 tropomi_ak = vdx.AveragingKernel.from_l2(tropomi_l2_ds)
 
 # Multi-instrument fusion (per-instrument bias as joint state, Epic 9)
@@ -94,21 +94,21 @@ registry = vdx.InstrumentRegistry.from_l2_dict(
     }
 )
 # today (vardax)
-# J_obs(x) = Σᵢ αᵢ ½ ‖mᵢ ⊙ (yᵢ − Hᵢ(x))‖²_{Rᵢ⁻¹}
+# 𝒥_o(x) = ∑ᵢ αᵢ ½ ‖mᵢ ⊙ (yᵢ − hᵢ(x))‖²_Σ_ε,ᵢ⁻¹
 fusion = vdx.MultiInstrumentFusion(registry=registry)
 
 # proposed (gaussx)
 # log Q ~ 𝒩(μ, σ²)
 prior_cov = gx.LogNormalLinearOperator(Q_prior_mu, Q_prior_sigma_log)  # (P, P) op
 # proposed (lineax; gaussx ships gx.BlockDiag(*operators))
-# R = blockdiag(R_TROPOMI, R_EMIT, R_GHGSat)
+# Σ_ε = blockdiag(Σ_ε,TROPOMI, Σ_ε,EMIT, Σ_ε,GHGSat)
 obs_cov = lx.BlockDiagonalLinearOperator(  # (Σ Mᵢ, Σ Mᵢ) op
     [spec.obs_cov_op for spec in fusion.registry.entries.values()]
 )
 
 # Invert
 # today* (vardax; a fused obs_op goes in as fusion.to_observation_operator())
-# δJ(δx) over the source parameters
+# δ𝒥(δx) over the source parameters
 inversion = vdx.IncrementalFourDVar(
     forward=plume_fwd,
     obs_op=fusion,
@@ -119,10 +119,10 @@ inversion = vdx.IncrementalFourDVar(
 )
 
 # today (vardax)
-# x* after the last outer iteration
+# x⋆ after the last outer iteration
 analysis = inversion(batch)  # → (1, P)
 # today* (vardax; the adapter takes one window's analysis, e.g. analysis[0])
-# P*_GN = 𝐇_GN⁻¹ at x*
+# Σ_x|y,GN = 𝐇_GN⁻¹ at x⋆
 posterior = vdx.GaussNewtonHessian()(analysis, inversion.as_analysis_step(), batch)
 ```
 
@@ -131,10 +131,10 @@ posterior = vdx.GaussNewtonHessian()(analysis, inversion.as_analysis_step(), bat
 ## gaussx — Structured prior covariance
 
 Decision D11: incremental 4DVar uses the control-variable transform with a
-`gaussx.MaternLinearOperator` factorisation of $B$.
+`gaussx.MaternLinearOperator` factorisation of $\gmat{\Sigma}_x$.
 
 ```{code-block} python
-:caption: Builds a Matérn prior covariance B and its square root S for the control-variable transform [](#eq-cvt), or a separable Kronecker form.
+:caption: Builds a Matérn prior covariance Σ_x and its square root L_x for the control-variable transform [](#eq-cvt), or a separable Kronecker form.
 :label: code-design-integration-gaussx
 import gaussx as gx
 
@@ -143,7 +143,7 @@ import gaussx as gx
 
 # Matérn-3/2 on a regular grid, supports Kronecker structure
 # proposed (gaussx)
-# Bᵢⱼ = k_Matérn-3/2(sᵢ, sⱼ; ℓ = 10 km, σ = 1)
+# (Σ_x)ᵢⱼ = k_Matérn-3/2(sᵢ, sⱼ; ℓ = 10 km, σ = 1)
 prior_cov = gx.MaternLinearOperator(  # (N, D) → (N, N) PSD op
     grid_coords=coords,
     # km, basin-dependent
@@ -153,9 +153,9 @@ prior_cov = gx.MaternLinearOperator(  # (N, D) → (N, N) PSD op
     sigma=1.0,
 )
 
-# Returns B^{1/2} for CVT
+# Returns L_x for CVT
 # proposed (gaussx; gaussx ships gx.sqrt(operator))
-# S = B^{1/2}
+# S = L_x
 prior_sqrt = prior_cov.half()  # (N, N) op
 
 # Or a Kronecker product (separable in lon/lat):
@@ -166,7 +166,7 @@ lon_cov = gx.Matern1DLinearOperator(coords=lon, length_scale=5.0)  # (N_lon, N_l
 # B_lat, ℓ = 3
 lat_cov = gx.Matern1DLinearOperator(coords=lat, length_scale=3.0)  # (N_lat, N_lat) op
 # proposed (gaussx; gaussx ships gx.Kronecker)
-# B = B_lon ⊗ B_lat
+# Σ_x = Σ_lon ⊗ Σ_lat
 kron_cov = gx.KroneckerLinearOperator([lon_cov, lat_cov])  # (N, N) op
 ```
 
@@ -178,7 +178,7 @@ For non-separable, structured priors, build from `LowRankUpdate`,
 ## filterax — Hybrid ensemble-variational (Epic 9)
 
 ```{code-block} python
-:caption: Blends a climatological and an ensemble covariance [](#eq-ensemble-cov) into a hybrid B for incremental 4DVar [](#eq-incremental-cost), then reads the ensemble posterior.
+:caption: Blends a climatological and an ensemble covariance [](#eq-ensemble-cov) into a hybrid Σ_x for incremental 4DVar [](#eq-incremental-cost), then reads the ensemble posterior.
 :label: code-design-integration-filterax
 import einx
 import filterax as fx
@@ -186,8 +186,8 @@ import jax
 import vardax as vdx
 
 # Shapes: E = 32 members; N state cells
-# Given: somax_model, background x_b (N,), state_shape = (N,), B_climatological op,
-#        fusion, obs_cov R op, batch
+# Given: somax_model, background μ_x (N,), state_shape = (N,), B_climatological op,
+#        fusion, obs_cov Σ_ε op, batch
 
 key_perturb = jax.random.PRNGKey(0)
 
@@ -202,10 +202,10 @@ ensemble_forecast = fx.EnsembleForecast(
     initial_perturbations=initial_perturbations,
 )
 # not pinned (filterax)
-# x⁽ᵉ⁾ = M(x_b + δx⁽ᵉ⁾)
+# x⁽ᵉ⁾ = f(μ_x + δx⁽ᵉ⁾)
 ensemble_states = ensemble_forecast(background)  # (N,) → (E, N)
 
-# Hybrid B: blend climatological + ensemble
+# Hybrid Σ_x: blend climatological + ensemble
 # not pinned (filterax)
 # P_ens = 1/(E − 1) Σₑ (x⁽ᵉ⁾ − x̄)(x⁽ᵉ⁾ − x̄)ᵀ
 ensemble_cov = fx.ensemble_covariance(ensemble_states)  # (E, N) → (N, N) op
@@ -214,9 +214,9 @@ hybrid_cov = 0.5 * B_climatological + 0.5 * ensemble_cov  # (N, N) op
 # x̄ = 1/E Σₑ x⁽ᵉ⁾
 ensemble_mean = einx.mean("e n -> n", ensemble_states)  # (E, N) → (N,)
 
-# Run vardax inversion with hybrid B
+# Run vardax inversion with hybrid Σ_x
 # today* (vardax; a fused obs_op goes in as fusion.to_observation_operator())
-# δJ(δx) with B = B_hybrid
+# δ𝒥(δx) with Σ_x = B_hybrid
 model = vdx.IncrementalFourDVar(
     forward=somax_model,
     obs_op=fusion,
@@ -226,12 +226,12 @@ model = vdx.IncrementalFourDVar(
     config=vdx.IncrementalConfig(),
 )
 # today (vardax)
-# x₀* after the last outer iteration
+# x₀⋆ after the last outer iteration
 analysis = model(batch)  # → (S, N)
 
 # Posterior from the ensemble itself
 # today (vardax)
-# P*_ens from the E members
+# Σ_x|y,ens from the E members
 posterior = vdx.EnsembleCovariance(n_members=32)(
     ensemble_states, model.as_analysis_step(), batch
 )
@@ -247,7 +247,7 @@ posterior = vdx.EnsembleCovariance(n_members=32)(
 import pipekit_cycle as pc
 import vardax as vdx
 
-# Given: somax_model, x_climatology x_b, prior_cov B op, obs_cov R op,
+# Given: somax_model, x_climatology μ_x, prior_cov Σ_x op, obs_cov Σ_ε op,
 #        load_satellite_op, n_assimilation_windows, initial_state
 
 # Build the model once
@@ -264,7 +264,7 @@ model = vdx.IncrementalFourDVar(
 
 # Cycle it
 # today (pipekit_cycle)
-# forecast x^f_t = M_t(x^a_{t−1}), then analysis x^a_t from the model's step
+# forecast x_{t|t−1} = f_t(x_{t−1|t−1}), then analysis x_{t|t} from the model's step
 da_cycle = pc.DACycle(
     forward_model=somax_model,
     obs_op=model.obs_op,
@@ -337,7 +337,7 @@ tracker = pipekit_experiment.WandbTracker(project="vardax-ssh", run_name="vardan
 metric_writer = pipekit_train.JSONLWriter("./logs/run.jsonl")
 
 # not pinned (pipekit_train)
-# ℒ = mean ‖x* − x_true‖²
+# ℒ = mean ‖x⋆ − x_true‖²
 loop = pipekit_train.TrainingLoop(
     dataset=oceanbench_ssh_dataset,
     model_op=pipekit_jax.JaxModelOp(model),
@@ -434,10 +434,10 @@ batch = build_event_batch(overpasses, met=met_field)
 
 # Invert
 # today (vardax)
-# x* after the last outer iteration
+# x⋆ after the last outer iteration
 analysis = inversion(batch)  # → (1, P)
 # today* (vardax; the adapter takes one window's analysis, e.g. analysis[0])
-# P*_GN = 𝐇_GN⁻¹ at x*
+# Σ_x|y,GN = 𝐇_GN⁻¹ at x⋆
 posterior = vdx.GaussNewtonHessian()(analysis, inversion.as_analysis_step(), batch)
 
 # Write back to catalog
@@ -455,9 +455,9 @@ catalog.write_posterior(event.id, mark_likelihood)
 |---|---|---|
 | **Learned 4DVarNet** | AE prior + masked obs + ConvLSTM | Standard 4DVarNet SSH mapping |
 | **Physics-informed** | somax `DynamicalPrior` + learned grad mod | Hybrid learned + physics DA |
-| **Operational SSH** | `IncrementalFourDVar` + somax SWM + altimetry + gaussx B | Production ocean DA |
+| **Operational SSH** | `IncrementalFourDVar` + somax SWM + altimetry + gaussx Σ_x | Production ocean DA |
 | **Methane Tier I** | plumax Gaussian plume + AK + multi-instrument fusion + Incremental | Single-overpass facility attribution |
-| **Methane Tier II** | plumax Lagrangian footprint + linear inversion + gaussx Matérn $B$ | Basin-scale regional inversion |
+| **Methane Tier II** | plumax Lagrangian footprint + linear inversion + gaussx Matérn $\gmat{\Sigma}_x$ | Basin-scale regional inversion |
 | **Methane Tier IV** | plumax Eulerian + neural RTM + multi-instrument + amortized | Operational alerts |
 | **Hybrid EnVar** | filterax ensemble cov + Incremental + AveragingKernel | Non-Gaussian regimes |
 | **Catalog-driven** | GeoCatalog query → georeader → vardax → catalog write | End-to-end pipeline |
