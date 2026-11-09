@@ -251,7 +251,9 @@ source = ["src/vardax"]
 output = "reports/coverage.xml"
 
 [tool.uv.sources]
-argminax = { git = "https://github.com/jejjohnson/argminax", tag = "v0.0.2" }
+# TODO(argminax#36): repin to the first tag that contains argminax#36 (a gridded
+# mode in Laplace); until then, its head commit.
+argminax = { git = "https://github.com/jejjohnson/argminax", rev = "c5de70cd29bcb3896ceb19abf6633dd094f9747a" }
 # argminax requires gaussx v0.6.12 as `gaussx @ git+...@v0.6.12`; uv allows one
 # URL per package and reads `tag =` as a different one, so this is `rev =`.
 gaussx = { git = "https://github.com/jejjohnson/gaussx", rev = "v0.6.12" }
