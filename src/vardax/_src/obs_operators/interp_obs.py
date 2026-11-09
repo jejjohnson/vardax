@@ -120,6 +120,12 @@ class InterpObs(eqx.Module):
         state_structure = jax.ShapeDtypeStruct(x.shape, x.dtype)
         # vec; jnp.ravel, not einx: einx raises on a zero-size state at mv time
         flatten_state = lx.FunctionLinearOperator(jnp.ravel, state_structure)
+        if self.indices.shape[0] == 0:
+            # The empty slice is linear and its transpose scatters zeros into x.
+            # gaussx's einx gather cannot resolve a zero-length observation axis.
+            flat_structure = jax.ShapeDtypeStruct((x.size,), x.dtype)
+            empty = lx.FunctionLinearOperator(lambda state: state[:0], flat_structure)
+            return empty @ flatten_state
         # W, the gather of the four corners, with its scatter-add transpose
         interpolation = gaussx.interpolation_operator(
             self.indices,
