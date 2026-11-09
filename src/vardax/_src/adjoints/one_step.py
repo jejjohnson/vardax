@@ -1,7 +1,8 @@
 """One-step differentiation of iterative algorithms (Bolte et al., 2023).
 
-`OneStepAdjoint` is the ``k=1`` alias of `KStepAdjoint`; like it, the class only selects
-a strategy, and the dispatch lives in ``vardax._src.solver``.
+`OneStepAdjoint` is the ``k=1`` form of `KStepAdjoint`, and like it a deprecated alias:
+use ``argminax.adjoint.OneStep``. Unlike argminax's class it still accepts another
+``k``, as it always has.
 """
 
 from __future__ import annotations
@@ -12,7 +13,13 @@ from .k_step import KStepAdjoint
 
 
 class OneStepAdjoint(KStepAdjoint):
-    """One-step differentiation: every iteration but the last under ``stop_gradient``.
+    """Deprecated alias of ``argminax.adjoint.OneStep``; use that name instead.
+
+    Building one emits a ``DeprecationWarning`` naming the argminax class. It
+    derives from `KStepAdjoint` rather than from ``argminax.adjoint.OneStep``,
+    because it accepts ``k`` other than 1 and argminax's class does not.
+
+    One-step differentiation: every iteration but the last under ``stop_gradient``.
 
         dx^(N_iter) / dθ ≈ ∂ g_step(x^(N_iter − 1); θ) / ∂θ
 
@@ -64,8 +71,6 @@ class OneStepAdjoint(KStepAdjoint):
         iterative algorithms. NeurIPS 36.
         [arXiv:2305.13768](https://arxiv.org/abs/2305.13768).
     """
-
-    k: int = 1
 
     def __repr__(self) -> str:  # pragma: no cover - cosmetic
         """Return ``OneStepAdjoint()``."""

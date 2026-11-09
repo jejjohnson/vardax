@@ -116,9 +116,9 @@ Used by classical methods (`ThreeDVar`, `StrongFourDVar`, `WeakFourDVar`) when t
 
 optimistix ships no `DirectAdjoint`; its only adjoints are `RecursiveCheckpointAdjoint` and `ImplicitAdjoint`. Plain reverse through the solver loop is `optx.RecursiveCheckpointAdjoint()`, and `to_optimistix_adjoint` rejects a `DirectAdjoint` spec for that reason.
 
-### `vardax.adjoints.OneStepAdjoint()` (Bolte et al. 2023)
+### `argminax.adjoint.OneStep()` (Bolte et al. 2023)
 
-A custom vardax-owned adjoint.
+The one-step adjoint of argminax, the stack's home for minimiser adjoints; `vardax.adjoints.OneStepAdjoint` is a deprecated alias of it.
 
 | Memory | Convergence requirement |
 |---|---|
@@ -131,6 +131,7 @@ The example builds a `FourDVarNet1D` for $S = 2$ windows of $T = 3$ steps, so $T
 ```{code-block} python
 :caption: Runs the learned solver steps of [](#eq-4dvarnet-update) under `OneStepAdjoint` on two toy windows.
 :label: code-adjoints-one-step
+import argminax as amx
 import jax
 import jax.numpy as jnp
 import vardax as vdx
@@ -152,7 +153,7 @@ model = vdx.FourDVarNet1D(
     n_time=4,
     latent_dim=8,
     hidden_dim=16,
-    solver_adjoint=vdx.adjoints.OneStepAdjoint(),
+    solver_adjoint=amx.adjoint.OneStep(),
     key=key_net,
 )
 # x⋆ = x⁽N_iter⁾, N_iter learned solver steps from y
@@ -162,9 +163,7 @@ print(reconstruction.shape)
 
 It prints `(2, 4, 8)`.
 
-`OneStepAdjoint` is an `optimistix.AbstractAdjoint` subclass. The plan
-is to contribute upstream once stable, joining the standard adjoint
-family (Decision D6).
+`OneStep` is an `optimistix.AbstractAdjoint` subclass that lives in argminax (vardax#278), where its `apply` is implemented, so it also works under any `optx.minimise` or `optx.least_squares` call. vardax's `OneStepAdjoint` and `KStepAdjoint` are deprecated aliases that warn once and are removed in the next release.
 
 ## Slots and where they apply
 
@@ -458,7 +457,7 @@ The same concepts recur at every layer, so the stack shares one declarative voca
 |---|---|---|---|
 | `DirectAdjoint` | `diffrax.DirectAdjoint` | unrolled (the default) | plain scan |
 | `RecursiveCheckpointAdjoint` | `diffrax.RecursiveCheckpointAdjoint` | `optx.RecursiveCheckpointAdjoint` | checkpointed scan |
-| `TruncatedAdjoint(k)` | none | [`KStepAdjoint(k)`](xref:api#vardax.KStepAdjoint); `k=1` ≡ `OneStepAdjoint` | truncated scan |
+| `TruncatedAdjoint(k)` | none | [`KStepAdjoint(k)`](xref:api#vardax.KStepAdjoint), the deprecated alias of `argminax.adjoint.KStep(k)`; `k=1` ≡ `OneStep` | truncated scan |
 | `ImplicitAdjoint` | steady-state only | `optx.ImplicitAdjoint` | none |
 | `BacksolveAdjoint` | `diffrax.BacksolveAdjoint` ⚠ unstable for chaotic/stiff dynamics | none | none |
 
@@ -508,7 +507,7 @@ to the forecast step with no vardax code changes.
 | Long window ($T \ge 100$), memory-bound | `BacksolveAdjoint()` |
 | Parameter estimation, $D_\theta \ll D_x$ | `ForwardMode()` |
 | Debugging | `DirectAdjoint()` |
-| Training `FourDVarNet`, memory-bound | `OneStepAdjoint()` |
+| Training `FourDVarNet`, memory-bound | `argminax.adjoint.OneStep()` |
 | Training `FourDVarNet`, well-converged inner | `ImplicitAdjoint()` |
 | Training `FourDVarNet`, default | `RecursiveCheckpointAdjoint()` |
 | Training classical hyperparameters | `ImplicitAdjoint()` (always converged at MAP) |

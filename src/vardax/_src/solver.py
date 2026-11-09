@@ -738,6 +738,7 @@ def one_step_solve_4dvarnet_1d(
         >>> import jax
         >>> import jax.numpy as jnp
         >>> import vardax as vdx
+        >>> from argminax.adjoint import OneStep
         >>> model = vdx.FourDVarNet1D(
         ...     state_dim=4,
         ...     n_time=3,
@@ -775,7 +776,7 @@ def one_step_solve_4dvarnet_1d(
         ...     hidden_dim=3,
         ...     n_solver_steps=3,
         ...     alpha=0.2,
-        ...     solver_adjoint=vdx.OneStepAdjoint(),
+        ...     solver_adjoint=OneStep(),
         ...     key=jax.random.PRNGKey(0),
         ... )
         >>> bool(jnp.allclose(fast(batch), one, atol=1e-5))
@@ -859,6 +860,7 @@ def one_step_solve_4dvarnet_2d(
         >>> import jax
         >>> import jax.numpy as jnp
         >>> import vardax as vdx
+        >>> from argminax.adjoint import OneStep
         >>> model = vdx.FourDVarNet2D(
         ...     n_time=3,
         ...     height=4,
@@ -900,7 +902,7 @@ def one_step_solve_4dvarnet_2d(
         ...     hidden_dim=3,
         ...     n_solver_steps=3,
         ...     alpha=0.2,
-        ...     solver_adjoint=vdx.OneStepAdjoint(),
+        ...     solver_adjoint=OneStep(),
         ...     key=jax.random.PRNGKey(0),
         ... )
         >>> bool(jnp.allclose(fast(batch), one, atol=1e-5))
