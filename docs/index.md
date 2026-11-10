@@ -238,7 +238,7 @@ All seven methods satisfy `pipekit_cycle.AnalysisStep` via `.as_analysis_step()`
 ```{code-block} python
 :caption: Cycles the OI analysis [](#eq-blue-mean) around Lorenz-63 [](#eq-lorenz63) forecasts with `pipekit_cycle.DACycle`.
 :label: code-index-dacycle
-import pipekit as pk
+import pipekit_ops as pk
 import pipekit_cycle as pc
 
 # Shapes: N_cycle = 20 cycles; T = 20 steps, so T + 1 = 21 times; D_x = 3

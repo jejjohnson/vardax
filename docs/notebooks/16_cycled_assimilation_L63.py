@@ -129,7 +129,7 @@ import jax.numpy as jnp
 import lineax as lx
 import matplotlib.pyplot as plt
 import numpy as np
-import pipekit
+import pipekit_ops
 import pipekit_cycle as pc
 
 from vardax import (
@@ -168,7 +168,7 @@ k_obs, k_init = jax.random.split(jax.random.PRNGKey(1))
 y_obs = x_true[1:] + SIGMA_OBS * jax.random.normal(k_obs, (N_CYCLES, 3))  # y_obs[k] observes x_true[k + 1]
 x_init = x_true[0] + 3.0 * jax.random.normal(k_init, (3,))  # a poor initial state to spin up from
 
-obs_source = pipekit.Lambda(lambda k: y_obs[k], name="obs")
+obs_source = pipekit_ops.Lambda(lambda k: y_obs[k], name="obs")
 
 
 def diag_cov(variance):

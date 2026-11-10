@@ -65,7 +65,7 @@ def VarDACycle(
         obs_op: Observation operator h, satisfying
             ``pipekit_cycle.ObservationOperator``.
         model: Vardax model exposing ``.as_analysis_step()``.
-        obs_source: Optional ``pipekit.Operator`` invoked as
+        obs_source: Optional ``pipekit_ops.Operator`` invoked as
             ``obs_source(step_index)`` to load observations per cycle.
             If ``None``, the analysis step is skipped and the forecast
             propagates forward.

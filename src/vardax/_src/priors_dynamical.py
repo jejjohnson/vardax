@@ -632,5 +632,5 @@ class _DynamicalForwardModel(eqx.Module):
 
     @property
     def state_signature(self) -> None:
-        """No named-dimension tracking (see ``pipekit.Signature``)."""
+        """No named-dimension tracking (see ``pipekit_ops.Signature``)."""
         return None
