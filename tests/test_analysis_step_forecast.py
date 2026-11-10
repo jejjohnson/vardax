@@ -25,8 +25,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import lineax as lx
-from pipekit import Lambda
 import pipekit_cycle as pc
+from pipekit_ops import Lambda
 import pytest
 
 from vardax import (

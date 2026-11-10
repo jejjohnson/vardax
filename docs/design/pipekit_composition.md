@@ -259,14 +259,14 @@ trajectory = smoother(initial_state, ...)
 
 ### Composing operators in a pipekit pipeline
 
-vardax operators are `eqx.Module`, not `pipekit.Operator`. To put them
-in a `Sequential` pipeline, wrap them with `pipekit.Lambda` (or
+vardax operators are `eqx.Module`, not `pipekit_ops.Operator`. To put them
+in a `Sequential` pipeline, wrap them with `pipekit_ops.Lambda` (or
 `JaxModelOp` for persisted heads):
 
 ```{code-block} python
-:caption: Wraps vardax operators in `pipekit.Lambda` to chain IO, the analysis, the posterior [](#eq-laplace-cov) and its export in one `Sequential` pipeline.
+:caption: Wraps vardax operators in `pipekit_ops.Lambda` to chain IO, the analysis, the posterior [](#eq-laplace-cov) and its export in one `Sequential` pipeline.
 :label: code-design-pipekit-pipeline
-import pipekit as pk
+import pipekit_ops as pk
 import vardax as vdx
 
 # today (pipekit); georeader_step and catalog_write_step are user operators

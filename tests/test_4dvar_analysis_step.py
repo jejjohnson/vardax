@@ -15,8 +15,8 @@ import jax
 import jax.numpy as jnp
 import lineax as lx
 import optimistix as optx
-from pipekit import Lambda
 import pipekit_cycle as pc
+from pipekit_ops import Lambda
 import pytest
 
 import vardax as vdx

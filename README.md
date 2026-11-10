@@ -227,14 +227,14 @@ Every model exposes `.as_analysis_step()`, so the cycling code never sees which 
 In the sketch below, $x_c^f$ and $x_c^a$ are the forecast and analysis at cycle $c$, $M$ the forward model over one cycle and $y_c$ that cycle's observations; `load_window`, `n_cycles`, `obs_cov` and `initial_analysis` are yours to supply.
 
 ```python
-import pipekit
+import pipekit_ops
 import pipekit_cycle as pc
 
 # Shapes: C cycles; D = 3 state variables
 
 # today (pipekit)
 # c ↦ y_c, with load_window the user's reader for cycle c
-obs_source = pipekit.Lambda(load_window)
+obs_source = pipekit_ops.Lambda(load_window)
 
 # today* (vardax)
 # x_c^f = M(x_{c−1}^a),  x_c^a = analysis(x_c^f, y_c)

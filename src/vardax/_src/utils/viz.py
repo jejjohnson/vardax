@@ -63,7 +63,7 @@ def plot_3d_attractor(
     ax.set_xlabel(f"x{x_index}")
     ax.set_ylabel(f"x{y_index}")
     z_name = f"x{z_index}"
-    ax.set_zlabel(z_name)  # type: ignore[union-attr]  # ty:ignore[unresolved-attribute]
+    ax.set_zlabel(z_name)  # type: ignore[union-attr]  # ty:ignore[missing-attribute]
     return fig, ax  # type: ignore[return-value]  # ty:ignore[invalid-return-type]
 
 

@@ -95,7 +95,7 @@ def _close_over(
         ShapeError: If ``cost_fn`` does not return a floating-point scalar.
     """
     closed_cost_fn = eqx.filter_closure_convert(cost_fn, initial_guess, batch)
-    cost_struct = closed_cost_fn.out_struct  # ty:ignore[unresolved-attribute]
+    cost_struct = closed_cost_fn.out_struct  # ty:ignore[missing-attribute]
     if not (
         isinstance(cost_struct, jax.ShapeDtypeStruct)
         and cost_struct.shape == ()

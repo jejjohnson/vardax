@@ -43,7 +43,7 @@ dependencies = [
     "lineax>=0.1",
     "gaussx",
     "geonnax",
-    "pipekit",
+    "pipekit-ops",
     "pipekit-cycle",
 ]
 
@@ -252,8 +252,11 @@ output = "reports/coverage.xml"
 [tool.uv.sources]
 gaussx = { git = "https://github.com/jejjohnson/gaussx", tag = "v0.6.7" }
 geonnax = { git = "https://github.com/jejjohnson/geonnax", tag = "v0.0.10" }
-pipekit = { git = "https://github.com/jejjohnson/pipekit", subdirectory = "packages/pipekit" }
-pipekit-cycle = { git = "https://github.com/jejjohnson/pipekit", subdirectory = "packages/pipekit-cycle" }
-pipekit-jax = { git = "https://github.com/jejjohnson/pipekit", subdirectory = "packages/pipekit-jax" }
-pipekit-experiment = { git = "https://github.com/jejjohnson/pipekit", subdirectory = "packages/pipekit-experiment" }
-pipekit-train = { git = "https://github.com/jejjohnson/pipekit", subdirectory = "packages/pipekit-train" }
+# pipekit is pinned by release tag: following its main broke CI when 0.2.0 moved
+# the core into pipekit-ops. All five share one tag: workspace members point at
+# each other at the same commit, so per-package tags give uv conflicting URLs.
+pipekit-ops = { git = "https://github.com/jejjohnson/pipekit", subdirectory = "packages/pipekit-ops", tag = "pipekit-ops-v0.2.1" }
+pipekit-cycle = { git = "https://github.com/jejjohnson/pipekit", subdirectory = "packages/pipekit-cycle", tag = "pipekit-ops-v0.2.1" }
+pipekit-jax = { git = "https://github.com/jejjohnson/pipekit", subdirectory = "packages/pipekit-jax", tag = "pipekit-ops-v0.2.1" }
+pipekit-experiment = { git = "https://github.com/jejjohnson/pipekit", subdirectory = "packages/pipekit-experiment", tag = "pipekit-ops-v0.2.1" }
+pipekit-train = { git = "https://github.com/jejjohnson/pipekit", subdirectory = "packages/pipekit-train", tag = "pipekit-ops-v0.2.1" }

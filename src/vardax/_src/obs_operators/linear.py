@@ -60,7 +60,7 @@ class LinearObs(eqx.Module, _pc.LinearObs):
         # h(x) = H x
         return self.operator.mv(state)
 
-    def linearize(  # ty: ignore[invalid-method-override]
+    def linearize(  # ty: ignore[incompatible-method-override]
         self, state: Float[Array, ...]
     ) -> lx.AbstractLinearOperator:
         """Tangent-linear operator at ``state``: J_h = H, since h is linear.

@@ -233,7 +233,7 @@ import diffrax as dfx
 
 # Pipekit composition (required)
 # today (pipekit)
-import pipekit as pk
+import pipekit_ops as pk
 
 # today (pipekit_cycle)
 import pipekit_cycle as pc

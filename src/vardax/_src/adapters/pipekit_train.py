@@ -32,19 +32,12 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 import jax.numpy as jnp
+from pipekit_ops import Operator
 
 from vardax._src.errors import MissingInputError
 
 if TYPE_CHECKING:
     from jaxtyping import Array, Float
-
-try:
-    from pipekit import Operator
-except ImportError as exc:  # pragma: no cover
-    raise ImportError(
-        "vardax.adapters.pipekit_train requires the 'train' extra: "
-        "`uv add 'vardax[train]'` or `uv sync --group train`."
-    ) from exc
 
 
 class VardaxReconLoss(Operator):
