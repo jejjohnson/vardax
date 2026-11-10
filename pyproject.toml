@@ -44,6 +44,7 @@ dependencies = [
     "gaussx",
     "argminax",
     "geonnax",
+    "integrix",
     "pipekit-ops",
     "pipekit-cycle",
 ]
@@ -257,6 +258,8 @@ argminax = { git = "https://github.com/jejjohnson/argminax", tag = "v0.0.3" }
 # URL per package and reads `tag =` as a different one, so this is `rev =`.
 gaussx = { git = "https://github.com/jejjohnson/gaussx", rev = "v0.6.12" }
 geonnax = { git = "https://github.com/jejjohnson/geonnax", tag = "v0.0.10" }
+# v0.0.3 is the first tag with integrix#23, the checkpointed scan behind rollout.
+integrix = { git = "https://github.com/jejjohnson/integrix", tag = "v0.0.3" }
 # pipekit is pinned by release tag: following its main broke CI when 0.2.0 moved
 # the core into pipekit-ops. All five share one tag: workspace members point at
 # each other at the same commit, so per-package tags give uv conflicting URLs.
