@@ -42,7 +42,7 @@ dependencies = [
     "optimistix>=0.1",
     "lineax>=0.1",
     "gaussx",
-    "argminax",
+    "argminax>=0.0.4",
     "geonnax",
     "integrix",
     "pipekit-ops",
@@ -252,8 +252,9 @@ source = ["src/vardax"]
 output = "reports/coverage.xml"
 
 [tool.uv.sources]
-# v0.0.3 is the first tag with argminax#36, a gridded mode in Laplace.
-argminax = { git = "https://github.com/jejjohnson/argminax", tag = "v0.0.3" }
+# v0.0.4 is the first tag with argminax#23 and argminax#24, GaussNewtonCG and
+# dual_solve behind IncrementalFourDVar, ThreeDVar and DualThreeDVar.
+argminax = { git = "https://github.com/jejjohnson/argminax", tag = "v0.0.4" }
 # argminax requires gaussx v0.6.12 as `gaussx @ git+...@v0.6.12`; uv allows one
 # URL per package and reads `tag =` as a different one, so this is `rev =`.
 gaussx = { git = "https://github.com/jejjohnson/gaussx", rev = "v0.6.12" }

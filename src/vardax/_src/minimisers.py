@@ -849,10 +849,133 @@ def minimise_with_result(
     )
 
 
+def least_squares(
+    solver: optx.AbstractLeastSquaresSolver,
+    residual_fn: Callable[[Any, Any], PyTree[Array]],
+    y0: PyTree[Array],
+    *,
+    adjoint: optx.AbstractAdjoint,
+    max_steps: int,
+    jac: str = "fwd",
+) -> optx.Solution:
+    """Run a least-squares solver on 𝒥(y) = ½ ‖r(y)‖², r = ``residual_fn(y, None)``.
+
+    The analysis models call it when the cost is given as whitened residuals, so
+    a Gauss–Newton solver such as ``argminax.solve.GaussNewtonCG`` sees the
+    residual and its Jacobian rather than the scalar cost. The solve never raises
+    (``throw=False``): check ``result`` before trusting the value.
+
+    Args:
+        solver: An ``optimistix.AbstractLeastSquaresSolver``.
+        residual_fn: The whitened residual r, called as ``residual_fn(y, None)``;
+            any pytree of arrays.
+        y0: Initial guess y⁽⁰⁾.
+        adjoint: How to differentiate through the solution.
+        max_steps: optimistix's step cap. A Gauss–Newton step linearises at the
+            accepted iterate and proposes the next one, so ``max_steps`` steps
+            apply ``max_steps − 1`` increments.
+        jac: ``"fwd"`` linearises r by ``jax.linearize``; ``"bwd"`` materialises
+            its Jacobian by ``jax.jacrev``, for an r with only a reverse-mode rule.
+
+    Returns:
+        The ``optimistix.Solution``.
+
+    Examples:
+        A linear residual is solved by one Gauss–Newton increment, so two steps:
+
+        >>> import jax.numpy as jnp, optimistix as optx
+        >>> from argminax.solve import GaussNewtonCG
+        >>> from vardax._src.minimisers import least_squares
+        >>> design = jnp.array([[1.0, 0.0], [1.0, 1.0], [1.0, 2.0]])
+        >>> data = jnp.array([1.0, 2.0, 2.0])
+        >>> solution = least_squares(
+        ...     GaussNewtonCG(rtol=0.0, atol=0.0, cg_rtol=1e-6, cg_atol=1e-6),
+        ...     lambda x, _: design @ x - data,
+        ...     jnp.zeros(2),
+        ...     adjoint=optx.ImplicitAdjoint(),
+        ...     max_steps=2,
+        ... )
+        >>> exact = jnp.linalg.lstsq(design, data)[0]
+        >>> bool(jnp.allclose(solution.value, exact, atol=1e-5))
+        True
+    """
+    return optx.least_squares(
+        fn=residual_fn,
+        solver=solver,
+        y0=y0,
+        args=None,
+        options={"jac": jac},
+        max_steps=max_steps,
+        adjoint=adjoint,
+        throw=False,
+    )
+
+
+def least_squares_with_result(
+    solver: optx.AbstractLeastSquaresSolver,
+    residual_fn: Callable[[Any, Any], PyTree[Array]],
+    y0: PyTree[Array],
+    *,
+    adjoint: optx.AbstractAdjoint,
+    max_steps: int,
+) -> MinimiseResult:
+    """`least_squares`, returning a [`MinimiseResult`][vardax.MinimiseResult].
+
+    The cost is 𝒥(y⋆) = ½ ‖r(y⋆)‖² and the gradient norm ‖∇_y 𝒥(y⋆)‖₂ =
+    ‖J_rᵀ r‖₂, both over the solver's own variable y.
+
+    Args:
+        solver: An ``optimistix.AbstractLeastSquaresSolver``.
+        residual_fn: The whitened residual r, called as ``residual_fn(y, None)``.
+        y0: Initial guess y⁽⁰⁾.
+        adjoint: How to differentiate through the solution.
+        max_steps: optimistix's step cap.
+
+    Returns:
+        A [`MinimiseResult`][vardax.MinimiseResult].
+
+    Examples:
+        >>> import jax.numpy as jnp, optimistix as optx
+        >>> from argminax.solve import GaussNewtonCG
+        >>> from vardax._src.minimisers import least_squares_with_result
+        >>> result = least_squares_with_result(
+        ...     GaussNewtonCG(rtol=1e-6, atol=1e-6),
+        ...     lambda x, _: x - jnp.array([1.0, -2.0]),
+        ...     jnp.zeros(2),
+        ...     adjoint=optx.ImplicitAdjoint(),
+        ...     max_steps=10,
+        ... )
+        >>> bool(result.converged), bool(result.grad_norm < 1e-5)
+        (True, True)
+    """
+    solution = least_squares(
+        solver, residual_fn, y0, adjoint=adjoint, max_steps=max_steps
+    )
+
+    def cost_fn(y: PyTree[Array], args: Any) -> Float[Array, ""]:
+        leaves = jtu.tree_leaves(residual_fn(y, args))
+        # ‖r(y)‖², over every leaf of r
+        squared_norm = jnp.sum(jnp.stack([jnp.sum(leaf**2) for leaf in leaves]))
+        # 𝒥(y) = ½ ‖r(y)‖²
+        return 0.5 * squared_norm
+
+    # 𝒥(y⋆) and ‖∇_y𝒥(y⋆)‖₂
+    cost, grad_norm = _cost_and_grad_norm(cost_fn, solution.value, None)
+    return MinimiseResult(
+        value=solution.value,
+        cost=cost,
+        grad_norm=grad_norm,
+        num_steps=solution.stats["num_steps"],
+        converged=solution.result == optx.RESULTS.successful,
+    )
+
+
 __all__ = [
     "MinimiseResult",
     "OptaxMinimiser",
     "OptimistixMinimiser",
+    "least_squares",
+    "least_squares_with_result",
     "minimise",
     "minimise_with_result",
 ]
