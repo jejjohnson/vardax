@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.4](https://github.com/jejjohnson/vardax/compare/v0.3.3...v0.3.4) (2026-11-10)
+
+
+### Bug Fixes
+
+* **deps:** import pipekit_ops so CI passes against pipekit 0.2.0 ([#284](https://github.com/jejjohnson/vardax/issues/284)) ([0fd9cb1](https://github.com/jejjohnson/vardax/commit/0fd9cb12c8bf675ea815f594ad4d63d8062a80a6)), closes [#283](https://github.com/jejjohnson/vardax/issues/283)
+
 ## [0.3.3](https://github.com/jejjohnson/vardax/compare/v0.3.2...v0.3.3) (2026-11-05)
 
 
