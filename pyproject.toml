@@ -42,6 +42,7 @@ dependencies = [
     "optimistix>=0.1",
     "lineax>=0.1",
     "gaussx",
+    "argminax",
     "geonnax",
     "pipekit-ops",
     "pipekit-cycle",
@@ -250,7 +251,10 @@ source = ["src/vardax"]
 output = "reports/coverage.xml"
 
 [tool.uv.sources]
-gaussx = { git = "https://github.com/jejjohnson/gaussx", tag = "v0.6.7" }
+argminax = { git = "https://github.com/jejjohnson/argminax", tag = "v0.0.2" }
+# argminax requires gaussx v0.6.12 as `gaussx @ git+...@v0.6.12`; uv allows one
+# URL per package and reads `tag =` as a different one, so this is `rev =`.
+gaussx = { git = "https://github.com/jejjohnson/gaussx", rev = "v0.6.12" }
 geonnax = { git = "https://github.com/jejjohnson/geonnax", tag = "v0.0.10" }
 # pipekit is pinned by release tag: following its main broke CI when 0.2.0 moved
 # the core into pipekit-ops. All five share one tag: workspace members point at

@@ -1,5 +1,8 @@
 """Map pipekit adjoint specs onto optimistix adjoints at the inner-solve layer.
 
+The mapping itself is ``argminax.adjoint.to_optimistix_adjoint``; this wrapper keeps
+vardax's error type and messages and its ``KStepAdjoint`` return type.
+
 This is the counterpart of ``pipekit_jax.to_diffrax_adjoint`` at the dynamics layer: the
 specs of ``pipekit_cycle.adjoints`` become the ``optimistix.AbstractAdjoint`` instances
 that vardax's inner solvers consume.
@@ -8,7 +11,12 @@ that vardax's inner solvers consume.
 from __future__ import annotations
 
 from typing import Any
+import warnings
 
+from argminax.adjoint import (
+    KStep,
+    to_optimistix_adjoint as argminax_to_optimistix_adjoint,
+)
 import optimistix as optx
 
 from vardax._src.errors import UnsupportedInputError
@@ -87,21 +95,23 @@ def to_optimistix_adjoint(spec: Any) -> optx.AbstractAdjoint:
     """
     if isinstance(spec, optx.AbstractAdjoint):
         return spec
-    # by name, so identically named classes from other libraries match too
     name = type(spec).__name__
-    if name == "ImplicitAdjoint":
-        return optx.ImplicitAdjoint()
-    if name == "RecursiveCheckpointAdjoint":
-        return optx.RecursiveCheckpointAdjoint(
-            checkpoints=getattr(spec, "checkpoints", None)
-        )
-    if name == "TruncatedAdjoint":
-        return KStepAdjoint(k=getattr(spec, "k", 1))
-    if name in ("DirectAdjoint", "BacksolveAdjoint"):
-        raise UnsupportedInputError(
-            f"{name} does not apply at the inner-solve layer: DirectAdjoint is "
-            "the plain unrolled default (use optx.RecursiveCheckpointAdjoint() "
-            "or omit solver_adjoint), and BacksolveAdjoint only exists at the "
-            "dynamics layer (see pipekit_jax.DiffraxForwardModel)."
-        )
-    raise UnsupportedInputError(f"Unrecognised adjoint spec: {spec!r}")
+    try:
+        # argminax matches the spec by name and owns the mapping
+        adjoint = argminax_to_optimistix_adjoint(spec)
+    except ValueError as error:
+        if name in ("DirectAdjoint", "BacksolveAdjoint"):
+            raise UnsupportedInputError(
+                f"{name} does not apply at the inner-solve layer: DirectAdjoint is "
+                "the plain unrolled default (use optx.RecursiveCheckpointAdjoint() "
+                "or omit solver_adjoint), and BacksolveAdjoint only exists at the "
+                "dynamics layer (see pipekit_jax.DiffraxForwardModel)."
+            ) from error
+        raise UnsupportedInputError(f"Unrecognised adjoint spec: {spec!r}") from error
+    if type(adjoint) is KStep:
+        # vardax's own name, as before; built quietly, since the caller asked for
+        # a spec mapping and not for the deprecated class
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            return KStepAdjoint(k=adjoint.k)
+    return adjoint

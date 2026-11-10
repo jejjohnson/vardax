@@ -1,23 +1,33 @@
 """K-step differentiation of iterative algorithms, generalising one-step.
 
-`KStepAdjoint` only selects a strategy for the FourDVarNet inner solver; the dispatch
-lives in ``vardax._src.solver``, and in the pipekit vocabulary it is
+`KStepAdjoint` is now a deprecated alias of ``argminax.adjoint.KStep``, which
+implements ``apply`` so it works under any optimistix solve. The FourDVarNet
+inner solvers dispatch on ``argminax.adjoint.KStep``, so the alias and the
+argminax class select the same path. In the pipekit vocabulary it is
 ``pipekit_cycle.adjoints.TruncatedAdjoint(k)`` at the inner-solve layer.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from typing import Any
 
-from jaxtyping import Array, PyTree
-import optimistix as optx
+from argminax.adjoint import KStep
 
 from vardax._src.errors import ConfigurationError
 
+from ._deprecation import warn_renamed
 
-class KStepAdjoint(optx.AbstractAdjoint):
-    """K-step differentiation: warmup under ``stop_gradient``, then ``k`` live steps.
+
+class KStepAdjoint(KStep):
+    """Deprecated alias of ``argminax.adjoint.KStep``; use that name instead.
+
+    Building one emits a ``DeprecationWarning`` naming the argminax class; the
+    alias is removed in the next release. It keeps vardax's contract (a
+    ``ConfigurationError`` for ``k < 1``, ``get_config`` / ``from_config``) and
+    inherits argminax's ``apply``, so it now works under any optimistix solve.
+    What follows describes the estimator, which is unchanged.
+
+    K-step differentiation: warmup under ``stop_gradient``, then ``k`` live steps.
 
         x^(j+1) = g_step(x^(j); θ),   j = 0, …, N_iter − 1
         dx^(N_iter) / dθ ≈ ∂ g_stepᵏ(x^(N_iter − k); θ) / ∂θ
@@ -70,40 +80,10 @@ class KStepAdjoint(optx.AbstractAdjoint):
         [arXiv:2305.13768](https://arxiv.org/abs/2305.13768).
     """
 
-    k: int = 1
-
     def __check_init__(self) -> None:
         if self.k < 1:
             raise ConfigurationError(f"KStepAdjoint needs k >= 1; got k={self.k}.")
-
-    def apply(
-        self,
-        primal_fn: Callable,
-        rewrite_fn: Callable,
-        inputs: PyTree,
-        tags: frozenset[object],
-    ) -> PyTree[Array]:
-        """Raise: the learned solver dispatches on the adjoint's type instead.
-
-        ``optimistix.minimise`` is not the use site for the learned solver, which
-        selects its path in ``vardax._src.solver`` by ``isinstance`` on the adjoint.
-
-        Args:
-            primal_fn: The primal solve (unused).
-            rewrite_fn: The fixed-point rewrite (unused).
-            inputs: The solve inputs (unused).
-            tags: Optimistix tags (unused).
-
-        Raises:
-            NotImplementedError: Always; select the adjoint through
-                ``FourDVarNet*(solver_adjoint=KStepAdjoint(k=...))``.
-        """
-        raise NotImplementedError(
-            "KStepAdjoint is currently a marker / strategy selector for the "
-            "FourDVarNet inner solver. Generic apply() support for "
-            "optimistix.minimise is planned as part of the upstream "
-            "contribution. Use it via FourDVarNet*(solver_adjoint=KStepAdjoint(k=...))."
-        )
+        warn_renamed(type(self).__name__, _REPLACEMENT[type(self).__name__])
 
     def __repr__(self) -> str:  # pragma: no cover - cosmetic
         """Return ``KStepAdjoint(k=...)``."""
@@ -119,3 +99,7 @@ class KStepAdjoint(optx.AbstractAdjoint):
     def from_config(cls, config: dict[str, Any]) -> KStepAdjoint:
         """Rebuild an adjoint from ``get_config``."""
         return cls(**config)
+
+
+# the argminax name each alias warns about
+_REPLACEMENT = {"KStepAdjoint": "KStep", "OneStepAdjoint": "OneStep"}

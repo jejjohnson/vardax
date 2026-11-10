@@ -7,7 +7,7 @@ the solve is differentiated, and ``__call__`` dispatches on its type:
 
 - ``optimistix.RecursiveCheckpointAdjoint()`` unrolls backprop with recursive
   checkpointing (the default).
-- ``vardax.adjoints.OneStepAdjoint()`` follows Bolte et al. 2023, with O(1) memory.
+- ``argminax.adjoint.OneStep()`` follows Bolte et al. 2023, with O(1) memory.
 - ``optimistix.ImplicitAdjoint()`` uses the fixed-point projection and the implicit
   function theorem.
 """
@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from argminax.adjoint import KStep
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -23,7 +24,6 @@ from jaxtyping import Array, Float, PRNGKeyArray
 import optimistix as optx
 
 from ._types import Batch1D, Batch2D, LSTMState1D, LSTMState2D
-from .adjoints import KStepAdjoint
 from .grad_mod import ConvLSTMGradMod1D, ConvLSTMGradMod2D
 from .priors import BilinAEPrior1D, BilinAEPrior2D
 
@@ -49,7 +49,7 @@ class FourDVarNet1D(eqx.Module):
            c⁽⁰⁾ = (0, 0).
         2. For each of N_iter iterations, compute ∇ₓ𝒥(x⁽ⁱ⁾), pass it through the
            ConvLSTM gradient modulator g_mod and update x⁽ⁱ⁺¹⁾ = x⁽ⁱ⁾ − α Δx⁽ⁱ⁾.
-        3. Return the final iterate x^(N_iter). A ``KStepAdjoint`` runs the one-step
+        3. Return the final iterate x^(N_iter). An ``argminax.adjoint.KStep`` runs the one-step
            solver and an ``ImplicitAdjoint`` the fixed-point projection instead;
            any other adjoint unrolls with ordinary backprop.
 
@@ -64,7 +64,7 @@ class FourDVarNet1D(eqx.Module):
         solver_adjoint: ``optimistix.AbstractAdjoint`` selecting the
             differentiation strategy. Defaults to
             ``RecursiveCheckpointAdjoint`` (standard backprop). Use
-            ``OneStepAdjoint()`` for O(1)-memory training (Bolte et al.
+            ``argminax.adjoint.OneStep()`` for O(1)-memory training (Bolte et al.
             2023) or ``ImplicitAdjoint()`` for fixed-point projection.
         key: PRNG key for the prior and gradient-modulator weights.
 
@@ -78,6 +78,7 @@ class FourDVarNet1D(eqx.Module):
         >>> import jax
         >>> import jax.numpy as jnp
         >>> import vardax as vdx
+        >>> from argminax.adjoint import OneStep
         >>> model = vdx.FourDVarNet1D(
         ...     state_dim=4,
         ...     n_time=3,
@@ -99,7 +100,7 @@ class FourDVarNet1D(eqx.Module):
         ...     latent_dim=2,
         ...     hidden_dim=3,
         ...     n_solver_steps=2,
-        ...     solver_adjoint=vdx.OneStepAdjoint(),
+        ...     solver_adjoint=OneStep(),
         ...     key=jax.random.PRNGKey(0),
         ... )
         >>> bool(jnp.allclose(fast(batch), model(batch), atol=1e-5))
@@ -167,7 +168,7 @@ class FourDVarNet1D(eqx.Module):
         Returns:
             Reconstructed state x^(N_iter) with the shape of ``batch.input``.
         """
-        if isinstance(self.solver_adjoint, KStepAdjoint):
+        if isinstance(self.solver_adjoint, KStep):
             return self._call_one_step(batch)
         if isinstance(self.solver_adjoint, optx.ImplicitAdjoint):
             return self._call_implicit(batch)
@@ -301,7 +302,7 @@ class FourDVarNet2D(eqx.Module):
         2. For each of N_iter = ``n_solver_steps`` iterations, compute ∇ₓ𝒥(x⁽ⁱ⁾),
            pass it through the ConvLSTM gradient modulator g_mod and update
            x⁽ⁱ⁺¹⁾ = x⁽ⁱ⁾ − α Δx⁽ⁱ⁾.
-        3. Return the final iterate x^(N_iter). A ``KStepAdjoint`` runs the one-step
+        3. Return the final iterate x^(N_iter). An ``argminax.adjoint.KStep`` runs the one-step
            solver; any other supported adjoint unrolls with ordinary backprop.
 
     Args:
@@ -329,6 +330,7 @@ class FourDVarNet2D(eqx.Module):
         >>> import jax
         >>> import jax.numpy as jnp
         >>> import vardax as vdx
+        >>> from argminax.adjoint import OneStep
         >>> model = vdx.FourDVarNet2D(
         ...     n_time=3,
         ...     height=4,
@@ -354,7 +356,7 @@ class FourDVarNet2D(eqx.Module):
         ...     latent_dim=2,
         ...     hidden_dim=3,
         ...     n_solver_steps=2,
-        ...     solver_adjoint=vdx.OneStepAdjoint(),
+        ...     solver_adjoint=OneStep(),
         ...     key=jax.random.PRNGKey(0),
         ... )
         >>> bool(jnp.allclose(fast(batch), model(batch), atol=1e-5))
@@ -414,7 +416,7 @@ class FourDVarNet2D(eqx.Module):
         Raises:
             NotImplementedError: If ``solver_adjoint`` is an ``ImplicitAdjoint``.
         """
-        if isinstance(self.solver_adjoint, KStepAdjoint):
+        if isinstance(self.solver_adjoint, KStep):
             return self._call_one_step(batch)
         if isinstance(self.solver_adjoint, optx.ImplicitAdjoint):
             return self._call_implicit(batch)
