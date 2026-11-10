@@ -9,6 +9,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any, Literal
 
+from argminax.curvature import Laplace
 import gaussx
 import jax
 import jax.core
@@ -518,8 +519,8 @@ def gauss_newton_covariance(
             state_precision = _single_time_precision(
                 obs_jacobian, masked_jacobian, mask, obs_precision, prior_precision
             )
-            # Σ_x|y = Λ_x|y⁻¹
-            covariance = gaussx.inv(state_precision, solver=solver)
+            # Σ_x|y = Λ_x|y⁻¹, the covariance of the Laplace posterior
+            covariance = _laplace_covariance(analysis, state_precision, solver)
             return analysis, covariance, "single_time", None, state_precision
         # Σ_z|y = (Φᵀ Jᵀ Λ̃_ε J Φ + Σ_z⁻¹)⁻¹
         coefficient_cov = _single_time_coefficient_cov(
@@ -586,9 +587,37 @@ def gauss_newton_covariance(
         prior_precision=prior_precision.mv,
         jac=_jac_mode(underlying),
     )
-    # Σ_x|y = Λ_x|y⁻¹
-    covariance = gaussx.inv(precision, solver=solver)
+    # Σ_x|y = Λ_x|y⁻¹, the covariance of the Laplace posterior
+    covariance = _laplace_covariance(analysis, precision, solver)
     return analysis, covariance, "strong_4dvar", None, precision
+
+
+def _laplace_covariance(
+    mode: Array,
+    precision: lx.AbstractLinearOperator,
+    solver: lx.AbstractLinearSolver,
+) -> lx.AbstractLinearOperator:
+    """Σ_x|y = Λ_x|y⁻¹ as the covariance of ``argminax.curvature.Laplace``.
+
+    The Laplace posterior N(x⋆, Λ_x|y⁻¹) at the analysis is argminax's, so its
+    covariance is computed the same way as every other library's. With the
+    adapter's lineax solver it is ``gaussx.inv``, which keeps the structure of the
+    precision.
+
+    Args:
+        mode: The analysis x⋆.
+        precision: Λ_x|y, PSD-tagged, on arrays of the shape of x⋆.
+        solver: The adapter's lineax solver for the lazy inverse.
+
+    Returns:
+        The lazy covariance Σ_x|y.
+    """
+    if not lx.is_positive_semidefinite(precision):
+        # the diagonal fast path returns a bare DiagonalLinearOperator, positive by
+        # construction (masked noise precision plus prior precision) but untagged
+        precision = lx.TaggedLinearOperator(precision, lx.positive_semidefinite_tag)
+    laplace = Laplace(mode, precision, gaussx.LineaxSolver(solver))
+    return laplace.covariance()
 
 
 def _single_time_coefficient_cov(
