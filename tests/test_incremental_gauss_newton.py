@@ -11,6 +11,7 @@ reproduce it to 1e-10 relative wherever the old loop applied Σ_ε⁻¹ and Σ_x
 from __future__ import annotations
 
 from argminax.solve import GaussNewtonCG
+import einx
 import equinox as eqx
 import gaussx
 import jax
@@ -254,7 +255,9 @@ def test_the_new_route_does_not_warn(recwarn):
 def test_a_converging_solver_reaches_the_closed_form(x64):
     """Linear window: GaussNewtonCG with outer tolerances stops at the BLUE."""
     forward, prior_mean, prior_cov, obs_cov, batch = _problem("decay")
-    transition = 0.9 * np.eye(N) + 0.05 * np.roll(np.eye(N), 1, axis=0)
+    # the cyclic shift, row i of I moved to row i + 1
+    shift = np.eye(N)[np.arange(N) - 1]
+    transition = 0.9 * np.eye(N) + 0.05 * shift
     mask = np.asarray(batch.mask[0])
     rows = [
         np.diag(mask[t]) @ np.linalg.matrix_power(transition, t) for t in range(T + 1)
@@ -262,7 +265,7 @@ def test_a_converging_solver_reaches_the_closed_form(x64):
     G = np.concatenate(rows)
     R = np.tile(np.asarray(lx.diagonal(obs_cov)), T + 1)
     B = np.diag(np.asarray(lx.diagonal(prior_cov)))
-    y = np.asarray(batch.input[0]).reshape(-1)
+    y = einx.id("t m -> (t m)", np.asarray(batch.input[0]))
     x_b = np.asarray(prior_mean)
     gain = B @ G.T @ np.linalg.inv(G @ B @ G.T + np.diag(R))
     expected = x_b + gain @ (y - G @ x_b)

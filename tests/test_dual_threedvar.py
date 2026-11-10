@@ -9,6 +9,7 @@ x⋆ = μ_x + Σ_x Gᵀ (G Σ_x Gᵀ + Σ_ε,oo)⁻¹ (y_o − G μ_x) over the 
 from __future__ import annotations
 
 from argminax.solve import GaussNewtonCG
+import einx
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -24,7 +25,7 @@ PSD = lx.positive_semidefinite_tag
 
 
 def _smooth(n, length, jitter):
-    distance = np.abs(np.arange(n)[:, None] - np.arange(n)[None, :])
+    distance = np.abs(einx.subtract("i, j -> i j", np.arange(n), np.arange(n)))
     return np.exp(-0.5 * (distance / length) ** 2) + jitter * np.eye(n)
 
 
@@ -159,7 +160,7 @@ def test_gauss_newton_analyse_reports_in_the_whitened_control(x64):
     np.testing.assert_allclose(analysis, 0.8 * y, rtol=1e-10)
     np.testing.assert_allclose(result.value, 0.4 * y, rtol=1e-10)
     # 𝒥(x⋆) = ½ ‖x⋆‖² / 4 + ½ ‖y − x⋆‖² = y² / 10 per entry
-    np.testing.assert_allclose(result.cost, jnp.sum(y**2, axis=(1, 2)) / 10, rtol=1e-10)
+    np.testing.assert_allclose(result.cost, einx.sum("b [s t]", y**2) / 10, rtol=1e-10)
     assert bool(jnp.all(result.converged))
     assert bool(jnp.all(result.grad_norm < 1e-8))
 
@@ -176,14 +177,14 @@ def test_gauss_newton_threedvar_on_a_point_batch(x64):
     # Σ_x on the (1, N) state a GridPointObs reads; its dense root acts on (N,)
     prior_cov = lx.TaggedLinearOperator(
         lx.FunctionLinearOperator(
-            lambda x: (jnp.asarray(B) @ x[0])[None],
+            lambda x: einx.id("n -> 1 n", jnp.asarray(B) @ x[0]),
             jax.ShapeDtypeStruct((1, N), jnp.float64),
         ),
         PSD,
     )
     common = dict(
         obs_op=vdx.GridPointObs((axis,)),
-        prior_mean=jnp.asarray(x_b)[None],
+        prior_mean=einx.id("n -> 1 n", jnp.asarray(x_b)),
         prior_cov_op=prior_cov,
         obs_cov_op=None,
     )
@@ -293,9 +294,7 @@ def test_a_scaled_identity_on_a_field_stays_diagonal(x64, make_model):
     """
     structure = jax.ShapeDtypeStruct((2, 2, 3), jnp.float64)
     common = dict(
-        obs_op=vdx.CallableObs(
-            fn=lambda x: jnp.broadcast_to(x[:, None, None], (2, 2, 3))
-        ),
+        obs_op=vdx.CallableObs(fn=lambda x: einx.id("n -> n s t", x, s=2, t=3)),
         prior_mean=jnp.zeros(2),
         prior_cov_op=lx.DiagonalLinearOperator(jnp.ones(2)),
         obs_cov_op=0.5 * lx.IdentityLinearOperator(structure),
@@ -304,9 +303,9 @@ def test_a_scaled_identity_on_a_field_stays_diagonal(x64, make_model):
         model = vdx.DualThreeDVar(**common)
     else:
         model = vdx.ThreeDVar(**common, minimiser=GaussNewtonCG(1e-12, 1e-12))
-    y = jnp.arange(12.0).reshape(1, 2, 2, 3)
+    y = einx.id("(b n s t) -> b n s t", jnp.arange(12.0), b=1, n=2, s=2)
     mask = jnp.ones_like(y).at[0, 0, 1, 2].set(0.0)
     analysis = model(vdx.Batch1D(input=y * mask, mask=mask))[0]
-    observed = jnp.sum(mask * y, axis=(2, 3))[0]
-    counts = jnp.sum(mask, axis=(2, 3))[0]
+    observed = einx.sum("b n [s t]", mask * y)[0]
+    counts = einx.sum("b n [s t]", mask)[0]
     np.testing.assert_allclose(analysis, observed / (0.5 + counts), rtol=1e-8)
