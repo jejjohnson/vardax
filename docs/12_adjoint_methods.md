@@ -181,15 +181,12 @@ separate slots for the two:
 `minimiser_adjoint` and `solver_adjoint` act on the inner minimisation.
 They are independent.
 
-- `checkpoint=True` wraps each step of the rollout in `jax.checkpoint`
-  (an integer `k` wraps blocks of `k` steps), so reverse mode recomputes
-  the steps instead of storing their intermediates. It works for any
-  per-step forward and leaves the gradient unchanged.
+- `checkpoint=True` runs the rollout through `integrix.adjoint.checkpointed_scan`, which wraps each step in `jax.checkpoint` (an integer `k` wraps blocks of `k` steps), so reverse mode recomputes the steps instead of storing their intermediates. It works for any per-step forward and leaves the gradient unchanged.
 - `forward_adjoint=` is handed to `forward.with_adjoint(adjoint)`, which
   a `diffrax`-backed forward implements by passing the adjoint to
   `diffeqsolve` (chapter 3). With a forward that has no `with_adjoint`,
   the model raises `ValueError` at construction rather than ignoring the
-  slot.
+  slot. It takes a diffrax adjoint, not `integrix.adjoint.Checkpointed`, whose rollout counterpart is `checkpoint=`.
 
 A typical operational 4DVar configuration has a `diffrax`-backed forward. The forward below integrates $\mathrm{d}\vect{x}/\mathrm{d}t = -\kappa \vect{x}$ with $\kappa = 0.1$ over one step $\Delta t = 1$ with `diffrax`, and implements `with_adjoint` by storing the adjoint it is handed. The window has $T = 3$ steps, so $T + 1 = 4$ times, of all $D_x = 8$ cells, observed with $\gmat{\Sigma}_\varepsilon = \sigma^2 \mat{I}$, $\sigma = 0.1$, around a truth $\vect{x}_0 \sim \mathcal{N}(\mathbf{0}, \mat{I})$; the background is $\gvect{\mu}_x = \mathbf{0}$ with $\gmat{\Sigma}_x = \mat{I}$. The block continues the one above.
 
@@ -493,7 +490,7 @@ It prints `KStepAdjoint(k=3) (2, 4, 8)`.
 `KStepAdjoint` generalises the one-step strategy: at a converged fixed
 point any $k$ is exact (the warmup contributes nothing); for the
 truncated, unconverged solvers of 4DVarNet, larger $k$ trades memory
-for a less biased gradient. The dynamics layer composes independently:
+for a less biased gradient. The dynamics layer composes independently: the backward sweep through the forward run is `integrix.adjoint`'s (behind `checkpoint=`), and
 a `pipekit_jax.DiffraxForwardModel` slots into
 [`StrongFourDVar`](xref:api#vardax.StrongFourDVar) as a plain
 `pipekit_cycle.ForwardModel`, bringing diffrax's solvers and adjoints

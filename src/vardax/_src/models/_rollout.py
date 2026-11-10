@@ -10,6 +10,7 @@ from collections.abc import Callable
 import inspect
 from typing import Any
 
+from integrix.adjoint import checkpointed_scan
 import jax
 import jax.numpy as jnp
 from jaxtyping import Array, Float
@@ -115,12 +116,12 @@ def rollout(
     work arrays of the step function (Runge–Kutta stages, nonlinear terms).
 
     Algorithm:
-        1. Group the T steps into blocks of k (``checkpoint=k``), plus one shorter
-           tail block when k does not divide T.
-        2. Scan over the blocks. Each block is a scan over its steps wrapped in
-           ``jax.checkpoint``, so reverse mode stores only the state entering each
-           block and recomputes the steps inside it.
-        3. Prepend x₀ to the stacked states.
+        1. With ``checkpoint=k``, run the steps through
+           ``integrix.adjoint.checkpointed_scan``: ⌊T/k⌋ blocks of k steps, plus one
+           shorter tail block when k does not divide T. Each block is a scan over its
+           steps wrapped in ``jax.checkpoint``, so reverse mode stores only the state
+           entering each block and recomputes the steps inside it.
+        2. Prepend x₀ to the stacked states.
 
     Args:
         forward: Forward model f, a ``ForwardModel`` with ``dt`` and
@@ -171,47 +172,15 @@ def rollout(
             next_state = next_state + model_error
         return next_state, next_state
 
-    def scan_steps(
-        state: Float[Array, " N"],
-        block_forcing: Float[Array, "k N"] | None,
-        length: int,
-    ) -> tuple[Float[Array, " N"], Float[Array, "k N"]]:
-        return jax.lax.scan(step, state, block_forcing, length=length)
-
     if block_length == 0:
-        _, states = scan_steps(initial_state, forcing, n_steps)
-        # [x₀; x₁, …, x_T]; jnp, not einx: einx cannot size the T = 0 axis
-        return jnp.concatenate([jnp.expand_dims(initial_state, 0), states])
-
-    # T = k num_blocks + tail_length
-    num_blocks, tail_length = divmod(n_steps, block_length)
-    checkpointed_block = jax.checkpoint(scan_steps, static_argnums=(2,))
-
-    # --- full blocks ---
-    head_forcing = None
-    if forcing is not None:
-        head = forcing[: num_blocks * block_length]
-        # jnp, not einx: num_blocks is 0 when k exceeds T
-        head_forcing = head.reshape(num_blocks, block_length, *forcing.shape[1:])
-
-    def scan_block(
-        state: Float[Array, " N"], block_forcing: Float[Array, "k N"] | None
-    ) -> tuple[Float[Array, " N"], Float[Array, "k N"]]:
-        return checkpointed_block(state, block_forcing, block_length)
-
-    state, blocked_states = jax.lax.scan(
-        scan_block, initial_state, head_forcing, length=num_blocks
-    )
-    # jnp, not einx: num_blocks is 0 when k exceeds T
-    head_states = blocked_states.reshape(num_blocks * block_length, *state.shape)
-
-    # --- tail block (k does not divide T) ---
-    pieces = [jnp.expand_dims(initial_state, 0), head_states]
-    if tail_length > 0:
-        tail_forcing = None if forcing is None else forcing[num_blocks * block_length :]
-        _, tail_states = checkpointed_block(state, tail_forcing, tail_length)
-        pieces.append(tail_states)
-    return jnp.concatenate(pieces)
+        _, states = jax.lax.scan(step, initial_state, forcing, length=n_steps)
+    else:
+        # ⌊T/k⌋ checkpointed blocks of k steps, then a checkpointed tail of T mod k
+        _, states = checkpointed_scan(
+            step, initial_state, forcing, every=block_length, length=n_steps
+        )
+    # [x₀; x₁, …, x_T]; jnp, not einx: einx cannot size the T = 0 axis
+    return jnp.concatenate([jnp.expand_dims(initial_state, 0), states])
 
 
 def accepts_mask(obs_op: Any) -> bool:
