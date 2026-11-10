@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import gaussx
 import jax.numpy as jnp
 from jaxtyping import Array, Bool, Float
@@ -227,3 +229,122 @@ def half_weighted_norm(
     # ½ vᵀ Σ⁻¹ v
     norm = 0.5 * weighted_inner_product
     return jnp.where(usable, norm, jnp.full_like(norm, jnp.inf))
+
+
+def whitener(
+    cov_op: lx.AbstractLinearOperator,
+) -> Callable[[Array], Array]:
+    """Return v ↦ L⁻¹ v with L Lᵀ = Σ, so that ‖L⁻¹ v‖² = vᵀ Σ⁻¹ v.
+
+    The Cholesky factor L comes from ``gaussx.cholesky``, which keeps an identity,
+    diagonal, Kronecker or block-diagonal Σ structured and factors anything else
+    densely, once, when the whitener is built. It turns a weighted cost
+    ½ ‖v‖²_Σ⁻¹ into the sum of squares ½ ‖L⁻¹ v‖² a least-squares solver takes.
+
+    Args:
+        cov_op: The covariance Σ, symmetric positive definite.
+
+    Returns:
+        The whitening map v ↦ L⁻¹ v, linear in v.
+
+    Examples:
+        A diagonal Σ divides by the standard deviations:
+
+        >>> import jax.numpy as jnp
+        >>> import lineax as lx
+        >>> whiten = whitener(lx.DiagonalLinearOperator(jnp.array([4.0, 9.0])))
+        >>> whiten(jnp.array([2.0, 3.0])).tolist()
+        [1.0, 1.0]
+
+        For a dense Σ the squared norm is vᵀ Σ⁻¹ v:
+
+        >>> matrix = jnp.array([[2.0, 1.0], [1.0, 2.0]])
+        >>> dense = lx.MatrixLinearOperator(matrix, lx.positive_semidefinite_tag)
+        >>> vector = jnp.array([1.0, 2.0])
+        >>> whitened = whitener(dense)(vector)
+        >>> exact = vector @ jnp.linalg.solve(matrix, vector)
+        >>> bool(jnp.allclose(jnp.sum(whitened**2), exact))
+        True
+    """
+    # L Lᵀ = Σ, lower triangular, structured where Σ is
+    factor = gaussx.cholesky(cov_op)
+
+    def whiten(vector: Array) -> Array:
+        # L⁻¹ v
+        return gaussx.solve(factor, vector)
+
+    return whiten
+
+
+def masked_covariance(
+    obs_cov_op: lx.AbstractLinearOperator,
+    mask: Float[Array, "*obs"],
+) -> lx.AbstractLinearOperator:
+    """The masked observation-error covariance, diagonal whenever Σ_ε is.
+
+        Σ̃_ε = M Σ_ε M + (I − M),   M = diag(m)
+
+    ``gaussx.masked_obs_covariance`` keeps an identity or an explicit diagonal Σ_ε
+    diagonal, but composes a lazily diagonal one (σ² I, a scaled or tagged
+    diagonal) into a generic operator, which gaussx then factors or solves densely.
+    Such a Σ_ε is first written as its explicit diagonal, on the observation shape,
+    so Σ̃_ε stays diagonal.
+
+    Args:
+        obs_cov_op: The observation-error covariance Σ_ε of one sample.
+        mask: The mask m, 1 where observed and 0 where missing.
+
+    Returns:
+        Σ̃_ε, tagged positive semidefinite.
+
+    Examples:
+        σ² I with one entry masked out is diag(σ², 1, σ²):
+
+        >>> import jax, jax.numpy as jnp, lineax as lx
+        >>> eye = lx.IdentityLinearOperator(jax.ShapeDtypeStruct((3,), jnp.float32))
+        >>> masked = masked_covariance(4.0 * eye, jnp.array([1.0, 0.0, 1.0]))
+        >>> lx.diagonal(masked).tolist()
+        [4.0, 1.0, 4.0]
+    """
+    if lx.is_diagonal(obs_cov_op) and not isinstance(
+        obs_cov_op, lx.IdentityLinearOperator | lx.DiagonalLinearOperator
+    ):
+        # diag(Σ_ε), on the observation shape
+        variances = jnp.reshape(
+            lx.diagonal(obs_cov_op), obs_cov_op.in_structure().shape
+        )
+        obs_cov_op = lx.DiagonalLinearOperator(variances)
+    # Σ̃_ε = M Σ_ε M + (I − M), so masked entries drop out of the likelihood
+    return as_covariance(gaussx.masked_obs_covariance(obs_cov_op, mask))
+
+
+def masked_cholesky(
+    obs_cov_op: lx.AbstractLinearOperator,
+    mask: Float[Array, "*obs"],
+) -> lx.AbstractLinearOperator:
+    """Cholesky factor L̃ of the masked observation-error covariance.
+
+        L̃ L̃ᵀ = Σ̃_ε = M Σ_ε M + (I − M),   M = diag(m)
+
+    Σ̃_ε comes from `masked_covariance`, so a diagonal Σ_ε gives a diagonal L̃.
+
+    Args:
+        obs_cov_op: The observation-error covariance Σ_ε of one sample.
+        mask: The mask m, 1 where observed and 0 where missing.
+
+    Returns:
+        The lower-triangular L̃, structured where Σ̃_ε is; L̃⁻¹ r whitens a masked
+        residual r.
+
+    Examples:
+        σ² I with one entry masked out: L̃ = diag(σ, 1, σ):
+
+        >>> import jax, jax.numpy as jnp, lineax as lx
+        >>> eye = lx.IdentityLinearOperator(jax.ShapeDtypeStruct((3,), jnp.float32))
+        >>> covariance = as_covariance(4.0 * eye)
+        >>> factor = masked_cholesky(covariance, jnp.array([1.0, 0.0, 1.0]))
+        >>> type(factor).__name__, lx.diagonal(factor).tolist()
+        ('DiagonalLinearOperator', [2.0, 1.0, 2.0])
+    """
+    # L̃ L̃ᵀ = Σ̃_ε
+    return gaussx.cholesky(masked_covariance(obs_cov_op, mask))

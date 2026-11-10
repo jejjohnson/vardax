@@ -18,6 +18,7 @@ import lineax as lx
 import optimistix as optx
 
 from vardax._src.obs_operators.callable import CallableObs
+from vardax._src.utils.covariance import whitener
 
 
 class OEResult(eqx.Module):
@@ -211,8 +212,8 @@ def optimal_estimation(
         Rodgers (2000), *Inverse Methods for Atmospheric Sounding*, chapters 2–5.
     """
     state_size = x_a.shape[0]
-    whiten_obs = _whitener(S_e)
-    whiten_prior = _whitener(S_a)
+    whiten_obs = whitener(S_e)
+    whiten_prior = whitener(S_a)
 
     def residual(
         state: Float[Array, " n"], measurements: Float[Array, " m"]
@@ -289,21 +290,3 @@ def optimal_estimation(
             diagnostics.retrieval_noise_cov, lx.positive_semidefinite_tag
         ),
     )
-
-
-def _whitener(
-    covariance: lx.AbstractLinearOperator,
-) -> Callable[[Array], Array]:
-    """Return v ↦ L⁻¹ v with L Lᵀ = Σ, keeping Σ's structure.
-
-    ``gaussx.cholesky`` keeps a diagonal, Kronecker or block-diagonal Σ structured
-    instead of materialising it.
-    """
-    # L Lᵀ = Σ, lower-triangular
-    factor = gaussx.cholesky(covariance)
-
-    def whiten(vector: Array) -> Array:
-        # L⁻¹ v
-        return gaussx.solve(factor, vector)
-
-    return whiten

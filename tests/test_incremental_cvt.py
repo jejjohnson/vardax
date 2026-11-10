@@ -17,6 +17,7 @@ import pathlib
 import re
 
 import equinox as eqx
+import gaussx
 import jax
 import jax.numpy as jnp
 import lineax as lx
@@ -168,7 +169,7 @@ def test_cvt_needs_no_more_inner_iterations(x64):
 
 @pytest.mark.slow
 def test_cvt_never_solves_against_the_prior(x64, monkeypatch):
-    """Tag B and record every operator handed to lineax.linear_solve."""
+    """Tag B and record every operator handed to lineax.linear_solve or factored."""
     marker = object()
     # well conditioned, so the state-space comparison run is cheap
     prior_cov = _smooth_background_cov(jitter=0.1)
@@ -185,15 +186,25 @@ def test_cvt_never_solves_against_the_prior(x64, monkeypatch):
         solved_against_prior.append(marker in tags)
         return original_solve(operator, vector, *args, **kwargs)
 
+    factored_prior = []
+    original_cholesky = gaussx.cholesky
+
+    def recording_cholesky(operator, *args, **kwargs):
+        factored_prior.append(marker in getattr(operator, "tags", frozenset()))
+        return original_cholesky(operator, *args, **kwargs)
+
     monkeypatch.setattr(lx, "linear_solve", recording_solve)
+    monkeypatch.setattr(gaussx, "cholesky", recording_cholesky)
 
     _model(B_op, R_op, n_outer=1, n_inner=10, cvt=True)(batch)
     assert solved_against_prior and not any(solved_against_prior)
+    assert not any(factored_prior)
 
-    # the recorder does see B on the state-space path
-    solved_against_prior.clear()
+    # the recorders do see B on the state-space path, which whitens the
+    # background residual by B's Cholesky factor
+    factored_prior.clear()
     _model(B_op, R_op, n_outer=1, n_inner=10, cvt=False)(batch)
-    assert any(solved_against_prior)
+    assert any(factored_prior)
 
 
 def test_user_supplied_square_root(x64):

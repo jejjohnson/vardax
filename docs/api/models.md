@@ -23,15 +23,14 @@ Closed-form and optimisation-based analyses. `OptimalInterpolation` is the
 linear-Gaussian BLUE solution; given a non-linear observation operator it
 linearises it once at the background and returns that single update.
 `ThreeDVar` minimises the same cost iteratively and finds the MAP for
-non-linear operators; the three 4DVar variants extend the cost over a time
-window. `IncrementalConfig` collects the outer/inner-loop knobs of
-`IncrementalFourDVar`.
+non-linear operators; `DualThreeDVar` solves the same increment in observation space (PSAS) on `argminax.solve.dual_solve`; the three 4DVar variants extend the cost over a time
+window. `IncrementalFourDVar` takes its outer and inner loop from an optimistix least-squares solver, by default `argminax.solve.GaussNewtonCG`, and `IncrementalConfig` collects its control-variable transform and Jacobian switches.
 
 ::: vardax
     options:
       show_root_heading: false
       show_root_toc_entry: false
-      members: [OptimalInterpolation, ThreeDVar, StrongFourDVar, WeakFourDVar, IncrementalFourDVar, IncrementalConfig, ReducedBasisFourDVar]
+      members: [OptimalInterpolation, ThreeDVar, DualThreeDVar, StrongFourDVar, WeakFourDVar, IncrementalFourDVar, IncrementalConfig, ReducedBasisFourDVar]
 
 ## Optimal estimation
 

@@ -1,4 +1,4 @@
-"""3D-Var: minimise the variational cost of one time with an iterative minimiser.
+"""3D-Var: minimise the variational cost of one time with an iterative solver.
 
 μ_x and Σ_x are the prior mean and covariance, Σ_ε the observation-error covariance and
 h the observation operator; a linear h reduces it to optimal interpolation.
@@ -12,13 +12,20 @@ from typing import Any
 import equinox as eqx
 import gaussx
 import jax
+import jax.numpy as jnp
 from jaxtyping import Array, Float
 import lineax as lx
 import optimistix as optx
 
 from vardax._src._types import Batch1D, PointObsBatch
-from vardax._src.errors import InputTypeError
-from vardax._src.minimisers import MinimiseResult, minimise, minimise_with_result
+from vardax._src.errors import ConfigurationError, InputTypeError
+from vardax._src.minimisers import (
+    MinimiseResult,
+    least_squares,
+    least_squares_with_result,
+    minimise,
+    minimise_with_result,
+)
 from vardax._src.models._analysis_step import analyse_forecast, centred_on
 from vardax._src.models._observations import fill_gaps
 from vardax._src.models._rollout import accepts_mask
@@ -28,13 +35,16 @@ from vardax._src.obs_operators.point import (
     grid_point_obs_cost,
     map_point_batch,
     point_obs_cost,
+    require_grid_point_obs,
     require_obs_cov,
+    whitened_residual,
 )
 from vardax._src.parameterization import NeuralFieldParameterization
 from vardax._src.protocols import Minimiser, StateParameterization
 from vardax._src.utils.covariance import (
     as_covariance,
     half_weighted_norm,
+    masked_cholesky,
 )
 from vardax._src.utils.shapes import as_shape
 
@@ -60,14 +70,26 @@ class ThreeDVar(eqx.Module):
         4. Minimise the sum with ``minimiser`` for at most ``max_steps`` iterations and
            return the minimising state.
 
+    A least-squares ``minimiser``, such as ``argminax.solve.GaussNewtonCG``, takes the
+    cost as whitened residuals instead, over the whitened control z with
+    x = μ_x + L_x z, L_x L_xᵀ = Σ_x (``gaussx.sqrt``):
+
+        𝒥(z) = ½ ‖z‖² + ½ ‖L̃_ε⁻¹ r(μ_x + L_x z)‖²,   L̃_ε L̃_εᵀ = Σ̃_ε
+
+    and runs ``optimistix.least_squares`` from z = 0. A point batch's residual is
+    already whitened by its σᵢ. Σ_x and Σ̃_ε enter through their square root and
+    Cholesky factor, so ``cov_solver`` is not used.
+
     Attributes:
         obs_op: Observation operator h, linear or nonlinear.
         prior_mean: Prior mean μ_x.
         prior_cov_op: Prior covariance Σ_x.
         obs_cov_op: Observation-error covariance Σ_ε.
         minimiser: ``optimistix.AbstractMinimiser`` for the inner iteration, by default
-            ``optimistix.BFGS(rtol=1e-6, atol=1e-6)``, or a
-            [`Minimiser`][vardax.Minimiser] such as
+            ``optimistix.BFGS(rtol=1e-6, atol=1e-6)``; an
+            ``optimistix.AbstractLeastSquaresSolver`` such as
+            ``argminax.solve.GaussNewtonCG(rtol=1e-6, atol=1e-6)``, which solves the
+            whitened residuals; or a [`Minimiser`][vardax.Minimiser] such as
             [`OptaxMinimiser`][vardax.OptaxMinimiser].
         minimiser_adjoint: ``optimistix.AbstractAdjoint`` for differentiating through
             the minimum, used only when the analysis is nested inside a larger training
@@ -84,7 +106,12 @@ class ThreeDVar(eqx.Module):
             then θ, with x = g_dec(θ) reshaped to ``prior_mean.shape``, and ℛ(θ)
             replaces the background term, so ``prior_mean`` and ``prior_cov_op`` are not
             used, nor is the ``forecast`` of the analysis-step adapter. Default
-            ``None``: the control is x.
+            ``None``: the control is x. A least-squares ``minimiser`` cannot take one,
+            since ℛ(θ) is a scalar, not a residual.
+
+    Raises:
+        ConfigurationError: If a least-squares ``minimiser`` is given with a
+            ``parameterization``.
 
     Examples:
         With Σ_x = Σ_ε = I, identity h and everything observed, the analysis agrees with
@@ -132,13 +159,28 @@ class ThreeDVar(eqx.Module):
         >>> post = three.posterior(batch)
         >>> bool(jnp.allclose(post.cov.mv(jnp.ones((1, 3))), 0.5, atol=1e-2))
         True
+
+        Gauss–Newton on the whitened residuals reaches the same analysis of the
+        nonlinear h, here in a few outer iterations:
+
+        >>> from argminax.solve import GaussNewtonCG
+        >>> gn = vardax.ThreeDVar(
+        ...     obs_op=vardax.CallableObs(fn=lambda x: x**2),
+        ...     prior_mean=jnp.ones((1, 3)),
+        ...     prior_cov_op=eye,
+        ...     obs_cov_op=eye,
+        ...     minimiser=GaussNewtonCG(rtol=1e-6, atol=1e-6),
+        ... )
+        >>> bool(jnp.allclose(gn(half), sq(half), atol=1e-3))
+        True
     """
 
     obs_op: Any
     prior_mean: Float[Array, "*state"]
     prior_cov_op: lx.AbstractLinearOperator
     obs_cov_op: lx.AbstractLinearOperator | None
-    minimiser: optx.AbstractMinimiser | Minimiser = eqx.field(static=True)
+    # not static: a least-squares solver such as GaussNewtonCG holds an array
+    minimiser: optx.AbstractMinimiser | optx.AbstractLeastSquaresSolver | Minimiser
     minimiser_adjoint: optx.AbstractAdjoint = eqx.field(static=True)
     cov_solver: lx.AbstractLinearSolver = eqx.field(static=True)
     max_steps: int = eqx.field(static=True, default=200)
@@ -150,7 +192,10 @@ class ThreeDVar(eqx.Module):
         prior_mean: Float[Array, "*state"],
         prior_cov_op: lx.AbstractLinearOperator,
         obs_cov_op: lx.AbstractLinearOperator | None,
-        minimiser: optx.AbstractMinimiser | Minimiser | None = None,
+        minimiser: optx.AbstractMinimiser
+        | optx.AbstractLeastSquaresSolver
+        | Minimiser
+        | None = None,
         minimiser_adjoint: optx.AbstractAdjoint | None = None,
         max_steps: int = 200,
         parameterization: StateParameterization | None = None,
@@ -165,6 +210,19 @@ class ThreeDVar(eqx.Module):
         self.max_steps = max_steps
         self.cov_solver = cov_solver or lx.CG(atol=1e-6, rtol=1e-6)
         self.parameterization = parameterization
+        if self._least_squares and parameterization is not None:
+            raise ConfigurationError(
+                "A least-squares minimiser takes the cost as whitened residuals; a "
+                "parameterization's penalty is a scalar. Pass an "
+                "optimistix.AbstractMinimiser instead."
+            )
+
+    @property
+    def _least_squares(self) -> bool:
+        """Whether ``minimiser`` solves whitened residuals (``optx.least_squares``)."""
+        return isinstance(
+            self.minimiser, optx.AbstractLeastSquaresSolver
+        ) and not isinstance(self.minimiser, optx.AbstractMinimiser)
 
     def __call__(self, batch: Batch1D | PointObsBatch) -> Float[Array, " batch *state"]:
         """Analyse each sample of the batch: x⋆ = argmin_x 𝒥(x).
@@ -219,7 +277,9 @@ class ThreeDVar(eqx.Module):
             [`MinimiseResult`][vardax.MinimiseResult] whose leaves carry a leading
             sample axis: ``cost`` 𝒥 and ``grad_norm`` ‖∇𝒥‖₂ at the minimum,
             ``num_steps`` (``-1`` for a custom minimiser) and ``value``, the minimising
-            control (x, or θ under a ``parameterization``).
+            control (x, θ under a ``parameterization``, or the whitened z of
+            x = μ_x + L_x z under a least-squares minimiser, where ``cost`` and
+            ``grad_norm`` are taken in z).
 
         Raises:
             InputTypeError: For a ``PointObsBatch``.
@@ -259,7 +319,7 @@ class ThreeDVar(eqx.Module):
         # Σ̃_ε = M Σ_ε M + (I − M), so masked entries drop out of the likelihood
         masked_covariance = gaussx.masked_obs_covariance(obs_covariance, sample_mask)
 
-        def obs_cost(state: Float[Array, "*state"]) -> Float[Array, ""]:
+        def obs_residual(state: Float[Array, "*state"]) -> Float[Array, "*obs"]:
             # h(x)
             predicted_obs = (
                 obs_op(state, mask=sample_mask)
@@ -268,9 +328,27 @@ class ThreeDVar(eqx.Module):
             )
             # r = m ⊙ (y − h(x)); masking both sides stops an operator without a
             # ``mask`` keyword from penalising the analysis at missing entries
-            residual = sample_mask * (sample_obs - predicted_obs)
+            return sample_mask * (sample_obs - predicted_obs)
+
+        if self._least_squares:
+            # L̃_ε L̃_εᵀ = Σ̃_ε
+            factor = masked_cholesky(obs_covariance, sample_mask)
+
+            def whitened_obs_residual(
+                state: Float[Array, "*state"],
+            ) -> Float[Array, "*obs"]:
+                # L̃_ε⁻¹ r
+                return gaussx.solve(factor, obs_residual(state))
+
+            return self._solve_least_squares(
+                prior_mean, whitened_obs_residual, with_result=with_result
+            )
+
+        def obs_cost(state: Float[Array, "*state"]) -> Float[Array, ""]:
             # 𝒥_o = ½ rᵀ Σ̃_ε⁻¹ r
-            return half_weighted_norm(masked_covariance, residual, self.cov_solver)
+            return half_weighted_norm(
+                masked_covariance, obs_residual(state), self.cov_solver
+            )
 
         return self._solve(prior_mean, obs_cost, with_result=with_result)
 
@@ -296,6 +374,15 @@ class ThreeDVar(eqx.Module):
                 return point_obs_cost(predictions, batch)
 
             return self._solve(prior_mean, None, control_obs_cost=control_obs_cost)
+
+        if self._least_squares:
+            point_op = require_grid_point_obs(self.obs_op)
+
+            def point_residual(state: Float[Array, "*state"]) -> Float[Array, " n_obs"]:
+                # rᵢ = mᵢ (yᵢ − h(x)(sᵢ, τᵢ)) / σᵢ, already whitened
+                return whitened_residual(point_op(state, batch), batch)
+
+            return self._solve_least_squares(prior_mean, point_residual)
 
         def obs_cost(state: Float[Array, "*state"]) -> Float[Array, ""]:
             # 𝒥_o = ½ ∑ᵢ ‖rᵢ / σᵢ‖²
@@ -378,6 +465,61 @@ class ThreeDVar(eqx.Module):
         if with_result:
             return result.value, result
         return result
+
+    def _solve_least_squares(
+        self,
+        prior_mean: Float[Array, "*state"],
+        obs_residual: Callable[[Array], Array],
+        *,
+        with_result: bool = False,
+    ) -> Any:
+        """Solve the whitened residuals by ``optimistix.least_squares``, from z = 0.
+
+            𝒥(z) = ½ ‖z‖² + ½ ‖r̃_o(μ_x + L_x z)‖²,   L_x L_xᵀ = Σ_x
+
+        Args:
+            prior_mean: The prior mean μ_x.
+            obs_residual: The whitened observation residual x ↦ r̃_o(x).
+            with_result: Also return the solver's diagnostics.
+
+        Returns:
+            The analysis x⋆ = μ_x + L_x z⋆, or ``(analysis, MinimiseResult)`` when
+            ``with_result``.
+        """
+        # L_x L_xᵀ = Σ_x, structured where Σ_x is
+        prior_sqrt = gaussx.sqrt(self.prior_cov_op)
+
+        def to_state(control: Array) -> Float[Array, "*state"]:
+            # L_x z, laid out on the state (a dense root acts on the flat state)
+            increment = as_shape(prior_sqrt.mv(control), prior_mean.shape)
+            # x = μ_x + L_x z
+            return prior_mean + increment
+
+        def residuals(control: Array, _args: Any) -> tuple[Array, Array]:
+            # r̃(z) = (z, r̃_o(μ_x + L_x z)), so 𝒥_b = ½ ‖z‖²
+            return control, obs_residual(to_state(control))
+
+        solver = self.minimiser
+        # _least_squares chose this path
+        assert isinstance(solver, optx.AbstractLeastSquaresSolver)
+        control = jnp.zeros(prior_sqrt.in_structure().shape, prior_mean.dtype)
+        if with_result:
+            result = least_squares_with_result(
+                solver,
+                residuals,
+                control,
+                adjoint=self.minimiser_adjoint,
+                max_steps=self.max_steps,
+            )
+            return to_state(result.value), result
+        solution = least_squares(
+            solver,
+            residuals,
+            control,
+            adjoint=self.minimiser_adjoint,
+            max_steps=self.max_steps,
+        )
+        return to_state(solution.value)
 
     def posterior(self, batch: Batch1D, adapter: Any = None) -> Any:
         """Analyse one window and return its [`Posterior`][vardax.Posterior].

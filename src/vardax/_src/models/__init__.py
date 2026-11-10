@@ -6,6 +6,7 @@ In the linear-Gaussian limit they all agree with ``OptimalInterpolation``, which
 
 from __future__ import annotations
 
+from .dual_threedvar import DualThreeDVar
 from .incremental_fourdvar import IncrementalConfig, IncrementalFourDVar
 from .optimal_interpolation import OptimalInterpolation
 from .reduced_basis_fourdvar import ReducedBasisFourDVar
@@ -15,6 +16,7 @@ from .threedvar import ThreeDVar
 from .weak_fourdvar import WeakFourDVar
 
 __all__ = [
+    "DualThreeDVar",
     "IncrementalConfig",
     "IncrementalFourDVar",
     "OptimalInterpolation",
