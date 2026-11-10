@@ -251,9 +251,8 @@ source = ["src/vardax"]
 output = "reports/coverage.xml"
 
 [tool.uv.sources]
-# argminax#36 (a gridded mode in Laplace) is merged but not yet tagged: pinned to
-# its merge commit on main until the next release tag replaces it.
-argminax = { git = "https://github.com/jejjohnson/argminax", rev = "0c6d3128513f51139564d5454ffea07ebfd37ca6" }
+# v0.0.3 is the first tag with argminax#36, a gridded mode in Laplace.
+argminax = { git = "https://github.com/jejjohnson/argminax", tag = "v0.0.3" }
 # argminax requires gaussx v0.6.12 as `gaussx @ git+...@v0.6.12`; uv allows one
 # URL per package and reads `tag =` as a different one, so this is `rev =`.
 gaussx = { git = "https://github.com/jejjohnson/gaussx", rev = "v0.6.12" }
