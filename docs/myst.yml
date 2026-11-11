@@ -121,7 +121,8 @@ project:
 
 site:
   title: vardax
-  template: book-theme
+  # book-theme v2 duplicates BASE_URL in homepage links.
+  template: https://github.com/myst-templates/book-theme/archive/23f2df5493e23dfb1d9433c8aa64c87beb4232a3.zip
   options:
     logo: assets/logo-light.svg
     logo_dark: assets/logo-dark.svg
