@@ -64,7 +64,7 @@ def plot_3d_attractor(
     ax.set_ylabel(f"x{y_index}")
     z_name = f"x{z_index}"
     ax.set_zlabel(z_name)  # type: ignore[union-attr]  # ty:ignore[missing-attribute]
-    return fig, ax  # type: ignore[return-value]  # ty:ignore[invalid-return-type]
+    return fig, ax  # type: ignore[return-value]  # ty:ignore[invalid-explicit-return]
 
 
 def plot_state_grid(
@@ -117,7 +117,7 @@ def plot_state_grid(
     )
     ax.set_xlabel("time")
     ax.set_ylabel("feature index")
-    return fig, ax  # type: ignore[return-value]  # ty:ignore[invalid-return-type]
+    return fig, ax  # type: ignore[return-value]  # ty:ignore[invalid-explicit-return]
 
 
 def plot_trajectories(
@@ -176,7 +176,7 @@ def plot_trajectories(
             ax.set_ylabel("state")
 
     ax.legend()
-    return fig, ax  # type: ignore[return-value]  # ty:ignore[invalid-return-type]
+    return fig, ax  # type: ignore[return-value]  # ty:ignore[invalid-explicit-return]
 
 
 def plot_reconstruction_comparison(
@@ -292,7 +292,7 @@ def plot_l96_grid(
     )
     ax.set_xlabel("time")
     ax.set_ylabel("variable index")
-    return fig, ax  # type: ignore[return-value]  # ty:ignore[invalid-return-type]
+    return fig, ax  # type: ignore[return-value]  # ty:ignore[invalid-explicit-return]
 
 
 def plot_l96_trajectories(
@@ -362,4 +362,4 @@ def plot_l96_trajectories(
     ax.set_xlabel("time")
     ax.set_ylabel("state")
     ax.legend()
-    return fig, ax  # type: ignore[return-value]  # ty:ignore[invalid-return-type]
+    return fig, ax  # type: ignore[return-value]  # ty:ignore[invalid-explicit-return]
