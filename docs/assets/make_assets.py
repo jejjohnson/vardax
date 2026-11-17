@@ -1,13 +1,18 @@
 """Draw vardax's icon and logo: ``icon.svg`` and ``logo-{light,dark}.svg``.
 
-The icon is the variational picture: level sets of the cost J and a descent
-path ending at its minimiser x*. Standard library plus loguru; the tile and
-wordmark follow the other repos of the stack (radtrax, gaussx, kernellib).
+The icon is the variational picture: over one assimilation window, the
+analysis trajectory (solid) is pulled from the background (dashed) towards the
+observations and their error bars, all at once. filterax draws the sequential
+update (an ensemble pinching at each observation) and argminax the minimisation
+itself (a descent to x̂), so the window is vardax's. Standard library plus
+loguru; the tile and wordmark follow the other repos of the stack (radtrax,
+gaussx, kernellib).
 Run from the repository root::
 
     uv run --no-project --with loguru python docs/assets/make_assets.py
 """
 
+import math
 from pathlib import Path
 
 from loguru import logger
@@ -24,7 +29,6 @@ THEMES = {
     "dark": {"ink": "#E5E7EB", "accent": "#FB7185"},
 }
 SANS = "ui-sans-serif, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif"
-SERIF = "'Times New Roman', Georgia, serif"
 WHITE = "#FFFFFF"
 
 
@@ -62,26 +66,79 @@ def dot(x: float, y: float, radius: float) -> str:
     return f'<circle cx="{x}" cy="{y}" r="{radius}" fill="{WHITE}"/>'
 
 
+# (time, value, error half-width) of each observation in the window
+OBSERVATIONS = (
+    (32.0, 64.0, 9.0),
+    (54.0, 52.0, 8.0),
+    (76.0, 70.0, 9.0),
+    (98.0, 56.0, 8.0),
+)
+# where the analysis passes: near each observation, not through it
+ANALYSIS_KNOTS = (
+    (22.0, 72.0),
+    (32.0, 66.0),
+    (54.0, 53.0),
+    (76.0, 67.0),
+    (98.0, 57.0),
+    (106.0, 55.0),
+)
+WINDOW = (22.0, 106.0)
+
+
+def background(time: float) -> float:
+    """The first guess: a smooth, gently varying trajectory below the analysis."""
+    start, stop = WINDOW
+    # x_b(t) = 92 − 6 sin(π (t − t₀)/(t₁ − t₀))
+    return 92 - 6 * math.sin(math.pi * (time - start) / (stop - start))
+
+
+def catmull_rom(
+    knots: tuple[tuple[float, float], ...], samples: int = 16
+) -> list[tuple[float, float]]:
+    """A smooth curve through the knots, with the end knots repeated."""
+    padded = [knots[0], *knots, knots[-1]]
+    points = []
+    for index in range(1, len(padded) - 2):
+        before, start, stop, after = padded[index - 1 : index + 3]
+        for step in range(samples):
+            s = step / samples
+            point = []
+            for axis in range(2):
+                # the uniform Catmull-Rom spline between start and stop
+                a = 2 * start[axis]
+                b = (stop[axis] - before[axis]) * s
+                c = (2 * before[axis] - 5 * start[axis] + 4 * stop[axis] - after[axis]) * s * s
+                d = (3 * start[axis] - before[axis] - 3 * stop[axis] + after[axis]) * s**3
+                point.append(0.5 * (a + b + c + d))
+            points.append((point[0], point[1]))
+    points.append(knots[-1])
+    return points
+
+
 def glyph() -> str:
-    """Level sets of J, rotated like a correlated B, and the descent to x*."""
-    centre_x, centre_y = 74, 60
-    rings = [(50, 34, 0.25), (37, 25, 0.38), (24, 16, 0.55), (11, 7.5, 0.8)]
-    body = ""
-    for radius_x, radius_y, opacity in rings:
-        body += (
-            f'<ellipse cx="{centre_x}" cy="{centre_y}" rx="{radius_x}" ry="{radius_y}" '
-            f'fill="none" stroke="{WHITE}" stroke-width="2.4" stroke-opacity="{opacity}" '
-            f'transform="rotate(-24 {centre_x} {centre_y})"/>'
-        )
-    descent = [(22, 100), (40, 90), (54, 74), (centre_x, centre_y)]
-    body += polyline(descent, width=3.5)
-    for x, y in descent[:-1]:
-        body += dot(x, y, radius=3.6)
-    body += dot(centre_x, centre_y, radius=7)
-    body += (
-        f'<text x="104" y="110" font-family="{SERIF}" font-size="20" font-style="italic" '
-        f'font-weight="700" fill="{WHITE}" text-anchor="middle">x*</text>'
+    """The background, the observations with their errors, and the analysis through them."""
+    start, stop = WINDOW
+    times = [start + (stop - start) * step / 48 for step in range(49)]
+    first_guess = " ".join(
+        f"{'M' if index == 0 else 'L'}{time:.1f} {background(time):.1f}"
+        for index, time in enumerate(times)
     )
+    body = (
+        f'<path d="{first_guess}" fill="none" stroke="{WHITE}" stroke-width="2.6" '
+        'stroke-opacity="0.6" stroke-dasharray="4 5" stroke-linecap="round"/>'
+    )
+    for time, value, error in OBSERVATIONS:
+        body += (
+            f'<line x1="{time}" y1="{value - error}" x2="{time}" y2="{value + error}" '
+            f'stroke="{WHITE}" stroke-width="2.2" stroke-opacity="0.75" '
+            'stroke-linecap="round"/>'
+        )
+    body += polyline(catmull_rom(ANALYSIS_KNOTS), width=4.6)
+    for time, value, _ in OBSERVATIONS:
+        body += (
+            f'<circle cx="{time}" cy="{value}" r="4.6" fill="none" '
+            f'stroke="{WHITE}" stroke-width="2.4"/>'
+        )
     return body
 
 
