@@ -59,44 +59,11 @@ internals.
 The new components slot into the existing stack without disturbing the
 seven peer `AnalysisStep` classes from v0.4 (D14):
 
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│  Layer 2 — Models  (each satisfies pipekit_cycle.AnalysisStep)              │
-│                                                                             │
-│  Classical:                                                                 │
-│    OptimalInterpolation, ThreeDVar, StrongFourDVar, WeakFourDVar,           │
-│    IncrementalFourDVar                                                      │
-│                                                                             │
-│  Learned:                                                                   │
-│    FourDVarNet, AmortizedPosterior                                          │
-│                                                                             │
-│  Latent (NEW):                                                              │
-│    LatentThreeDVar                                                          │
-│    LatentStrongFourDVar                                                     │
-│    LatentHybridFourDVar                                                     │
-├─────────────────────────────────────────────────────────────────────────────┤
-│  Layer 1 — Components                                                       │
-│                                                                             │
-│  Priors:           BilinAE, ConvAE, MLPAE  (gain encode/decode +            │
-│                    latent_dim/state_signature → satisfy LatentMap),         │
-│                    DynamicalPrior, Diffusion                                │
-│  LatentMap (NEW):  LatentPrior wraps (LatentMap, B_z_op) for background     │
-│                    error covariance in z                                    │
-│  Forward (NEW):    NeuralLatentForwardModel adapter (eqx.Module → protocol) │
-│  ObservationOperator: MaskedIdentity, LinearObs, AveragingKernel,           │
-│                    MultiInstrumentFusion, + LiftedObservationOperator (pkc) │
-│  GradModulator:    (unchanged)                                              │
-│  CostFunction:     + variational_cost_latent, latent_incremental_cost       │
-│  Minimiser:        (unchanged — optimistix wrapper)                         │
-│  PosteriorAdapter: + LatentLaplaceCovariance (Laplace in z, decoded to x)   │
-├─────────────────────────────────────────────────────────────────────────────┤
-│  Layer 0 — Primitives  (pure JAX)                                           │
-│                                                                             │
-│  + variational_cost_latent, latent_incremental_cost                         │
-│  + decode_jacobian helper for chain-rule linearisation                      │
-│  + identity_latent_map for testing (g_enc = g_dec = id)                     │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
+| Layer | Today (v0.4) | Added by this design |
+|---|---|---|
+| 2, models (each a `pipekit_cycle.AnalysisStep`) | classical: `OptimalInterpolation`, `ThreeDVar`, `StrongFourDVar`, `WeakFourDVar`, `IncrementalFourDVar`; learned: `FourDVarNet`, `AmortizedPosterior` | latent: `LatentThreeDVar`, `LatentStrongFourDVar`, `LatentHybridFourDVar` |
+| 1, components | priors `BilinAE`, `ConvAE`, `MLPAE`, `DynamicalPrior`, `Diffusion`; observation operators `MaskedIdentity`, `LinearObs`, `AveragingKernel`, `MultiInstrumentFusion`; the gradient modulator, cost function, minimiser and posterior adapters | the autoencoder priors gain `encode` and `decode`, `latent_dim` and `state_signature`, so they satisfy `LatentMap`; `LatentPrior` wraps a `LatentMap` with `B_z_op`, the background covariance in z; `NeuralLatentForwardModel`; `LiftedObservationOperator` from pipekit-cycle; `variational_cost_latent` and `latent_incremental_cost`; `LatentLaplaceCovariance`, Laplace in z decoded to x |
+| 0, primitives (pure JAX) | the cost terms, the closed form, the control-variable transform, the posterior and training functions | `variational_cost_latent`, `latent_incremental_cost`, a `decode_jacobian` helper for the chain-rule linearisation, and `identity_latent_map` for tests |
 
 ---
 

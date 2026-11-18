@@ -81,23 +81,14 @@ version: 0.4.0
 
 ## Dependency graph
 
-```
-                georeader ─→ coordax ─→ pipekit (carrier-agnostic core)
-                                            ↓
-                                       pipekit-cycle ─→ DACycle, SmootherCycle
-                                            ↑
-finitevolX ──→ somax  ┐                     │
-spectraldiffx ─────┘  │                     │
-                      │   ┌──→ gaussx ──┐   │
-                      ↓   │             ↓   │
-                   plumax │           vardax ─→ pipekit-jax ─→ pipekit-experiment
-                          │             ↑   │                     ↑
-                          │           lineax │                     │
-                          ↓           optimistix                   │
-                       diffrax ──────────────┘                     │
-                                                              pipekit-train
-                                                                   │
-                                                              filterax (optional)
+What vardax builds on and the packages that import it, read from each package's `main` and geostack's dependency graph:
+
+```{figure} https://raw.githubusercontent.com/jejjohnson/geostack/main/docs/images/libraries/vardax_ecosystem/vardax_ecosystem-light.svg
+:alt: Packages that import vardax: plumax through its assim extra and sesmax-core through its da extra; vardax builds on JAX, Equinox, lineax, gaussx, optimistix, optax, argminax, diffrax, integrix, geonnax and pipekit-cycle
+:width: 100%
+:label: fig-boundaries-dependencies
+
+vardax's dependents and its foundation. Forward models (somax, plumax) and ensemble methods (filterax) are composed with vardax, not imported by it. The schematic is kept in [geostack](https://github.com/jejjohnson/geostack/tree/main/docs/images/libraries/vardax_ecosystem) with the stack's other library schematics.
 ```
 
 ## Roadmap — Epics 0 through 13
@@ -225,21 +216,23 @@ end-to-end.
 
 ### Dependency graph
 
-```
-Epic 0 (equinox migration)
-  ↓
-Epic 1 (protocol alignment)  ──→  Epic 2 (obs operators)
-  ↓                                  ↓
-Epic 2.5 (classical DA)  ──────→ Epic 3 (adjoint composition)
-  ↓                                  ↓
-Epic 4 (incremental 4DVar)  ←── Epic 5 (posterior adapters)
-  ↓
-Epic 6 (FourDVarNet)
-  ↓
-Epic 7 (pipekit integration)  ──→ Epic 8 (amortized) ──→ Epic 9 (hybrid EnVar)
-  ↓
-Epic 10 (docs)  ──→  Epic 11 (tutorials)  ──→  Epic 12 (benchmarks)  ──→  Epic 13 (ops)
-```
+| Epic | Builds on |
+|---|---|
+| 0 (equinox migration) | none |
+| 1 (protocol alignment) | 0 |
+| 2 (obs operators) | 1 |
+| 2.5 (classical DA) | 1 |
+| 3 (adjoint composition) | 2, 2.5 |
+| 4 (incremental 4DVar) | 2.5, 5 |
+| 5 (posterior adapters) | 3 |
+| 6 (FourDVarNet) | 4 |
+| 7 (pipekit integration) | 6 |
+| 8 (amortized) | 7 |
+| 9 (hybrid EnVar) | 8 |
+| 10 (docs) | 7 |
+| 11 (tutorials) | 10 |
+| 12 (benchmarks) | 11 |
+| 13 (ops) | 12 |
 
 ### Rough timeline
 

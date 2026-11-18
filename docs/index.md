@@ -35,6 +35,14 @@ implementations:
 | `FourDVarNet1D` / `FourDVarNet2D` | Learned $g_\text{ae}$ + learned $g_\text{mod}$ | Learned variant of 4DVar |
 | `AmortizedPosterior` | Direct $q(\vect{x} \mid \vect{y}; \gvect{\nu})$ head | Real-time / many-event regimes |
 
+```{figure} https://raw.githubusercontent.com/jejjohnson/geostack/main/docs/images/libraries/vardax_overview/vardax_overview.png
+:alt: vardax in one picture: you supply the observation operator h, the covariances, the forward model f and a minimiser with its adjoint; they define one cost; seven methods minimise it in closed form, iteratively, by learning or by amortization; out come the analysis, its uncertainty and an analysis step for cycling
+:width: 100%
+:label: fig-overview
+
+What you supply, the one cost it defines, the seven methods that minimise it, and what comes back. The schematic is kept in [geostack](https://github.com/jejjohnson/geostack/tree/main/docs/images/libraries/vardax_overview) with the stack's other library schematics.
+```
+
 Gradients through dynamics and the inner minimiser are composed via
 [`diffrax.AbstractAdjoint`](12_adjoint_methods.md) and
 [`optimistix.AbstractAdjoint`](12_adjoint_methods.md) — no in-house
