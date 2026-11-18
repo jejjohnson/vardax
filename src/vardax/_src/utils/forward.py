@@ -14,7 +14,7 @@ class SoftBoundedForward(eqx.Module):
 
         xₜ = s(f(s(xₜ₋₁)))
         s(x) = x                             for |x| ≤ b
-        s(x) = sign(x) (b + b u / (1 + u))   for |x| > b,   u = (|x| − b) / b
+        s(x) = sign(x) (2b − b / (1 + u))    for |x| > b,   u = (|x| − b) / b
 
     Explicit Runge–Kutta steps of dynamics with quadratic terms (Lorenz-63,
     Lorenz-96, …) overflow, or drive an adaptive step-size controller past its step
@@ -97,13 +97,16 @@ class SoftBoundedForward(eqx.Module):
         # The in-box branch returns ``state`` itself (not ``sign * abs``) so the
         # gradient is exactly one everywhere inside, including at zero, where
         # ``jnp.sign`` would otherwise zero it. Outside, the algebraic
-        # saturation u / (1 + u) keeps the derivative 1 / (1 + u)² finite and
-        # non-zero far beyond any state a line search will try (tanh would
-        # underflow to a zero gradient a few bounds out).
+        # saturation keeps the derivative 1 / (1 + u)² finite and non-zero far
+        # beyond any state a line search will try (tanh would underflow to a
+        # zero gradient a few bounds out). It is written 2b − b / (1 + u), not
+        # b + b u / (1 + u): the quotient rule on u / (1 + u) subtracts two
+        # nearly equal float32 terms and cancels to zero once u ≳ 1e8, while
+        # the derivative of b / (1 + u) is the single term b / (1 + u)².
         # u = max(|x| − b, 0) / b
         excess = jnp.maximum(abs_state - half_width, 0.0) / half_width
-        # s(x) = sign(x) (b + b u / (1 + u))
-        outside = jnp.sign(state) * (half_width + half_width * excess / (1.0 + excess))
+        # s(x) = sign(x) (2b − b / (1 + u))
+        outside = jnp.sign(state) * (2.0 * half_width - half_width / (1.0 + excess))
         # s(x) = x where |x| ≤ b
         return jnp.where(abs_state <= half_width, state, outside)
 
