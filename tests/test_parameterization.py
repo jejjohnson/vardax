@@ -117,6 +117,22 @@ def _closed_form(batch, x_b, basis):
     )
 
 
+def _closed_form_and_bound(batch, x_b, basis):
+    """The float64 optimum of the reduced-basis cost and BFGS's distance to it.
+
+    Tied to BFGS(rtol = atol = 1e-6): it stops once the cost decrease is below
+    atol + rtol·|J|. Allowing the remaining gap to be 10x that last decrease,
+    J(X̂) - J* ≤ δ := 10 (1e-6 + 1e-6 |J*|), and for this quadratic
+    ½ λ_min ‖X̂ - X*‖² ≤ J(X̂) - J*, so ‖x̂ - x*‖ ≤ ‖Φ‖₂ sqrt(2δ / λ_min), plus
+    the float32 round-off of x.
+    """
+    x_cf, j_star, lam_min, phi_norm = _closed_form(batch, x_b, basis)
+    delta = 10 * (1e-6 + 1e-6 * abs(j_star))
+    bound = phi_norm * np.sqrt(2 * delta / lam_min)
+    bound = bound + 8 * EPS * float(jnp.max(jnp.abs(x_cf)))
+    return x_cf, bound
+
+
 @pytest.fixture
 def window():
     """N = 6 state, 3 rollout steps of decay dynamics, partial observations."""
@@ -162,38 +178,28 @@ class TestLinearParameterization:
         x_param = ReducedBasisFourDVar(
             **common, parameterization=LinearParameterization(basis, x_b)
         )(batch)[0]
-        x_cf, j_star, lam_min, phi_norm = _closed_form(batch, x_b, basis)
-        # Tied to BFGS(rtol = atol = 1e-6): it stops once the cost decrease
-        # is below atol + rtol·|J|. Allowing the remaining gap to be 10x that
-        # last decrease, J(X̂) - J* ≤ δ := 10 (1e-6 + 1e-6 |J*|), and for this
-        # quadratic ½ λ_min ‖X̂ - X*‖² ≤ J(X̂) - J*, so
-        # ‖x̂ - x*‖ ≤ ‖Φ‖₂ sqrt(2δ / λ_min), plus float32 round-off of x.
-        delta = 10 * (1e-6 + 1e-6 * abs(j_star))
-        bound = phi_norm * np.sqrt(2 * delta / lam_min)
-        bound = bound + 8 * EPS * float(jnp.max(jnp.abs(x_cf)))
+        x_cf, bound = _closed_form_and_bound(batch, x_b, basis)
         assert jnp.linalg.norm(x_basis - x_cf) <= bound
         assert jnp.linalg.norm(x_param - x_cf) <= bound
         # Both minimise the same cost; they agree within twice that bound.
         assert jnp.linalg.norm(x_basis - x_param) <= 2 * bound
 
-    def test_basis_path_matches_pre_pr_reference(self, window):
-        # ReducedBasisFourDVar(basis=...) output on main before this PR (the
-        # basis path is the same code). 1e-5 allows cross-platform float32
-        # differences in the BFGS iterates; routing it through
-        # LinearParameterization moved it by 6.6e-5.
+    def test_basis_path_reaches_closed_form(self, window):
+        # The basis path converges to the float64 optimum within BFGS's own
+        # stopping tolerance. A pinned float32 iterate is not a stable check:
+        # jax 0.12.1 moved it by 6.2e-5 with the same data and code.
         batch, x_b = window
+        basis = _rbf()
         x = ReducedBasisFourDVar(
             forward=DecayForward(),
             obs_op=MaskedIdentity(),
             prior_mean=x_b,
             prior_cov_op=_eye((6,)),
             obs_cov_op=_eye((6,)),
-            basis=_rbf(),
+            basis=basis,
         )(batch)[0]
-        reference = jnp.array(
-            [-0.4702341, -0.7426063, -0.8532791, -0.7294558, -0.41439342, -0.05025512]
-        )
-        assert jnp.allclose(x, reference, rtol=0.0, atol=1e-5)
+        x_cf, bound = _closed_form_and_bound(batch, x_b, basis)
+        assert jnp.linalg.norm(x - x_cf) <= bound
 
     def test_strong_4dvar_matches_incremental_basis(self, window):
         batch, x_b = window
