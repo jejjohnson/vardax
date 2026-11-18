@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.6](https://github.com/jejjohnson/vardax/compare/v0.3.5...v0.3.6) (2026-11-18)
+
+
+### Bug Fixes
+
+* main's fast tests pass again on jax 0.12.1 ([#302](https://github.com/jejjohnson/vardax/issues/302)) ([d7aa4c8](https://github.com/jejjohnson/vardax/commit/d7aa4c84c57522a9eb97390da7b7c65054388bb7))
+
 ## [0.3.5](https://github.com/jejjohnson/vardax/compare/v0.3.4...v0.3.5) (2026-11-10)
 
 
