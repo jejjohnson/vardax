@@ -26,57 +26,12 @@ This chapter walks an end-to-end methane inversion using `IncrementalFourDVar` (
 
 ## Data flow
 
-```
-       ┌──────────────┐  ┌──────────────┐  ┌──────────────┐
-       │  TROPOMI L2  │  │   EMIT L2    │  │  GHGSat L2   │
-       │ (XCH4 + AK)  │  │ (XCH4 + AK)  │  │ (XCH4 + AK)  │
-       └──────┬───────┘  └──────┬───────┘  └──────┬───────┘
-              │                  │                  │
-              └────── georeader ──────────────────────┘
-                              │
-              ┌───────────────┴───────────────┐
-              │      Event metadata           │
-              │  (facility, time, geometry)   │
-              └───────────────┬───────────────┘
-                              │
-                              ▼
-         ┌──────────────────────────────────────┐
-         │  ERA5 / WRF wind, PBL, stability     │
-         └──────────────┬───────────────────────┘
-                        │
-                        ▼
-   ┌───────────────────────────────────────────────────────┐
-   │ plumax.tier1.GaussianPlume(met=met_field, ...)        │
-   │ (satisfies pipekit_cycle.ForwardModel)                │
-   └──────────────────────────────┬────────────────────────┘
-                                  │
-                                  ▼
-   ┌───────────────────────────────────────────────────────┐
-   │ MultiInstrumentFusion(InstrumentRegistry({            │
-   │   "TROPOMI": InstrumentSpec(AveragingKernel(...)),    │
-   │   "EMIT":    InstrumentSpec(AveragingKernel(...)),    │
-   │   "GHGSat":  InstrumentSpec(AveragingKernel(...)),    │
-   │ }))                                                    │
-   └──────────────────────────────┬────────────────────────┘
-                                  │
-                                  ▼
-   ┌───────────────────────────────────────────────────────┐
-   │ IncrementalFourDVar(forward=plume, obs_op=fusion,     │
-   │   prior_mean=Q_inventory, prior_cov_op=lognormal,     │
-   │   obs_cov_op=block_diag_per_instrument, ...)          │
-   └──────────────────────────────┬────────────────────────┘
-                                  │
-                                  ▼
-   ┌───────────────────────────────────────────────────────┐
-   │ x_star = model(batch)                                 │
-   │ posterior = model.posterior(batch)                    │
-   └──────────────────────────────┬────────────────────────┘
-                                  │
-                                  ▼
-   ┌───────────────────────────────────────────────────────┐
-   │ GaussianMarkLikelihood(posterior, event_metadata)     │
-   │   .to_dict() → GeoCatalog write                       │
-   └───────────────────────────────────────────────────────┘
+```{figure} https://raw.githubusercontent.com/jejjohnson/geostack/main/docs/images/libraries/vardax_methane/vardax_methane.png
+:alt: The single-overpass inversion as four lanes (the event's inputs, the observation and forward operators, incremental 4DVar, and the posterior handed on as a mark likelihood), each box marked as shipping today, your code or not pinned; below, the plumax tiers that fill the forward slot as they call vardax on plumax's main, and the six-step cycle with this inversion as step 2
+:width: 100%
+:label: fig-methane-pipeline
+
+The sketch below as a pipeline, with the status of each call, and the plumax tiers that fill its forward slot today. The schematic is kept in [geostack](https://github.com/jejjohnson/geostack/tree/main/docs/images/libraries/vardax_methane) with the stack's other library schematics.
 ```
 
 ## Sketch
@@ -227,8 +182,8 @@ catalog.write_posterior(event.id, mark_record)
 - **`GaussNewtonHessian` posterior**: free from the last outer iteration
 - **`GaussianMarkLikelihood` export**: hand-off to Tier V population models (D10)
 - **`lineax` diagonal prior and block-diagonal obs cov**: the per-instrument blocks are diagonal, so $\gmat{\Sigma}_\varepsilon$ is one `DiagonalLinearOperator`
-- **`plumax.tier1.GaussianPlume`** as `pipekit_cycle.ForwardModel` (D8)
-- **GeoCatalog query, inference and write loop**: the operational pattern
+- **A plumax forward model** as `pipekit_cycle.ForwardModel` (D8). The sketch's `plumax.tier1.GaussianPlume` is not a plumax export; on plumax's `main` the Lagrangian, Eulerian and coupled tiers call vardax themselves, as the table below shows.
+- **GeoCatalog query, inference and write loop**: the operational pattern. GeoCatalog is not pinned here, and vardax ships no catalogue writer.
 
 ## Six-step cycle for methane
 
@@ -236,10 +191,10 @@ The example above is Step 2 (classical inference). The full cycle:
 
 | Step | Component |
 |---|---|
-| 1 (physics) | `plumax.tier1.GaussianPlume(met)` |
+| 1 (physics) | a plumax forward model (sketched above as `plumax.tier1.GaussianPlume(met)`) |
 | 2 (classical) | `IncrementalFourDVar` above |
-| 3 (emulator) | Train `plumax.NeuralPlume(net)` + adjoint calibration |
-| 4 (emulator inference) | Swap `forward=plume` → `forward=neural_plume`; vardax code unchanged |
+| 3 (emulator) | Train an emulator, such as `plumax.lagrangian.FootprintEmulator`, and gate its adjoint with `plumax.lagrangian.assert_emulator_calibrated` |
+| 4 (emulator inference) | Swap `forward=plume` for `forward=emulator`; the vardax code is unchanged |
 | 5 (amortized) | `AmortizedPosterior(encoder, head=ConditionalFlowHead)` trained on simulated $(Q, \vect{y})$ pairs |
 | 6 (improve) | Swap any block; previous step is the oracle for validation |
 
@@ -249,12 +204,12 @@ At Step 5, `AmortizedPosterior` replaces the Step 2 classes entirely, validated 
 
 `plumax` provides four tiers of forward operator:
 
-| Tier | Forward | When |
-|---|---|---|
-| I | Gaussian plume (analytical) | Single overpass, single source, fast iteration |
-| II | Lagrangian particle transport | Multi-source, sub-hour resolution |
-| III | Eulerian finite-volume PDE | Long-range transport, regional inversion |
-| IV | Coupled transport + RTM | L1 radiance inversion, multi-instrument |
+| Tier | Forward | When | On plumax's `main` |
+|---|---|---|---|
+| I | Gaussian plume (analytical) | Single overpass, single source, fast iteration | `plumax.gauss_plume` fits $Q$ with NumPyro and does not call vardax |
+| II | Lagrangian particle transport | Multi-source, sub-hour resolution | `plumax.lagrangian.linear_gaussian_inversion` and `lognormal_inversion` solve with `OptimalInterpolation` and `LaplaceCovariance` over a `footprint_operator` |
+| III | Eulerian finite-volume PDE | Long-range transport, regional inversion | `plumax.les_fvm.FourDVarProblem` and `solve_4dvar` use `ThreeDVar` or `IncrementalFourDVar` over a `linear_basis` |
+| IV | Coupled transport + RTM | L1 radiance inversion, multi-instrument | `plumax.coupled.solve_coupled` uses `ThreeDVar` with `LaplaceCovariance`; `fuse_observations` uses `OptimalInterpolation` with `LinearObs` |
 
 The vardax inference code is **the same across tiers** (and across Steps 2 and 4 of the cycle): only the `forward` slot changes. The cost of upgrading from Tier I to Tier III is in `plumax`, not in vardax.
 

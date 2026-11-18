@@ -31,6 +31,14 @@ Vardax exposes these strategies as constructor slots on the Layer 2 models, with
 
 For 4DVar with dynamics, the cost is the strong-constraint cost [](#eq-strong4dvar-cost), and its gradient [](#eq-strong4dvar-grad) pulls the observation misfits back through the adjoint $\mat{F}_t^\top$ of every step of the rollout. Write $N_\text{step}$ for the number of integration steps of a `diffeqsolve` call and $D_x$ for the state length. `diffrax.diffeqsolve(..., adjoint=...)` computes that pull-back, and there are four choices.
 
+```{figure} https://raw.githubusercontent.com/jejjohnson/geostack/main/docs/images/libraries/vardax_adjoints/vardax_adjoints.png
+:alt: The four diffrax adjoints side by side on the same rollout: direct keeps every state, recursive checkpointing keeps a few and recomputes the rest, backsolve solves the adjoint ODE backwards from the last state, and forward mode carries the sensitivities along; each with its memory, time and when it is right
+:width: 100%
+:label: fig-rollout-adjoints
+
+The four ways to differentiate a rollout, with the memory, time and use of each from the tables below. The schematic is kept in [geostack](https://github.com/jejjohnson/geostack/tree/main/docs/images/libraries/vardax_adjoints) with the stack's other library schematics.
+```
+
 ### `RecursiveCheckpointAdjoint(checkpoints=N)`, the default
 
 Recursive checkpointing of the forward trajectory. Stores $N_\text{ckpt} \sim \log N_\text{step}$
@@ -87,6 +95,14 @@ For methods that train through an inner minimisation (`FourDVarNet`,
 `AmortizedPosterior`, or any classical method whose hyperparameters are
 themselves trained), the training gradient flows through
 `optimistix.minimise(...)` via its `adjoint` argument.
+
+```{figure} https://raw.githubusercontent.com/jejjohnson/geostack/main/docs/images/libraries/argminax_adjoints/argminax_adjoints.png
+:alt: Three ways to differentiate a solve: unroll through every iteration, implicit differentiation at the minimum, or truncated through the last k updates with KStep and OneStep
+:width: 100%
+:label: fig-minimiser-adjoints
+
+The three ways to differentiate an inner minimisation, drawn for argminax, whose `KStep` and `OneStep` vardax's adjoint slots take. The schematic is kept in [geostack](https://github.com/jejjohnson/geostack/tree/main/docs/images/libraries/argminax_adjoints) with the stack's other library schematics.
+```
 
 ### `RecursiveCheckpointAdjoint()`
 

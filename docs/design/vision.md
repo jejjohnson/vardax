@@ -159,14 +159,14 @@ Users enter at the level appropriate to their task:
 vardax is engineered around the cycle that turns a new forward model into
 operational analysis:
 
-```
-(1) Physics forward (somax / plumax)
-      → (2) Classical inference: OI / 3DVar / 4DVar               — slow, exact
-      → (3) Neural emulator of the forward (trained from Step 1)   — fast surrogate
-      → (4) Emulator-based inference: same vardax loop             — 100–1000× faster
-      → (5) Amortized predictor: y → posterior directly            — sub-second
-      → (6) Improve: swap any block; prior step is the oracle
-```
+| Step | What runs | Character |
+|---|---|---|
+| 1 | the physics forward model (somax, plumax) | |
+| 2 | classical inference: OI, 3DVar, 4DVar | slow, exact |
+| 3 | a neural emulator of the forward, trained from step 1 | a fast surrogate |
+| 4 | emulator-based inference, with the same vardax loop | 100 to 1000 times faster |
+| 5 | an amortized predictor from y to the posterior | sub-second |
+| 6 | improve: swap any block, with the previous step as the oracle | |
 
 Crucially: **Step 2 uses the same vardax code as Step 4**. The forward
 model is swapped via the `pipekit_cycle.ForwardModel` protocol; the

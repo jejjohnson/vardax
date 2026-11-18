@@ -7,65 +7,34 @@ version: 0.5.0
 
 ## Three-Layer Stack
 
-```
-┌───────────────────────────────────────────────────────────────────────────┐
-│  Layer 2 — Models  (each satisfies pipekit_cycle.AnalysisStep)            │
-│                                                                           │
-│  Classical:                                                               │
-│    OptimalInterpolation   — BLUE / OI, closed-form linear-Gaussian        │
-│    ThreeDVar              — 3D variational, nonlinear H                   │
-│    StrongFourDVar         — 4DVar, control = x_0                          │
-│    WeakFourDVar           — 4DVar, control = (x_0, η_1, …, η_T)           │
-│    IncrementalFourDVar    — operational GN+CG+CVT form of strong-4DVar    │
-│                                                                           │
-│  Learned:                                                                 │
-│    FourDVarNet            — learned g_ae + learned g_mod                  │
-│    AmortizedPosterior     — direct q(x | y; ν) head                       │
-│                                                                           │
-│  Latent (v0.5+, D17):                                                     │
-│    LatentThreeDVar        — 3DVar in z                                    │
-│    LatentStrongFourDVar   — 4DVar with latent M_z                         │
-│    LatentHybridFourDVar   — physics in x, control + update in z           │
-│                                                                           │
-│  + train_step, eval_step (Layer 0 primitives used by all learned models)  │
-├───────────────────────────────────────────────────────────────────────────┤
-│  Layer 1 — Components  (eqx.Module operators)                             │
-│                                                                           │
-│  Prior protocol + impls:  BilinAE, ConvAE, MLP, DynamicalPrior, Diffusion │
-│  ObservationOperator:     MaskedIdentity, LinearObs, AveragingKernel,     │
-│                           MultiInstrumentFusion, InstrumentRegistry       │
-│  GradModulator (4DVarNet only): ConvLSTM, MLP, Attention, Identity        │
-│  CostFunction:            WeakConstraint, StrongConstraint, Incremental,  │
-│                           ThreeDVarCost, BLUECost                         │
-│  Minimiser (optimistix wrapper):  GaussNewton, BFGS, NonlinearCG, …       │
-│  PosteriorAdapter:        Laplace, GaussNewtonHessian, EnsembleCovariance │
-│  SolverConfig, IncrementalConfig, AmortizedConfig, Batch*                 │
-├───────────────────────────────────────────────────────────────────────────┤
-│  Layer 0 — Primitives  (pure JAX)                                         │
-│                                                                           │
-│  Cost terms:        obs_cost, prior_cost, model_error_cost                │
-│                     variational_cost, incremental_cost                    │
-│  Closed-form:       blue_analysis (linear-Gaussian)                       │
-│  CVT:               cvt_transform, cvt_inverse (gaussx Matérn factor)     │
-│  Posterior:         laplace_covariance, gauss_newton_hessian              │
-│  Adjoint wiring:    diffrax.AbstractAdjoint + optimistix.AbstractAdjoint  │
-│                     passthrough; no vardax-owned grad_mode enum           │
-│  Training:          train_loss, train_step                                │
-└───────────────────────────────────────────────────────────────────────────┘
+The three layers of this design (models, components and primitives) are, as built, the rungs of the GeoStack role ladder: the analysis methods and what they hold are models, the minimisers and posterior adapters are strategies, the cost terms are primitives, and the data, observation operators and controls are structures. The latent methods of [D17](decisions.md#d17-latent-da-as-a-first-class-peer-family) (`LatentThreeDVar`, `LatentStrongFourDVar`, `LatentHybridFourDVar`) are a proposal, described in [latent DA](latent_da.md), and are not on the ladder.
 
-Foundation (required dependencies):
-┌──────────┐ ┌────────────┐ ┌──────────┐ ┌──────────┐ ┌──────────────────┐
-│ equinox  │ │ optimistix │ │  optax   │ │   jax    │ │ pipekit +        │
-│ (modules)│ │ (minimisers│ │ (outer   │ │ (autodiff│ │ pipekit-cycle    │
-│          │ │  +adjoints)│ │  optim)  │ │   vmap)  │ │ (protocols +     │
-│          │ │            │ │          │ │          │ │  DACycle, etc.)  │
-└──────────┘ └────────────┘ └──────────┘ └──────────┘ └──────────────────┘
-┌──────────┐ ┌──────────┐ ┌──────────────────────┐
-│  lineax  │ │  gaussx  │ │ diffrax              │
-│ (CG inner│ │ (Matérn  │ │ (ODE + Backsolve /   │
-│  loop)   │ │  B^{1/2})│ │  Recursive /         │
-│          │ │          │ │  ForwardMode adjoint)│
-└──────────┘ └──────────┘ └──────────────────────┘
+```{figure} https://raw.githubusercontent.com/jejjohnson/geostack/main/docs/images/libraries/vardax_roles/vardax_roles-light.svg
+:alt: vardax's public names on the GeoStack role ladder: cycles as recipes, every method as an analysis step, solve, train and validation algorithms, the analysis methods and their priors as models, minimisers and uncertainty readers as strategies, cost terms as primitives, and the data, observation operators and controls as structures
+:width: 100%
+:label: fig-role-ladder
+
+vardax's public names on the role ladder, placed by the role-ladder test. The schematic is kept in [geostack](https://github.com/jejjohnson/geostack/tree/main/docs/images/libraries/vardax_roles) with the stack's other library schematics.
+```
+
+The package's areas under `src/vardax/_src/`, grouped by job, and the imports between them:
+
+```{figure} https://raw.githubusercontent.com/jejjohnson/geostack/main/docs/images/libraries/vardax_imports/vardax_imports-light.svg
+:alt: vardax's 22 source areas grouped into cards by job, with the libraries each imports and arrows for the imports between cards
+:width: 100%
+:label: fig-code-map
+
+The code map: which areas import which, and what each builds on. The schematic is kept in [geostack](https://github.com/jejjohnson/geostack/tree/main/docs/images/libraries/vardax_imports) with the stack's other library schematics.
+```
+
+What vardax builds on, and the packages that import it:
+
+```{figure} https://raw.githubusercontent.com/jejjohnson/geostack/main/docs/images/libraries/vardax_ecosystem/vardax_ecosystem-light.svg
+:alt: Packages that import vardax: plumax through its assim extra and sesmax-core through its da extra; vardax builds on JAX, Equinox, lineax, gaussx, optimistix, optax, argminax, diffrax, integrix, geonnax and pipekit-cycle
+:width: 100%
+:label: fig-dependencies
+
+vardax's dependents and its foundation. The schematic is kept in [geostack](https://github.com/jejjohnson/geostack/tree/main/docs/images/libraries/vardax_ecosystem) with the stack's other library schematics.
 ```
 
 ## Design Principles
