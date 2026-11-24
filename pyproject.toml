@@ -264,8 +264,8 @@ integrix = { git = "https://github.com/jejjohnson/integrix", tag = "v0.0.3" }
 # pipekit is pinned by release tag: following its main broke CI when 0.2.0 moved
 # the core into pipekit-ops. All five share one tag: workspace members point at
 # each other at the same commit, so per-package tags give uv conflicting URLs.
-pipekit-ops = { git = "https://github.com/jejjohnson/pipekit", subdirectory = "packages/pipekit-ops", tag = "pipekit-ops-v0.2.1" }
-pipekit-cycle = { git = "https://github.com/jejjohnson/pipekit", subdirectory = "packages/pipekit-cycle", tag = "pipekit-ops-v0.2.1" }
-pipekit-jax = { git = "https://github.com/jejjohnson/pipekit", subdirectory = "packages/pipekit-jax", tag = "pipekit-ops-v0.2.1" }
-pipekit-experiment = { git = "https://github.com/jejjohnson/pipekit", subdirectory = "packages/pipekit-experiment", tag = "pipekit-ops-v0.2.1" }
-pipekit-train = { git = "https://github.com/jejjohnson/pipekit", subdirectory = "packages/pipekit-train", tag = "pipekit-ops-v0.2.1" }
+pipekit-ops = { git = "https://github.com/jejjohnson/pipekit", subdirectory = "packages/pipekit-ops", tag = "pipekit-array-v0.1.4" }
+pipekit-cycle = { git = "https://github.com/jejjohnson/pipekit", subdirectory = "packages/pipekit-cycle", tag = "pipekit-array-v0.1.4" }
+pipekit-jax = { git = "https://github.com/jejjohnson/pipekit", subdirectory = "packages/pipekit-jax", tag = "pipekit-array-v0.1.4" }
+pipekit-experiment = { git = "https://github.com/jejjohnson/pipekit", subdirectory = "packages/pipekit-experiment", tag = "pipekit-array-v0.1.4" }
+pipekit-train = { git = "https://github.com/jejjohnson/pipekit", subdirectory = "packages/pipekit-train", tag = "pipekit-array-v0.1.4" }

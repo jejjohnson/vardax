@@ -103,8 +103,8 @@ argminax = { git = "https://github.com/jejjohnson/argminax", tag = "v0.0.4" }
 gaussx = { git = "https://github.com/jejjohnson/gaussx", rev = "v0.6.12" }
 geonnax = { git = "https://github.com/jejjohnson/geonnax", tag = "v0.0.10" }
 integrix = { git = "https://github.com/jejjohnson/integrix", tag = "v0.0.3" }
-pipekit-ops = { git = "https://github.com/jejjohnson/pipekit", subdirectory = "packages/pipekit-ops", tag = "pipekit-ops-v0.2.1" }
-pipekit-cycle = { git = "https://github.com/jejjohnson/pipekit", subdirectory = "packages/pipekit-cycle", tag = "pipekit-ops-v0.2.1" }
+pipekit-ops = { git = "https://github.com/jejjohnson/pipekit", subdirectory = "packages/pipekit-ops", tag = "pipekit-array-v0.1.4" }
+pipekit-cycle = { git = "https://github.com/jejjohnson/pipekit", subdirectory = "packages/pipekit-cycle", tag = "pipekit-array-v0.1.4" }
 ```
 
 The extras are `data` (xarray and NumPy for the dataset utilities), `viz` (matplotlib and seaborn), `examples` (matplotlib, loguru and tqdm for the notebook helpers), `jlab` (Jupyter, jupytext and nbconvert, to run and build the tutorials), `exp` (wandb, Hydra, loguru and plotting, for experiments), `persist` (pipekit-jax and pipekit-experiment), `train` (pipekit-train) and `all`. The `persist` and `train` extras need their pipekit packages mapped as above, at the same tag. The tutorials need `viz`:
