@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.7](https://github.com/jejjohnson/vardax/compare/v0.3.6...v0.3.7) (2026-11-25)
+
+
+### Bug Fixes
+
+* **obs_operators:** build the linear interpolation stencils with functax, so vardax runs on gaussx 0.8 ([#308](https://github.com/jejjohnson/vardax/issues/308)) ([c6ca094](https://github.com/jejjohnson/vardax/commit/c6ca0949087bd049df83a874c104d6eeba380503))
+
 ## [0.3.6](https://github.com/jejjohnson/vardax/compare/v0.3.5...v0.3.6) (2026-11-18)
 
 
