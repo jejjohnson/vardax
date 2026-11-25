@@ -3,9 +3,9 @@
 The mapping itself is ``argminax.adjoint.to_optimistix_adjoint``; this wrapper keeps
 vardax's error type and messages and its ``KStepAdjoint`` return type.
 
-This is the counterpart of ``pipekit_jax.to_diffrax_adjoint`` at the dynamics layer: the
-specs of ``pipekit_cycle.adjoints`` become the ``optimistix.AbstractAdjoint`` instances
-that vardax's inner solvers consume.
+This is the counterpart of ``integrix.adjoint.to_diffrax_adjoint`` at the dynamics
+layer: the specs of ``pipekit_cycle.adjoints`` become the
+``optimistix.AbstractAdjoint`` instances that vardax's inner solvers consume.
 """
 
 from __future__ import annotations
@@ -105,7 +105,7 @@ def to_optimistix_adjoint(spec: Any) -> optx.AbstractAdjoint:
                 f"{name} does not apply at the inner-solve layer: DirectAdjoint is "
                 "the plain unrolled default (use optx.RecursiveCheckpointAdjoint() "
                 "or omit solver_adjoint), and BacksolveAdjoint only exists at the "
-                "dynamics layer (see pipekit_jax.DiffraxForwardModel)."
+                "dynamics layer (see integrix.march.DiffraxForwardModel)."
             ) from error
         raise UnsupportedInputError(f"Unrecognised adjoint spec: {spec!r}") from error
     if type(adjoint) is KStep:

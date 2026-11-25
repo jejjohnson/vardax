@@ -3,13 +3,14 @@
 The inner-solve layer of the shared adjoint-strategies design:
 ``KStepAdjoint(k)`` generalises ``OneStepAdjoint`` (the ``k=1`` alias),
 ``to_optimistix_adjoint`` interprets the ``pipekit_cycle.adjoints``
-vocabulary, and ``pipekit_jax.DiffraxForwardModel`` slots into
+vocabulary, and ``integrix.march.DiffraxForwardModel`` slots into
 ``StrongFourDVar`` as a plain ``ForwardModel``.
 """
 
 from __future__ import annotations
 
 import equinox as eqx
+from integrix.march import DiffraxForwardModel
 import jax
 import jax.numpy as jnp
 import lineax as lx
@@ -156,11 +157,8 @@ class TestToOptimistixAdjoint:
 class TestDiffraxDynamics:
     def test_strong_fourdvar_with_diffrax_forward(self, rng):
         """DiffraxForwardModel is a pipekit ForwardModel — it slots straight in."""
-        pipekit_jax = pytest.importorskip("pipekit_jax")
-        pytest.importorskip("diffrax")
-
         N = 4
-        fwd = pipekit_jax.DiffraxForwardModel(
+        fwd = DiffraxForwardModel(
             vector_field=lambda t, y, args: -0.1 * y,
             dt0=0.1,
             dt=1.0,
@@ -186,13 +184,9 @@ class TestDiffraxDynamics:
         assert jnp.all(jnp.isfinite(out))
 
     def test_adjoint_swap_is_configuration(self):
-        pipekit_jax = pytest.importorskip("pipekit_jax")
         adjoints = pytest.importorskip("pipekit_cycle.adjoints")
-        pytest.importorskip("diffrax")
 
-        fwd = pipekit_jax.DiffraxForwardModel(
-            vector_field=lambda t, y, args: -y, dt0=0.1
-        )
+        fwd = DiffraxForwardModel(vector_field=lambda t, y, args: -y, dt0=0.1)
         swapped = fwd.with_adjoint(adjoints.DirectAdjoint())
         assert swapped.adjoint == adjoints.DirectAdjoint()
         y = jnp.ones(3)
