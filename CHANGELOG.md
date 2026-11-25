@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.8](https://github.com/jejjohnson/vardax/compare/v0.3.7...v0.3.8) (2026-11-25)
+
+
+### Bug Fixes
+
+* **deps:** pipekit-array 0.1.6, and integrix 0.0.11 for DiffraxForwardModel ([#311](https://github.com/jejjohnson/vardax/issues/311)) ([0bafb44](https://github.com/jejjohnson/vardax/commit/0bafb44ed48bbfa3396e9aac416e46a7f964f2f8))
+
 ## [0.3.7](https://github.com/jejjohnson/vardax/compare/v0.3.6...v0.3.7) (2026-11-25)
 
 
