@@ -53,6 +53,14 @@ five methods pair with an explicit `PosteriorAdapter`.
 
 ## Four posterior families
 
+```{figure} https://raw.githubusercontent.com/jejjohnson/geostack/main/docs/images/libraries/vardax_posterior/vardax_posterior.png
+:alt: The four posterior families side by side, each sketched in a two-dimensional state: the exact closed-form update, a Gaussian matched to a curved cost at the MAP, the same Gaussian computed by CG steps, and an inflated ensemble covariance; with the call, mat-vec cost, users and when each is right
+:width: 100%
+:label: fig-posterior-families
+
+The four families of this section at a glance; the subsections below derive each. The schematic is kept in [geostack](https://github.com/jejjohnson/geostack/tree/main/docs/images/libraries/vardax_posterior) with the stack's other library schematics.
+```
+
 ### 1. Closed form (BLUE / OI)
 
 For `OptimalInterpolation`, the posterior is exact: $\gmat{\Sigma}_{x \mid y}$ is the BLUE covariance [](#eq-blue-cov).

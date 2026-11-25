@@ -10,7 +10,6 @@ from collections.abc import Callable
 
 import einx
 import equinox as eqx
-import gaussx
 import jax
 import jax.numpy as jnp
 from jaxtyping import Array, Float
@@ -25,6 +24,7 @@ from vardax._src.errors import (
     ObservationError,
     ShapeError,
 )
+from vardax._src.obs_operators.stencil import linear_stencil
 from vardax._src.utils.shapes import as_shape
 
 
@@ -284,9 +284,7 @@ class GridPointObs(eqx.Module):
         num_axes = len(self.grid_axes)
         spatial_coords = safe.coords[:, :num_axes]
         # flat grid indices nᵢₖ and weights wᵢₖ of each point's 2^D corners
-        indices, weights = gaussx.linear_interpolation_weights(
-            spatial_coords, list(self.grid_axes)
-        )
+        indices, weights = linear_stencil(spatial_coords, self.grid_axes)
         # τᵢ, one row per observation, broadcasting over its corners; einx is safe on
         # an empty batch because _safe has already rejected it
         time_rows = einx.id("obs -> obs 1", time_indices)

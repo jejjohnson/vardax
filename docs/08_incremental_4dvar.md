@@ -74,9 +74,7 @@ $\vect{x}_0^\star = \gvect{\mu}_x + \mat{L}_x \vect{z}^\star$.
 operator's own square root, or `gaussx.sqrt(prior_cov_op, lanczos_order=k)` for a
 large unstructured $\gmat{\Sigma}_x$), else `gaussx.sqrt(prior_cov_op)`: closed form
 for diagonal, Kronecker and block-diagonal $\gmat{\Sigma}_x$, a dense
-eigendecomposition otherwise. `cvt=False` keeps the state-space solve,
-with $\gmat{\Sigma}_x^{-1}$ and $\gmat{\Sigma}_\varepsilon^{-1}$ applied by CG at tolerance
-`covariance_tol`.
+eigendecomposition otherwise. `cvt=False` keeps the state-space solve, with the background residual whitened by the Cholesky factor of $\gmat{\Sigma}_x$.
 
 **How much it helps.** A linear problem with 20 states, 4 times, every
 third site observed, a Gaussian-kernel $\gmat{\Sigma}_x$ of length scale 3 sites plus
@@ -102,6 +100,7 @@ Every cell is observed through an averaging kernel [](#eq-averaging-kernel) with
 ```{code-block} python
 :caption: Solves the control-variable system [](#eq-cvt-system) in each outer loop of incremental 4DVar and compares the analysis with the direct minimum of [](#eq-strong4dvar-cost).
 :label: code-incremental4dvar-analysis
+from argminax.solve import GaussNewtonCG
 import einx
 import equinox as eqx
 import gaussx as gx
@@ -216,7 +215,9 @@ model = vdx.IncrementalFourDVar(
     prior_mean=background,
     prior_cov_op=prior_cov,
     obs_cov_op=obs_cov,
-    config=vdx.IncrementalConfig(n_outer=3, n_inner=20, cvt=True),
+    # at most 20 CG steps per outer iteration, outer tolerances 0
+    solver=GaussNewtonCG(rtol=0.0, atol=0.0, max_cg_steps=20, cg_rtol=1e-6, cg_atol=1e-6),
+    n_outer=3,
 )
 obs_window = einx.id("t n -> 1 t n", obs)  # (T + 1, D_y) → (S, T + 1, D_y)
 # mₜ = 1 everywhere
@@ -256,14 +257,18 @@ posterior = model.posterior(batch)
 
 It prints `largest gap to StrongFourDVar 2.0e-03`: three outer loops of at most 20 CG steps each land that close to the BFGS minimum of the same cost.
 
-`IncrementalConfig`:
+The model solves the window as whitened residuals with `optimistix.least_squares`, and takes its budget as arguments:
 
-- `n_outer`: number of Gauss-Newton outer iterations (typically 3).
-- `n_inner`: maximum CG iterations per outer iteration (typically 20 to 50); the inner solve is truncated there.
-- `cg_atol`, `cg_rtol`: inner CG convergence tolerances.
+- `solver`: the least-squares solver, by default `argminax.solve.GaussNewtonCG(rtol=0, atol=0, max_cg_steps=30, cg_rtol=1e-6, cg_atol=1e-6)`. Its outer tolerances of 0 run exactly `n_outer` outer iterations, and each inner CG stops at its tolerance or after `max_cg_steps` steps (truncated CG). Positive `rtol` and `atol` stop the outer loop once it has converged.
+- `n_outer`: the most Gauss-Newton outer iterations (default 3).
+
+`IncrementalConfig` holds the switches:
+
 - `cvt`: solve over $\vect{z}$ of [](#eq-cvt) (default `True`).
-- `covariance_tol`: tolerance of the CG solves that apply $\gmat{\Sigma}_\varepsilon^{-1}$ (and $\gmat{\Sigma}_x^{-1}$ when `cvt=False`).
+- `covariance_tol`: tolerance of the default posterior's CG solves; $\gmat{\Sigma}_\varepsilon$ and $\gmat{\Sigma}_x$ enter the analysis through their Cholesky factors.
 - `jac`: `"fwd"` (default) applies $\mat{H}_t \mat{F}_{t \leftarrow 0}$ by `jax.linearize`, matrix-free. `"bwd"` forms the window's Jacobian with `jax.jacrev`, one VJP per observation, and runs CG on that matrix. Pass it when the forward or observation map defines only a reverse-mode rule, such as a `jax.custom_vjp` or a diffrax solve under `RecursiveCheckpointAdjoint`; it suits windows of up to a few thousand observations, and the posterior uses the same mode.
+
+Its `n_outer`, `n_inner`, `cg_atol` and `cg_rtol` fields still build the equivalent `GaussNewtonCG` for one release, with a `DeprecationWarning`.
 
 A static control, such as a source field rather than an initial state, is an identity-step forward (`step` returns its input) with a one-time window: the outer loop is then Gauss-Newton 3D-Var through any `obs_op`.
 
@@ -277,9 +282,9 @@ The block continues the one above and reproduces `model(batch)`.
 :label: code-incremental4dvar-outer-loop
 # Shapes: T = 3 steps, so T + 1 = 4 times; D_x = D_y = 20 cells
 
-config = model.config
-covariance_solver = lx.CG(atol=config.covariance_tol, rtol=config.covariance_tol)
-inner_solver = lx.CG(atol=config.cg_atol, rtol=config.cg_rtol, max_steps=config.n_inner)
+covariance_solver = lx.CG(atol=1e-6, rtol=1e-6)
+# the model's inner CG: tolerances 1e-6, at most 20 steps
+inner_solver = lx.CG(atol=1e-6, rtol=1e-6, max_steps=20)
 state_struct = jax.ShapeDtypeStruct((20,), jnp.float32)
 # today (gaussx)
 # L_x L_xᵀ = Σ_x, here L_x = L_row ⊗ L_col
@@ -316,7 +321,7 @@ def whiten(residual: Float[Array, "t n"]) -> Float[Array, "t n"]:
 
 # z⁽⁰⁾ = 0, so x⁽⁰⁾ = μ_x
 control = jnp.zeros(20)  # (D_x,)
-for _ in range(config.n_outer):
+for _ in range(model.n_outer):
     # L_x z⁽ⁱ⁾
     increment = prior_sqrt.mv(control)  # (D_x,)
     # x⁽ⁱ⁾ = μ_x + L_x z⁽ⁱ⁾
@@ -370,7 +375,7 @@ print(bool(jnp.allclose(analysis_by_hand, analysis[0], atol=1e-4)))
 
 It prints `True`.
 
-With `cvt=False` the inner system is [](#eq-gn-system) in state space instead, with $\gmat{\Sigma}_x^{-1}$ applied by a nested CG solve at every Hessian product.
+With `cvt=False` the inner system is [](#eq-gn-system) in state space instead, with $\gmat{\Sigma}_x^{-1}$ entering through the Cholesky factor of $\gmat{\Sigma}_x$.
 
 ## Why it's the operational fast path
 
@@ -441,7 +446,7 @@ static_incremental = vdx.IncrementalFourDVar(
     prior_mean=jnp.zeros(4),
     prior_cov_op=static_prior_cov,
     obs_cov_op=static_obs_cov,
-    config=vdx.IncrementalConfig(n_outer=2, n_inner=50, cvt=True),
+    n_outer=2,
 )
 # today (vardax)
 # x⋆ = μ_x + Σ_x Hᵀ (H Σ_x Hᵀ + Σ_ε)⁻¹ (y − H μ_x)

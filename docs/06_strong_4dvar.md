@@ -188,7 +188,7 @@ With the default `lx.CG` covariance solver this $\gmat{\Sigma}_x$ (condition num
 
 Three slots control the gradient:
 
-- **`checkpoint`** rematerialises the rollout in reverse mode (`True`, or a block length `k`), for any per-step forward; the gradient is the same and the memory smaller (chapter 3).
+- **`checkpoint`** rematerialises the rollout in reverse mode (`True`, or a block length `k`) through `integrix.adjoint.checkpointed_scan`, for any per-step forward; the gradient is the same and the memory smaller (chapter 3).
 - **`forward_adjoint`** is a `diffrax.AbstractAdjoint` for a forward that integrates with `diffrax` and implements `with_adjoint(adjoint)` ([`SupportsForwardAdjoint`](xref:api#vardax.SupportsForwardAdjoint)), for example `dfx.BacksolveAdjoint()` for constant memory over long windows. Any other forward raises `ValueError`.
 - **`minimiser_adjoint`** controls how gradients flow back through the outer minimiser, as for `ThreeDVar` (chapter 5).
 
@@ -460,7 +460,7 @@ It prints `True`.
 For $T = 100$+ assimilation cycles, the forward trajectory dominates
 memory. Four strategies:
 
-1. **`checkpoint=True` (or a block length).** Works with any per-step forward, with 3 to 4 times less gradient memory on Lorenz-96 (chapter 3).
+1. **`checkpoint=True` (or a block length).** Runs the rollout through `integrix.adjoint.checkpointed_scan` and works with any per-step forward, with 3 to 4 times less gradient memory on Lorenz-96 (chapter 3).
 2. **`dfx.BacksolveAdjoint()`** (via `forward_adjoint=`, for a [`SupportsForwardAdjoint`](xref:api#vardax.SupportsForwardAdjoint) forward) solves the adjoint ODE backwards in time, with $O(1)$ memory in the trajectory length. Reverse-time stiffness can require an implicit integrator (`dfx.Kvaerno5`, `dfx.ImplicitEuler`).
 3. **`dfx.RecursiveCheckpointAdjoint(checkpoints=N)`** (also via `forward_adjoint=`) stores $N$ checkpoints and recomputes the segments between them, with $O(\sqrt{T})$ memory.
 4. **Shorter windows.** Run multiple `StrongFourDVar` analyses with

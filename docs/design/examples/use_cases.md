@@ -24,57 +24,12 @@ stack height $H_\text{eff}$ for a known facility. Single overpass.
 
 ### Data flow
 
-```
-        ┌──────────────┐  ┌──────────────┐  ┌──────────────┐
-        │  TROPOMI L2  │  │   EMIT L2    │  │  GHGSat L2   │
-        │ (XCH4 + AK)  │  │ (XCH4 + AK)  │  │ (XCH4 + AK)  │
-        └──────┬───────┘  └──────┬───────┘  └──────┬───────┘
-               │                  │                  │
-               └─────── georeader ────────────────────┘
-                                  │
-                  ┌───────────────┴───────────────┐
-                  │      Event metadata           │
-                  │  (facility, time, geometry)   │
-                  └───────────────┬───────────────┘
-                                  │
-                                  ▼
-            ┌──────────────────────────────────────┐
-            │  ERA5 / WRF wind, PBL, stability     │
-            └──────────────┬───────────────────────┘
-                           │
-                           ▼
-   ┌──────────────────────────────────────────────────────┐
-   │ plumax.tier1.GaussianPlume(met=met_field, ...)       │
-   │ (satisfies pipekit_cycle.ForwardModel)               │
-   └──────────────────────────────┬───────────────────────┘
-                                  │
-                                  ▼
-   ┌──────────────────────────────────────────────────────┐
-   │ MultiInstrumentFusion(InstrumentRegistry({           │
-   │   "TROPOMI": InstrumentSpec(AveragingKernel(...)),   │
-   │   "EMIT":    InstrumentSpec(AveragingKernel(...)),   │
-   │   "GHGSat":  InstrumentSpec(AveragingKernel(...)),   │
-   │ }))                                                   │
-   └──────────────────────────────┬───────────────────────┘
-                                  │
-                                  ▼
-   ┌──────────────────────────────────────────────────────┐
-   │ IncrementalFourDVar(forward=plume, obs_op=fusion,       │
-   │   prior_mean=Q_inventory, prior_cov_op=lognormal,    │
-   │   obs_cov_op=block_diag_per_instrument, ...)         │
-   └──────────────────────────────┬───────────────────────┘
-                                  │
-                                  ▼
-   ┌──────────────────────────────────────────────────────┐
-   │ x_star = model(batch)                                │
-   │ posterior = GaussNewtonHessian()(x_star, model, ...) │
-   └──────────────────────────────┬───────────────────────┘
-                                  │
-                                  ▼
-   ┌──────────────────────────────────────────────────────┐
-   │ GaussianMarkLikelihood(posterior, event_metadata)    │
-   │   .to_dict() → GeoCatalog write                      │
-   └──────────────────────────────────────────────────────┘
+```{figure} https://raw.githubusercontent.com/jejjohnson/geostack/main/docs/images/libraries/vardax_methane/vardax_methane.png
+:alt: The single-overpass methane inversion as four lanes, each box marked as shipping today, your code or not pinned, with the plumax tiers that fill its forward slot and the six-step cycle
+:width: 100%
+:label: fig-usecase-methane
+
+The methane inversion as a pipeline; [chapter 17](../../17_methane_example.md) walks through it. The schematic is kept in [geostack](https://github.com/jejjohnson/geostack/tree/main/docs/images/libraries/vardax_methane) with the stack's other library schematics.
 ```
 
 ### Sketch
@@ -219,36 +174,11 @@ inference.
 
 ### Data flow
 
-```
-       ┌──────────────────┐
-       │ AltiKa / SARAL   │
-       │ along-track SSH  │
-       └────────┬─────────┘
-                │  georeader
-                ▼
-   ┌──────────────────────────────────────┐
-   │ coordax.Dataset(lat, lon, time, ssh) │
-   └────────┬─────────────────────────────┘
-            │  build_batch
-            ▼
-   ┌──────────────────────────────────────┐
-   │ Batch2D(input, mask, target?)        │
-   └────────┬─────────────────────────────┘
-            │
-            ▼
-   ┌──────────────────────────────────────────┐
-   │ FourDVarNet(prior=BilinAE2D,              │
-   │            obs_op=MaskedIdentity,        │
-   │            grad_mod=ConvLSTMGradMod2D,   │
-   │            config=SolverConfig("one_step"))│
-   └────────┬─────────────────────────────────┘
-            │
-            ▼
-   ┌──────────────────────────────────────────┐
-   │ x_reconstructed = model(batch)           │
-   │ posterior = LaplaceCovariance()(...)     │
-   └──────────────────────────────────────────┘
-```
+1. **Read.** georeader reads the AltiKa or SARAL along-track sea-surface height.
+2. **Grid.** The tracks become a `coordax.Dataset` over latitude, longitude and time.
+3. **Batch.** `build_batch` turns it into a `Batch2D` of input, mask and, for training, target.
+4. **Reconstruct.** A `FourDVarNet2D` with a `BilinAEPrior2D` prior, a `MaskedIdentity` observation operator and a `ConvLSTMGradMod2D` modulator reconstructs the field, `model(batch)`.
+5. **Posterior.** A posterior adapter gives the uncertainty, as in step 5 of the sketch below.
 
 ### Sketch
 
@@ -388,17 +318,11 @@ The same `Batch2D` flows through both inference paths.
 
 Both use cases share a structural pattern that vardax codifies:
 
-```
-forward (somax / plumax)
-   ↓
-   ──→  ObservationOperator (Masked / AveragingKernel / MultiInstrument)
-            ↓
-            ──→  Layer 2 model (FourDVarNet / IncrementalFourDVar / AmortizedPosterior)
-                    ↓
-                    ──→  PosteriorAdapter (Laplace / GN-Hessian / Ensemble)
-                            ↓
-                            ──→  GaussianMarkLikelihood → catalog
-```
+1. **Forward model**: somax or plumax.
+2. **Observation operator**: `MaskedIdentity`, `AveragingKernel` or `MultiInstrumentFusion`.
+3. **Analysis method**: `FourDVarNet2D`, `IncrementalFourDVar` or `AmortizedPosterior`.
+4. **Posterior adapter**: `LaplaceCovariance`, `GaussNewtonHessian` or `EnsembleCovariance`.
+5. **Export**: `GaussianMarkLikelihood`, to a catalogue.
 
 Each block satisfies a pipekit-cycle protocol (Decision D8). The same code
 runs in three execution modes:

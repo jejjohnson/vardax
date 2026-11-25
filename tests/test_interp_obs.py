@@ -234,6 +234,30 @@ def test_linearize_and_its_transpose_match_the_dense_jacobian(grid, flat):
     )
 
 
+def test_stencil_is_row_major_and_clamps_outside_points(grid):
+    """The corners are (lo, lo), (lo, hi), (hi, lo), (hi, hi); an outside point clamps."""
+    y, x = grid
+    ny, nx = y.size, x.size
+    op = interp_obs_from_coords((y, x), np.array([[0.025, 0.175], [-3.0, 9.0]]))
+    np.testing.assert_array_equal(np.asarray(op.indices[0]), [1, 2, nx + 1, nx + 2])
+    np.testing.assert_allclose(
+        np.asarray(op.weights[0]),
+        [0.75 * 0.25, 0.75 * 0.75, 0.25 * 0.25, 0.25 * 0.75],
+        rtol=1e-5,
+    )
+    field = jnp.zeros((ny, nx)).at[0, -1].set(7.0)
+    np.testing.assert_allclose(float(op(field)[1]), 7.0, rtol=1e-5)
+
+
+def test_nan_coordinate_gives_nan_not_zero(grid):
+    """A coordinate that is not finite is not silently predicted as zero."""
+    y, x = grid
+    op = interp_obs_from_coords((y, x), np.array([[np.nan, 0.5], [0.5, 0.5]]))
+    out = op(jnp.ones((y.size, x.size)))
+    assert jnp.isnan(out[0])
+    np.testing.assert_allclose(float(out[1]), 1.0, rtol=1e-6)
+
+
 @pytest.mark.parametrize("flat", [False, True], ids=["grid", "flat"])
 def test_empty_linearize_and_adjoint_preserve_structure_and_jit(grid, flat):
     y, x = grid

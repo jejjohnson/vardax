@@ -334,9 +334,7 @@ Both analyses print `[1.199159  0.8008326 1.0997877]`, and the check prints `Tru
 Most forwards are a single `step(x, dt)` (an RK4 step of a finite-volume
 model, a learned emulator). Reverse mode through a `lax.scan` of such
 steps stores every intermediate of every step. The 4DVar models'
-`checkpoint=` slot wraps blocks of steps in `jax.checkpoint`, so the
-backward pass recomputes them instead: `True` checkpoints every step, an
-integer `k` every block of `k` steps. The gradient is unchanged.
+`checkpoint=` slot runs the rollout through `integrix.adjoint.checkpointed_scan`, which wraps blocks of steps in `jax.checkpoint`, so the backward pass recomputes them instead: `True` checkpoints every step, an integer `k` every block of `k` steps, with a shorter last block when `k` does not divide $T$. The gradient is unchanged.
 
 On Lorenz-96 ($D_x = 40$, RK4, $T = 500$ steps, float64, CPU) the compiled
 gradient's temporary memory drops from 1.61 MB to 0.49 MB with

@@ -1,6 +1,6 @@
 [project]
 name = "vardax"
-version = "0.3.4"
+version = "0.3.6"
 description = "JAX-native data assimilation inference — seven peer analysis methods (BLUE/OI, 3DVar, 4DVar strong/weak/incremental, 4DVarNet, AmortizedPosterior)"
 authors = [
     { name = "Juan Emmanuel Johnson", email = "jemanjohnson34@gmail.com" },
@@ -42,8 +42,10 @@ dependencies = [
     "optimistix>=0.1",
     "lineax>=0.1",
     "gaussx",
-    "argminax",
+    "argminax>=0.0.4",
+    "functax[jax]>=0.0.11",
     "geonnax",
+    "integrix",
     "pipekit-ops",
     "pipekit-cycle",
 ]
@@ -251,17 +253,23 @@ source = ["src/vardax"]
 output = "reports/coverage.xml"
 
 [tool.uv.sources]
-# v0.0.3 is the first tag with argminax#36, a gridded mode in Laplace.
-argminax = { git = "https://github.com/jejjohnson/argminax", tag = "v0.0.3" }
+# v0.0.4 is the first tag with argminax#23 and argminax#24, GaussNewtonCG and
+# dual_solve behind IncrementalFourDVar, ThreeDVar and DualThreeDVar.
+argminax = { git = "https://github.com/jejjohnson/argminax", tag = "v0.0.4" }
 # argminax requires gaussx v0.6.12 as `gaussx @ git+...@v0.6.12`; uv allows one
 # URL per package and reads `tag =` as a different one, so this is `rev =`.
 gaussx = { git = "https://github.com/jejjohnson/gaussx", rev = "v0.6.12" }
 geonnax = { git = "https://github.com/jejjohnson/geonnax", tag = "v0.0.10" }
+# The linear interpolation stencils of InterpObs and GridPointObs. integrix v0.0.6
+# requires it as `functax @ git+...@v0.0.11`, so this is `rev =` too.
+functax = { git = "https://github.com/jejjohnson/functax", rev = "v0.0.11" }
+# The checkpointed scan behind rollout; v0.0.6 is the tag on functax v0.0.11.
+integrix = { git = "https://github.com/jejjohnson/integrix", tag = "v0.0.6" }
 # pipekit is pinned by release tag: following its main broke CI when 0.2.0 moved
 # the core into pipekit-ops. All five share one tag: workspace members point at
 # each other at the same commit, so per-package tags give uv conflicting URLs.
-pipekit-ops = { git = "https://github.com/jejjohnson/pipekit", subdirectory = "packages/pipekit-ops", tag = "pipekit-ops-v0.2.1" }
-pipekit-cycle = { git = "https://github.com/jejjohnson/pipekit", subdirectory = "packages/pipekit-cycle", tag = "pipekit-ops-v0.2.1" }
-pipekit-jax = { git = "https://github.com/jejjohnson/pipekit", subdirectory = "packages/pipekit-jax", tag = "pipekit-ops-v0.2.1" }
-pipekit-experiment = { git = "https://github.com/jejjohnson/pipekit", subdirectory = "packages/pipekit-experiment", tag = "pipekit-ops-v0.2.1" }
-pipekit-train = { git = "https://github.com/jejjohnson/pipekit", subdirectory = "packages/pipekit-train", tag = "pipekit-ops-v0.2.1" }
+pipekit-ops = { git = "https://github.com/jejjohnson/pipekit", subdirectory = "packages/pipekit-ops", tag = "pipekit-array-v0.1.4" }
+pipekit-cycle = { git = "https://github.com/jejjohnson/pipekit", subdirectory = "packages/pipekit-cycle", tag = "pipekit-array-v0.1.4" }
+pipekit-jax = { git = "https://github.com/jejjohnson/pipekit", subdirectory = "packages/pipekit-jax", tag = "pipekit-array-v0.1.4" }
+pipekit-experiment = { git = "https://github.com/jejjohnson/pipekit", subdirectory = "packages/pipekit-experiment", tag = "pipekit-array-v0.1.4" }
+pipekit-train = { git = "https://github.com/jejjohnson/pipekit", subdirectory = "packages/pipekit-train", tag = "pipekit-array-v0.1.4" }

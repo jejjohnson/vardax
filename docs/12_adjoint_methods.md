@@ -31,6 +31,14 @@ Vardax exposes these strategies as constructor slots on the Layer 2 models, with
 
 For 4DVar with dynamics, the cost is the strong-constraint cost [](#eq-strong4dvar-cost), and its gradient [](#eq-strong4dvar-grad) pulls the observation misfits back through the adjoint $\mat{F}_t^\top$ of every step of the rollout. Write $N_\text{step}$ for the number of integration steps of a `diffeqsolve` call and $D_x$ for the state length. `diffrax.diffeqsolve(..., adjoint=...)` computes that pull-back, and there are four choices.
 
+```{figure} https://raw.githubusercontent.com/jejjohnson/geostack/main/docs/images/libraries/vardax_adjoints/vardax_adjoints.png
+:alt: The four diffrax adjoints side by side on the same rollout: direct keeps every state, recursive checkpointing keeps a few and recomputes the rest, backsolve solves the adjoint ODE backwards from the last state, and forward mode carries the sensitivities along; each with its memory, time and when it is right
+:width: 100%
+:label: fig-rollout-adjoints
+
+The four ways to differentiate a rollout, with the memory, time and use of each from the tables below. The schematic is kept in [geostack](https://github.com/jejjohnson/geostack/tree/main/docs/images/libraries/vardax_adjoints) with the stack's other library schematics.
+```
+
 ### `RecursiveCheckpointAdjoint(checkpoints=N)`, the default
 
 Recursive checkpointing of the forward trajectory. Stores $N_\text{ckpt} \sim \log N_\text{step}$
@@ -87,6 +95,14 @@ For methods that train through an inner minimisation (`FourDVarNet`,
 `AmortizedPosterior`, or any classical method whose hyperparameters are
 themselves trained), the training gradient flows through
 `optimistix.minimise(...)` via its `adjoint` argument.
+
+```{figure} https://raw.githubusercontent.com/jejjohnson/geostack/main/docs/images/libraries/argminax_adjoints/argminax_adjoints.png
+:alt: Three ways to differentiate a solve: unroll through every iteration, implicit differentiation at the minimum, or truncated through the last k updates with KStep and OneStep
+:width: 100%
+:label: fig-minimiser-adjoints
+
+The three ways to differentiate an inner minimisation, drawn for argminax, whose `KStep` and `OneStep` vardax's adjoint slots take. The schematic is kept in [geostack](https://github.com/jejjohnson/geostack/tree/main/docs/images/libraries/argminax_adjoints) with the stack's other library schematics.
+```
 
 ### `RecursiveCheckpointAdjoint()`
 
@@ -181,15 +197,12 @@ separate slots for the two:
 `minimiser_adjoint` and `solver_adjoint` act on the inner minimisation.
 They are independent.
 
-- `checkpoint=True` wraps each step of the rollout in `jax.checkpoint`
-  (an integer `k` wraps blocks of `k` steps), so reverse mode recomputes
-  the steps instead of storing their intermediates. It works for any
-  per-step forward and leaves the gradient unchanged.
+- `checkpoint=True` runs the rollout through `integrix.adjoint.checkpointed_scan`, which wraps each step in `jax.checkpoint` (an integer `k` wraps blocks of `k` steps), so reverse mode recomputes the steps instead of storing their intermediates. It works for any per-step forward and leaves the gradient unchanged.
 - `forward_adjoint=` is handed to `forward.with_adjoint(adjoint)`, which
   a `diffrax`-backed forward implements by passing the adjoint to
   `diffeqsolve` (chapter 3). With a forward that has no `with_adjoint`,
   the model raises `ValueError` at construction rather than ignoring the
-  slot.
+  slot. It takes a diffrax adjoint, not `integrix.adjoint.Checkpointed`, whose rollout counterpart is `checkpoint=`.
 
 A typical operational 4DVar configuration has a `diffrax`-backed forward. The forward below integrates $\mathrm{d}\vect{x}/\mathrm{d}t = -\kappa \vect{x}$ with $\kappa = 0.1$ over one step $\Delta t = 1$ with `diffrax`, and implements `with_adjoint` by storing the adjoint it is handed. The window has $T = 3$ steps, so $T + 1 = 4$ times, of all $D_x = 8$ cells, observed with $\gmat{\Sigma}_\varepsilon = \sigma^2 \mat{I}$, $\sigma = 0.1$, around a truth $\vect{x}_0 \sim \mathcal{N}(\mathbf{0}, \mat{I})$; the background is $\gvect{\mu}_x = \mathbf{0}$ with $\gmat{\Sigma}_x = \mat{I}$. The block continues the one above.
 
@@ -493,7 +506,7 @@ It prints `KStepAdjoint(k=3) (2, 4, 8)`.
 `KStepAdjoint` generalises the one-step strategy: at a converged fixed
 point any $k$ is exact (the warmup contributes nothing); for the
 truncated, unconverged solvers of 4DVarNet, larger $k$ trades memory
-for a less biased gradient. The dynamics layer composes independently:
+for a less biased gradient. The dynamics layer composes independently: the backward sweep through the forward run is `integrix.adjoint`'s (behind `checkpoint=`), and
 a `pipekit_jax.DiffraxForwardModel` slots into
 [`StrongFourDVar`](xref:api#vardax.StrongFourDVar) as a plain
 `pipekit_cycle.ForwardModel`, bringing diffrax's solvers and adjoints
