@@ -260,16 +260,16 @@ argminax = { git = "https://github.com/jejjohnson/argminax", tag = "v0.0.4" }
 # URL per package and reads `tag =` as a different one, so this is `rev =`.
 gaussx = { git = "https://github.com/jejjohnson/gaussx", rev = "v0.6.12" }
 geonnax = { git = "https://github.com/jejjohnson/geonnax", tag = "v0.0.10" }
-# The linear interpolation stencils of InterpObs and GridPointObs. integrix v0.0.6
-# requires it as `functax @ git+...@v0.0.11`, so this is `rev =` too.
-functax = { git = "https://github.com/jejjohnson/functax", rev = "v0.0.11" }
-# The checkpointed scan behind rollout; v0.0.6 is the tag on functax v0.0.11.
-integrix = { git = "https://github.com/jejjohnson/integrix", tag = "v0.0.6" }
+# The linear interpolation stencils of InterpObs and GridPointObs. integrix v0.0.11
+# requires it as `functax @ git+...@v0.0.13`, so this is `rev =` too.
+functax = { git = "https://github.com/jejjohnson/functax", rev = "v0.0.13" }
+# The checkpointed scan behind rollout, and DiffraxForwardModel (v0.0.11).
+integrix = { git = "https://github.com/jejjohnson/integrix", tag = "v0.0.11" }
 # pipekit is pinned by release tag: following its main broke CI when 0.2.0 moved
 # the core into pipekit-ops. All five share one tag: workspace members point at
 # each other at the same commit, so per-package tags give uv conflicting URLs.
-pipekit-ops = { git = "https://github.com/jejjohnson/pipekit", subdirectory = "packages/pipekit-ops", tag = "pipekit-array-v0.1.4" }
-pipekit-cycle = { git = "https://github.com/jejjohnson/pipekit", subdirectory = "packages/pipekit-cycle", tag = "pipekit-array-v0.1.4" }
-pipekit-jax = { git = "https://github.com/jejjohnson/pipekit", subdirectory = "packages/pipekit-jax", tag = "pipekit-array-v0.1.4" }
-pipekit-experiment = { git = "https://github.com/jejjohnson/pipekit", subdirectory = "packages/pipekit-experiment", tag = "pipekit-array-v0.1.4" }
-pipekit-train = { git = "https://github.com/jejjohnson/pipekit", subdirectory = "packages/pipekit-train", tag = "pipekit-array-v0.1.4" }
+pipekit-ops = { git = "https://github.com/jejjohnson/pipekit", subdirectory = "packages/pipekit-ops", tag = "pipekit-array-v0.1.6" }
+pipekit-cycle = { git = "https://github.com/jejjohnson/pipekit", subdirectory = "packages/pipekit-cycle", tag = "pipekit-array-v0.1.6" }
+pipekit-jax = { git = "https://github.com/jejjohnson/pipekit", subdirectory = "packages/pipekit-jax", tag = "pipekit-array-v0.1.6" }
+pipekit-experiment = { git = "https://github.com/jejjohnson/pipekit", subdirectory = "packages/pipekit-experiment", tag = "pipekit-array-v0.1.6" }
+pipekit-train = { git = "https://github.com/jejjohnson/pipekit", subdirectory = "packages/pipekit-train", tag = "pipekit-array-v0.1.6" }

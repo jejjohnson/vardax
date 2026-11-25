@@ -464,7 +464,7 @@ Disagreement is a bug. The most common causes are reverse-time instability in `B
 
 ## The shared strategy vocabulary
 
-The same concepts recur at every layer, so the stack shares one declarative vocabulary: the frozen-dataclass specs in `pipekit_cycle.adjoints` (named after their diffrax counterparts). Each layer interprets a spec into its native mechanism, which is `pipekit_jax.to_diffrax_adjoint` at the dynamics layer, [`to_optimistix_adjoint`](xref:api#vardax.to_optimistix_adjoint) at the inner-solve layer (this chapter), and filterax's scan strategies at the cycle layer:
+The same concepts recur at every layer, so the stack shares one declarative vocabulary: the frozen-dataclass specs in `pipekit_cycle.adjoints` (named after their diffrax counterparts). Each layer interprets a spec into its native mechanism, which is `integrix.adjoint.to_diffrax_adjoint` at the dynamics layer, [`to_optimistix_adjoint`](xref:api#vardax.to_optimistix_adjoint) at the inner-solve layer (this chapter), and filterax's scan strategies at the cycle layer:
 
 | Spec | dynamics (diffrax) | inner solve (optimistix / vardax) | cycle (filterax scan) |
 |---|---|---|---|
@@ -507,7 +507,7 @@ It prints `KStepAdjoint(k=3) (2, 4, 8)`.
 point any $k$ is exact (the warmup contributes nothing); for the
 truncated, unconverged solvers of 4DVarNet, larger $k$ trades memory
 for a less biased gradient. The dynamics layer composes independently: the backward sweep through the forward run is `integrix.adjoint`'s (behind `checkpoint=`), and
-a `pipekit_jax.DiffraxForwardModel` slots into
+an `integrix.march.DiffraxForwardModel` slots into
 [`StrongFourDVar`](xref:api#vardax.StrongFourDVar) as a plain
 `pipekit_cycle.ForwardModel`, bringing diffrax's solvers and adjoints
 to the forecast step with no vardax code changes.
