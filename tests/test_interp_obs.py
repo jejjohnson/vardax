@@ -245,8 +245,8 @@ def test_stencil_is_row_major_and_clamps_outside_points(grid):
         [0.75 * 0.25, 0.75 * 0.75, 0.25 * 0.25, 0.25 * 0.75],
         rtol=1e-5,
     )
-    field = jnp.arange(float(ny * nx)).reshape(ny, nx)
-    np.testing.assert_allclose(float(op(field)[1]), float(field[0, -1]), rtol=1e-5)
+    field = jnp.zeros((ny, nx)).at[0, -1].set(7.0)
+    np.testing.assert_allclose(float(op(field)[1]), 7.0, rtol=1e-5)
 
 
 def test_nan_coordinate_gives_nan_not_zero(grid):
