@@ -39,12 +39,12 @@ def linear_stencil(
     """
     grid = RectilinearGrid(tuple(Axis(axis) for axis in axes))
     plan = Linear().plan(grid, Points(points), policies=Policies(outside="clamp"))
-    stencil = plan.read
-    if stencil.n_target == 0:
-        return stencil.indices, stencil.weights
+    indices, weights = plan.to_gaussx()
+    if points.shape[0] == 0:
+        return indices, weights
     # wᵢₖ ← NaN where sᵢ is not finite: clamping leaves no other invalid row
-    nan = jnp.full((), jnp.nan, stencil.weights.dtype)
+    nan = jnp.full((), jnp.nan, weights.dtype)
     weights = einx.where(
-        "target, target corner, -> target corner", plan.valid, stencil.weights, nan
+        "target, target corner, -> target corner", plan.valid, weights, nan
     )
-    return stencil.indices, weights
+    return indices, weights
