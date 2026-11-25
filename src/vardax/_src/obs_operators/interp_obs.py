@@ -11,6 +11,7 @@ import lineax as lx
 import numpy as np
 
 from vardax._src.errors import GridError, ShapeError
+from vardax._src.obs_operators.stencil import linear_stencil
 from vardax._src.utils.shapes import flatten
 
 
@@ -203,20 +204,14 @@ def interp_obs_from_coords(
     if points.ndim != 2 or points.shape[1] != 2:
         raise ShapeError(f"obs_coords must be (n_obs, 2); got {points.shape}.")
 
-    if points.shape[0] == 0:
-        # gaussx's weights reject an empty batch on a 2-D grid
-        indices = np.zeros((0, 4), dtype=np.int32)
-        weights = np.zeros((0, 4))
-    else:
-        # In float64 whatever JAX's default, as these coordinates are concrete:
-        # in float32, a projected coordinate of order 1e6 or a narrow cell on a
-        # wide axis would lose its offset. Only the finished weights are cast.
-        # The stencil is row-major: (lo, lo), (lo, hi), (hi, lo), (hi, hi).
-        with jax.ensure_compile_time_eval(), jax.enable_x64(True):
-            indices, weights = gaussx.linear_interpolation_weights(
-                jnp.asarray(points), [jnp.asarray(y_axis), jnp.asarray(x_axis)]
-            )
-            indices, weights = np.asarray(indices), np.asarray(weights)
+    # In float64 whatever JAX's default, as these coordinates are concrete: in
+    # float32, a projected coordinate of order 1e6 or a narrow cell on a wide axis
+    # would lose its offset. Only the finished weights are cast.
+    with jax.ensure_compile_time_eval(), jax.enable_x64(True):
+        indices, weights = linear_stencil(
+            jnp.asarray(points), [jnp.asarray(y_axis), jnp.asarray(x_axis)]
+        )
+        indices, weights = np.asarray(indices), np.asarray(weights)
 
     return InterpObs(
         indices=jnp.asarray(indices, dtype=jnp.int32),
