@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.9](https://github.com/jejjohnson/vardax/compare/v0.3.8...v0.3.9) (2026-11-25)
+
+
+### Bug Fixes
+
+* **deps:** pipekit-array 0.2.0 ([#313](https://github.com/jejjohnson/vardax/issues/313)) ([60c297a](https://github.com/jejjohnson/vardax/commit/60c297a8860a0cf34363a01be9d8f5f2cb8132bf))
+
 ## [0.3.8](https://github.com/jejjohnson/vardax/compare/v0.3.7...v0.3.8) (2026-11-25)
 
 
