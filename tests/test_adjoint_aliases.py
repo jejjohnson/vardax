@@ -47,7 +47,7 @@ def test_aliases_are_the_argminax_classes():
 
 
 def test_mapping_returns_the_alias_quietly():
-    adjoints = pytest.importorskip("pipekit_cycle.adjoints")
+    adjoints = pytest.importorskip("pipekit_cycle.cycles")
     with warnings.catch_warnings():
         warnings.simplefilter("error", DeprecationWarning)
         mapped = vdx.to_optimistix_adjoint(adjoints.TruncatedAdjoint(k=4))

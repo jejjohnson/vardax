@@ -2,7 +2,7 @@
 
 The inner-solve layer of the shared adjoint-strategies design:
 ``KStepAdjoint(k)`` generalises ``OneStepAdjoint`` (the ``k=1`` alias),
-``to_optimistix_adjoint`` interprets the ``pipekit_cycle.adjoints``
+``to_optimistix_adjoint`` interprets the ``pipekit_cycle.cycles``
 vocabulary, and ``integrix.march.DiffraxForwardModel`` slots into
 ``StrongFourDVar`` as a plain ``ForwardModel``.
 """
@@ -118,7 +118,7 @@ class TestKStepAdjoint:
 
 class TestToOptimistixAdjoint:
     def test_pipekit_spec_mapping(self):
-        adjoints = pytest.importorskip("pipekit_cycle.adjoints")
+        adjoints = pytest.importorskip("pipekit_cycle.cycles")
         mapped = to_optimistix_adjoint(adjoints.TruncatedAdjoint(k=4))
         assert isinstance(mapped, KStepAdjoint)
         assert mapped.k == 4
@@ -135,7 +135,7 @@ class TestToOptimistixAdjoint:
         assert to_optimistix_adjoint(raw) is raw
 
     def test_layer_inappropriate_specs_rejected(self):
-        adjoints = pytest.importorskip("pipekit_cycle.adjoints")
+        adjoints = pytest.importorskip("pipekit_cycle.cycles")
         with pytest.raises(ValueError, match="inner-solve layer"):
             to_optimistix_adjoint(adjoints.BacksolveAdjoint())
         with pytest.raises(ValueError, match="inner-solve layer"):
@@ -146,7 +146,7 @@ class TestToOptimistixAdjoint:
             to_optimistix_adjoint(object())
 
     def test_model_accepts_mapped_spec(self, rng, batch_1d):
-        adjoints = pytest.importorskip("pipekit_cycle.adjoints")
+        adjoints = pytest.importorskip("pipekit_cycle.cycles")
         model = _model(
             rng, batch_1d, to_optimistix_adjoint(adjoints.TruncatedAdjoint(k=2))
         )
@@ -184,7 +184,7 @@ class TestDiffraxDynamics:
         assert jnp.all(jnp.isfinite(out))
 
     def test_adjoint_swap_is_configuration(self):
-        adjoints = pytest.importorskip("pipekit_cycle.adjoints")
+        adjoints = pytest.importorskip("pipekit_cycle.cycles")
 
         fwd = DiffraxForwardModel(vector_field=lambda t, y, args: -y, dt0=0.1)
         swapped = fwd.with_adjoint(adjoints.DirectAdjoint())

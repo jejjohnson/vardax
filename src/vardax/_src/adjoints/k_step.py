@@ -4,7 +4,7 @@
 implements ``apply`` so it works under any optimistix solve. The FourDVarNet
 inner solvers dispatch on ``argminax.adjoint.KStep``, so the alias and the
 argminax class select the same path. In the pipekit vocabulary it is
-``pipekit_cycle.adjoints.TruncatedAdjoint(k)`` at the inner-solve layer.
+``pipekit_cycle.cycles.TruncatedAdjoint(k)`` at the inner-solve layer.
 """
 
 from __future__ import annotations

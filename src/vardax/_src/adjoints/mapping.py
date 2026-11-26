@@ -4,7 +4,7 @@ The mapping itself is ``argminax.adjoint.to_optimistix_adjoint``; this wrapper k
 vardax's error type and messages and its ``KStepAdjoint`` return type.
 
 This is the counterpart of ``integrix.adjoint.to_diffrax_adjoint`` at the dynamics
-layer: the specs of ``pipekit_cycle.adjoints`` become the
+layer: the specs of ``pipekit_cycle.cycles`` become the
 ``optimistix.AbstractAdjoint`` instances that vardax's inner solvers consume.
 """
 
@@ -54,7 +54,7 @@ def to_optimistix_adjoint(spec: Any) -> optx.AbstractAdjoint:
       only exists at the dynamics layer.
 
     Args:
-        spec: A spec from ``pipekit_cycle.adjoints`` or any
+        spec: A spec from ``pipekit_cycle.cycles`` or any
             structurally identical object. A ready-made
             ``optx.AbstractAdjoint`` passes through unchanged.
 
@@ -66,7 +66,7 @@ def to_optimistix_adjoint(spec: Any) -> optx.AbstractAdjoint:
 
     Examples:
         >>> import optimistix as optx
-        >>> from pipekit_cycle.adjoints import TruncatedAdjoint
+        >>> from pipekit_cycle.cycles import TruncatedAdjoint
         >>> from vardax.adjoints import to_optimistix_adjoint
         >>> to_optimistix_adjoint(TruncatedAdjoint(k=3))
         KStepAdjoint(k=3)
@@ -87,7 +87,7 @@ def to_optimistix_adjoint(spec: Any) -> optx.AbstractAdjoint:
 
         A spec with no inner-solve meaning is rejected.
 
-        >>> from pipekit_cycle.adjoints import DirectAdjoint
+        >>> from pipekit_cycle.cycles import DirectAdjoint
         >>> to_optimistix_adjoint(DirectAdjoint())  # doctest: +IGNORE_EXCEPTION_DETAIL
         Traceback (most recent call last):
         ...
