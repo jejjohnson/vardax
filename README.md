@@ -98,7 +98,7 @@ uv does not read a dependency's `[tool.uv.sources]`, so a project that depends o
 dependencies = ["vardax"]
 
 [tool.uv.sources]
-vardax = { git = "https://github.com/jejjohnson/vardax", tag = "v0.3.9" }  # x-release-please-version
+vardax = { git = "https://github.com/jejjohnson/vardax", tag = "v0.3.10" }  # x-release-please-version
 argminax = { git = "https://github.com/jejjohnson/argminax", tag = "v0.0.4" }
 gaussx = { git = "https://github.com/jejjohnson/gaussx", rev = "v0.6.12" }
 geonnax = { git = "https://github.com/jejjohnson/geonnax", tag = "v0.0.10" }
