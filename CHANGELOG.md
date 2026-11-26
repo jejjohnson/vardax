@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.10](https://github.com/jejjohnson/vardax/compare/v0.3.9...v0.3.10) (2026-11-26)
+
+
+### Bug Fixes
+
+* **deps:** pipekit at pipekit-array-v0.3.0, and the adjoint specs at pipekit_cycle.cycles ([#317](https://github.com/jejjohnson/vardax/issues/317)) ([380ee50](https://github.com/jejjohnson/vardax/commit/380ee50eda2c220a6c9e4d977dbf529f3a03c2f9))
+
 ## [0.3.9](https://github.com/jejjohnson/vardax/compare/v0.3.8...v0.3.9) (2026-11-25)
 
 
