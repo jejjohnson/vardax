@@ -256,3 +256,24 @@ def test_nan_coordinate_gives_nan_not_zero(grid):
     out = op(jnp.ones((y.size, x.size)))
     assert jnp.isnan(out[0])
     np.testing.assert_allclose(float(out[1]), 1.0, rtol=1e-6)
+
+
+@pytest.mark.parametrize("flat", [False, True], ids=["grid", "flat"])
+def test_empty_linearize_and_adjoint_preserve_structure_and_jit(grid, flat):
+    y, x = grid
+    op = interp_obs_from_coords((y, x), np.zeros((0, 2)))
+    state = jnp.ones(y.size * x.size if flat else (y.size, x.size), dtype=jnp.float32)
+    tangent = op.linearize(state)
+    empty = jnp.empty((0,), dtype=state.dtype)
+    for forward, adjoint in (
+        (tangent.mv(state), tangent.transpose().mv(empty)),
+        (
+            jax.jit(lambda z: op.linearize(z).mv(z))(state),
+            jax.jit(lambda z: tangent.transpose().mv(z))(empty),
+        ),
+    ):
+        assert forward.shape == (0,)
+        assert forward.dtype == state.dtype
+        assert adjoint.shape == state.shape
+        assert adjoint.dtype == state.dtype
+        np.testing.assert_array_equal(adjoint, jnp.zeros_like(state))
